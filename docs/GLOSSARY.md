@@ -1,0 +1,43 @@
+# Glossar
+
+- **Beleg**: Erfasster Kassenzettel eines Belegtags (Daten + 1–3 Belegbilder). Höchstens ein Beleg pro Belegtag.
+- **Belegbetrag**: Gesamtbetrag laut Kassenzettel, von der Belegerkennung vorausgefüllt.
+- **Korrigierter Betrag**: Optional vom Nutzer eingetragener Betrag, der den Belegbetrag ersetzt (z. B. wenn nur ein Teil des Einkaufs die Mahlzeit ist).
+- **Zuschuss**: Fester Tagesbetrag, den der Arbeitgeber pro belegtem Arbeitstag zahlt; wird nicht aus dem Belegbetrag berechnet.
+- **Jahresregeln**: Pro Kalenderjahr konfigurierbare Werte (Zuschuss, steuerliche Werte, Monatslimit).
+- **Belegerkennung**: Auslesen von Datum, Händler und Betrag aus dem Foto über eine austauschbare Schnittstelle (Cloud-Modell oder lokal).
+- **Monatsexport**: PDF mit Übersichtstabelle, Summen und einer Seite pro Beleg; optional ZIP mit Originalbildern und CSV.
+- **Belegtag**: Ein Kalendertag mit genau einem Beleg; zählt als Zuschusstag. Keine separate Arbeitszeiterfassung, nur Warnungen bei Wochenende/Feiertag.
+- **Datenexport**: Vollständiger Export aller Belege, Bilder und Einstellungen als Backup (getrennt vom Monatsexport).
+- **Sachbezugswert (SBW)**: Amtlicher Wert einer Mahlzeit pro Jahr (2026 Mittag/Abend 4,57 €, Frühstück 2,37 €); Teil der Jahresregeln.
+- **Anerkannter Betrag (A)**: Korrigierter Betrag, falls gesetzt, sonst Belegbetrag; Basis der Erstattung.
+- **Erstattung (E)**: min(Zuschuss, anerkannter Betrag).
+- **Eigenanteil (U)**: A − E.
+- **Geldwerter Vorteil (G)**: Steuerpflichtiger Teil der Erstattung, Standard max(0, min(E, SBW − U)); vorsichtige Variante min(E, SBW) per Schalter (siehe Eigenanteil-Variante). 0, wenn der Zuschuss den Höchstzuschuss übersteigt.
+- **Steuerfreier Anteil (F)**: E − G.
+- **Gesperrter Monat**: Monat nach Monatsexport; Änderungen nur mit Änderungsprotokoll.
+
+## Ergänzt mit SPEC.md (2026-10-08)
+- **Mahlzeitart**: Frühstück, Mittag oder Abend; bestimmt den SBW. Standard laut Jahresregeln (Mittag).
+- **Bezugsort**: Wo die Mahlzeit gekauft wurde: Supermarkt, Restaurant, Kantine, Bäckerei, Lieferdienst, Sonstiges.
+- **Arbeitsort**: Betrieb oder Homeoffice am Belegtag (Dokumentation, keine Berechnungswirkung).
+- **Belegbild**: Eine gespeicherte, normalisierte Bilddatei (Seite) eines Belegs; inhaltsadressiert per SHA-256.
+- **Erkennungsergebnis**: Strukturierte Antwort der Belegerkennung (Datum, Händler, Belegbetrag, Positionen mit Kategorie, Konfidenz).
+- **Korrekturvorschlag**: Aus dem Erkennungsergebnis berechneter Vorschlag für den Korrigierten Betrag (Belegbetrag ohne Alkohol, Tabak, Pfand, Non-Food); wird nur nach Bestätigung übernommen.
+- **Höchstzuschuss (H)**: SBW der Mahlzeitart + 3,10 € (2026 Mittag: 7,67 €). Liegt der Zuschuss darüber, ist die gesamte Erstattung regulär steuerpflichtig.
+- **Regulär steuerpflichtiger Anteil (R)**: Teil der Erstattung, der als Barlohn individuell lohnsteuer- und SV-pflichtig ist (z. B. Zuschuss > Höchstzuschuss).
+- **Pauschalsteuer**: 25 % Lohnsteuer auf ΣG nach § 40 Abs. 2 Satz 1 Nr. 1 EStG plus Soli und pauschale Kirchensteuer; trägt der Arbeitgeber.
+- **Eigenanteil-Variante**: Jahresregel-Schalter `standard` (Eigenanteil mindert G) oder `vorsichtig` (G = min(E, SBW)).
+- **Gehaltsumwandlung**: Jahresregel-Schalter, ob der Zuschuss statt zusätzlich aus umgewandeltem Gehalt gezahlt wird; bei gleichzeitiger Pauschalierung Warnung.
+- **Monatslimit**: Höchstzahl bezuschusster Belegtage pro Monat (Standard 15, 15er-Regel); Modus warnen oder blockieren.
+- **Feiertagskalender**: Gesetzliche Feiertage des Bundeslands der Jahresregel plus Eigene Feiertage; Grundlage der Feiertagswarnung.
+- **Warnung**: Nicht blockierender Hinweis zu einem Beleg oder Monat (Code `W_…`).
+- **Prüfpunkt**: Automatische Prüfung beim Monatsexport mit Ergebnis ✓/⚠/✗ (Code `P_…`); ✗ blockiert den finalen Export.
+- **Monatsstatus**: `offen`, `gesperrt` (nach finalem Monatsexport) oder `geändert` (Gesperrter Monat nach Änderung, neuer Export nötig).
+- **Vorschau**: Monats-PDF mit Wasserzeichen „ENTWURF“; sperrt den Monat nicht.
+- **Exportversion**: Fortlaufende Nummer der finalen Monatsexporte eines Monats; ab Version 2 mit Liste der Änderungen.
+- **Änderungsprotokoll**: Append-only Liste aller fachlichen Änderungen (vorher/nachher, Akteur, Grund) mit SHA-256-Hash-Kette.
+- **Änderungsgrund**: Pflichttext bei Änderung oder Löschung in einem gesperrten oder geänderten Monat sowie bei Änderung einer betroffenen Jahresregel.
+- **Arbeitnehmererklärung**: Fester Versicherungstext im Monatsexport, beim finalen Export digital bestätigt.
+- **Datenimport**: Wiederherstellung eines Datenexports; ersetzt den gesamten Bestand nach automatischer Sicherung.
+- **Sitzung**: Serverseitig gespeicherte Anmeldung (Cookie), per Passwort oder OIDC erzeugt.

@@ -1,0 +1,27 @@
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  release-please:
+    name: release-please
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # A tag created with GITHUB_TOKEN does not start release.yml.
+      # Set the RELEASE_PLEASE_TOKEN secret to a fine-grained PAT (contents: write)
+      # so the v* tag triggers the GoReleaser workflow. Without it, release-please
+      # still opens the release PR and creates the GitHub release, and release.yml
+      # can be started with workflow_dispatch.
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
