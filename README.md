@@ -1,6 +1,6 @@
 # vc-belegapp
 
-Selbst gehostete Einzelnutzer-PWA zum Erfassen täglicher Essenszuschuss-Belege und zum monatlichen PDF-Export. Dieses Repository enthält den Meilenstein **M0 Fundament**: lauffähiges Binary, SQLite, Health-Endpunkte, eingebettetes Frontend-Skelett, Image und CI. Fachliche Erfassung, Anmeldung, Erkennung und PDF folgen in späteren Meilensteinen.
+Selbst gehostete Einzelnutzer-PWA zum Erfassen täglicher Essenszuschuss-Belege und zum monatlichen PDF-Export. Dieses Repository enthält **M0 Fundament** und **M1 Erfassen**: Anmeldung (Passwort und OIDC), Belege mit Bildern, Jahresregeln, Berechnung, Warnungen, Änderungsprotokoll und die mobile Oberfläche. Erkennung (M2) und PDF-Export (M3) sind vorbereitet und antworten mit 501.
 
 Die Spezifikation steht in [docs/SPEC.md](docs/SPEC.md). Architekturentscheidungen: [docs/adr](docs/adr).
 
@@ -21,7 +21,7 @@ mkdir -p data
 BELEGAPP_DATA_DIR="$PWD/data" BELEGAPP_LISTEN_ADDR="127.0.0.1:8080" ./bin/belegapp serve
 ```
 
-`serve` ist der Default. Weitere Befehle: `migrate`, `healthcheck [--url] [--timeout]`, `version`. `hash-password`, `backup`, `restore` und `verify-audit` sind angelegt und beenden sich mit Exit 1, bis ihr Meilenstein landet.
+`serve` ist der Default. Weitere Befehle: `migrate`, `healthcheck [--url] [--timeout]`, `version`, `hash-password` (argon2id-PHC auf stdout), `verify-audit` (Hash-Kette, Exit 1 bei Bruch). `backup` und `restore` bleiben bis zu einem späteren Meilenstein.
 
 ```bash
 curl -fsS http://127.0.0.1:8080/healthz
@@ -79,12 +79,12 @@ Alle Variablen haben das Präfix `BELEGAPP_`. Geheimnisse dürfen statt des Wert
 | `BELEGAPP_OIDC_*` | aus | Issuer, Client, Allowlist |
 | `BELEGAPP_STORAGE_BACKEND` | `fs` | `fs` oder `s3` |
 | `BELEGAPP_STORAGE_FS_DIR` | `$DATA_DIR/blobs` | |
-| `BELEGAPP_S3_*` | | Pflicht: Bucket und Region bei `s3` |
+| `BELEGAPP_S3_*` | | Pflicht bei `s3`: Bucket, Region und Endpoint |
 | `BELEGAPP_LLM_*` | OpenAI-Defaults | siehe Spezifikation |
 | `BELEGAPP_TYPST_BIN` | `typst` | im Image `/usr/local/bin/typst` |
 | `BELEGAPP_METRICS_ADDR` | leer | z. B. `:9090`, ohne Auth |
 
-M0 startet auch ohne Passwort und ohne OIDC und schreibt dann eine Warnung. Abschnitt 9.1 (Abbruch ohne Login-Methode) gilt ab M1, sonst ließe sich das Image nicht ohne Secrets prüfen. Unvollständiges OIDC oder S3 bleibt ein Startfehler (Exit 2). Fehlt der API-Key bei der OpenAI-Basis-URL, warnt M0 und startet trotzdem; die Erkennung ruft die API erst in einem späteren Meilenstein auf.
+`serve` beendet sich mit Exit-Code 2, wenn weder `BELEGAPP_AUTH_PASSWORD_HASH` noch `BELEGAPP_OIDC_ISSUER` gesetzt ist. `migrate` braucht keine Anmeldung. Unvollständiges OIDC oder S3 bleibt ein Startfehler (Exit 2). Fehlt der API-Key bei der OpenAI-Basis-URL, warnt der Prozess und startet trotzdem; die Erkennung ruft die API erst in M2 auf.
 
 Metriken, wenn `BELEGAPP_METRICS_ADDR` gesetzt ist: `belegapp_http_requests_total`, `belegapp_http_request_duration_seconds` plus Go- und Prozesskollektoren. Die fachlichen Zähler aus der Spezifikation kommen mit Erkennung und Export.
 
@@ -104,7 +104,7 @@ Queries liegen in `internal/db/queries`, Migrationen in `internal/db/migrations`
 
 | Workflow | Auslöser | Inhalt |
 |---|---|---|
-| `ci.yml` | PR, Push `main` | Jobs `web`, `go`, `docker` (ohne Push, Trivy) |
+| `ci.yml` | PR, Push `main` | Jobs `web`, `go`, `docker` (ohne Push, Trivy), `e2e` (Playwright, M1-Umfang) |
 | `release-please.yml` | Push `main` | Release-PR, Changelog, Tag `vX.Y.Z` |
 | `release.yml` | Tag `v*`, manuell | GoReleaser v2: Archive, SBOM, Cosign, GHCR |
 | `codeql.yml` | PR, wöchentlich | CodeQL für Go und TypeScript |

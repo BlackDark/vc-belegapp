@@ -4,14 +4,16 @@ package server
 import (
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
+
+	"github.com/oklog/ulid/v2"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -37,6 +39,7 @@ type Options struct {
 	Frontend fs.FS
 	BaseURL  string
 	Metrics  *prometheus.Registry
+	API      http.Handler
 }
 
 // New builds the public handler. Frontend is the Vite dist directory (index.html at the root).
@@ -89,18 +92,21 @@ func New(opt Options) (http.Handler, error) {
 	h := &handlers{ready: opt.Ready}
 	r.Get("/healthz", h.healthz)
 	r.Get("/readyz", h.readyz)
+	if opt.API != nil {
+		r.Mount("/api/v1", opt.API)
+	}
 	r.NotFound(spa(opt.Frontend).ServeHTTP)
 	return r, nil
 }
 
 func requestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var buf [16]byte
-		if _, err := rand.Read(buf[:]); err != nil {
+		value, err := ulid.New(ulid.Timestamp(time.Now()), rand.Reader)
+		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		id := hex.EncodeToString(buf[:])
+		id := strings.ToLower(value.String())
 		w.Header().Set("X-Request-Id", id)
 		ctx := context.WithValue(r.Context(), requestIDKey, id)
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -165,6 +171,12 @@ func observe(log *slog.Logger, requests *prometheus.CounterVec, duration *promet
 			"request_id", r.Context().Value(requestIDKey),
 		)
 	})
+}
+
+// RequestID returns the ULID assigned to the request, or an empty string.
+func RequestID(ctx context.Context) string {
+	id, _ := ctx.Value(requestIDKey).(string)
+	return id
 }
 
 func routePattern(r *http.Request) string {

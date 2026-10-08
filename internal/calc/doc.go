@@ -1,2 +1,2 @@
-// Package calc will hold the pure cent-based subsidy calculations.
+// Package calc implements the meal-subsidy formulas in integer cents.
 package calc

@@ -12,8 +12,9 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# pdf (Typst golden file) starts with M3. e2e (Playwright) is optional and starts
-# once authentication and receipt capture exist. M0 required checks are web, go, docker.
+# pdf (Typst golden file) starts with M3. e2e covers the M1 capture flow
+# (login, upload, manual fields, month view, dark mode). Recognition fill and
+# final PDF export stay out until M2 and M3.
 
 jobs:
   web:
@@ -126,3 +127,60 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
           scanners: vuln
+
+  e2e:
+    name: e2e
+    needs: [web, go]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-dist
+          path: web/dist
+      - name: Place frontend dist
+        run: |
+          if [ -f web/dist/index.html ]; then
+            exit 0
+          fi
+          if [ -f web/dist/dist/index.html ]; then
+            mv web/dist/dist/* web/dist/
+            rmdir web/dist/dist
+            exit 0
+          fi
+          if [ -f web/dist/web/dist/index.html ]; then
+            mkdir -p web/dist-fixed
+            mv web/dist/web/dist/* web/dist-fixed/
+            rm -rf web/dist
+            mv web/dist-fixed web/dist
+            exit 0
+          fi
+          echo "unexpected web-dist layout" >&2
+          find web -name index.html | head
+          exit 1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Build server
+        run: CGO_ENABLED=0 go build -trimpath -o bin/belegapp ./cmd/belegapp
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: e2e/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: e2e/pnpm-lock.yaml
+      - name: Install Playwright
+        working-directory: e2e
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+      - name: Run Playwright
+        working-directory: e2e
+        env:
+          CI: "true"
+          BELEGAPP_BIN: ${{ github.workspace }}/bin/belegapp
+          E2E_PASSWORD: belegapp-e2e
+          BELEGAPP_DATA_DIR: /tmp/belegapp-e2e
+        run: pnpm test

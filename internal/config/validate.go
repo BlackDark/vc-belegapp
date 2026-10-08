@@ -164,6 +164,9 @@ func (c *Config) validateStorage() error {
 		if c.S3Bucket == "" {
 			return fmt.Errorf("BELEGAPP_S3_BUCKET is required when BELEGAPP_STORAGE_BACKEND=s3")
 		}
+		if c.S3Endpoint == "" {
+			return fmt.Errorf("BELEGAPP_S3_ENDPOINT is required when BELEGAPP_STORAGE_BACKEND=s3")
+		}
 		if c.S3Region == "" {
 			return fmt.Errorf("BELEGAPP_S3_REGION is empty")
 		}

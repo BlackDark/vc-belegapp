@@ -11,14 +11,24 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "solid-js": "1.9.17"
+    "@kobalte/core": "0.13.14",
+    "@solidjs/router": "0.15.4",
+    "@tanstack/solid-form": "1.33.0",
+    "@tanstack/solid-query": "5.104.1",
+    "lucide-solid": "0.544.0",
+    "solid-js": "1.9.17",
+    "solid-sonner": "0.2.8",
+    "workbox-window": "7.4.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
+    "@solidjs/testing-library": "0.8.10",
     "@tailwindcss/vite": "4.3.3",
+    "happy-dom": "20.0.10",
     "tailwindcss": "4.3.3",
     "typescript": "5.9.3",
     "vite": "8.3.4",
+    "vite-plugin-pwa": "1.2.0",
     "vite-plugin-solid": "2.11.14",
     "vitest": "5.0.3"
   }

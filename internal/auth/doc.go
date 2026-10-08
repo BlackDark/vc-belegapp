@@ -1,2 +1,2 @@
-// Package auth will implement password sessions, OIDC, and CSRF helpers.
+// Package auth implements password login, OIDC, and server-side sessions.
 package auth

@@ -10,16 +10,24 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/BlackDark/vc-belegapp/internal/api"
+	"github.com/BlackDark/vc-belegapp/internal/auth"
 	"github.com/BlackDark/vc-belegapp/internal/config"
 	"github.com/BlackDark/vc-belegapp/internal/db"
+	"github.com/BlackDark/vc-belegapp/internal/holidays"
 	"github.com/BlackDark/vc-belegapp/internal/pdf"
 	"github.com/BlackDark/vc-belegapp/internal/server"
+	"github.com/BlackDark/vc-belegapp/internal/service"
 	"github.com/BlackDark/vc-belegapp/internal/storage"
 )
+
+// ErrAuthRequired means serve was started without a password hash or OIDC issuer.
+var ErrAuthRequired = errors.New("no authentication method configured; set BELEGAPP_AUTH_PASSWORD_HASH or BELEGAPP_OIDC_ISSUER_URL")
 
 // Version is stamped into the binary with -X main.version.
 type Version struct {
@@ -64,6 +72,9 @@ func Serve(ctx context.Context, opt Options) error {
 	if err := prepareDirs(opt.Log, opt.Config); err != nil {
 		return err
 	}
+	if !opt.Config.AuthConfigured() {
+		return ErrAuthRequired
+	}
 
 	database, err := openDB(opt.Config)
 	if err != nil {
@@ -84,6 +95,65 @@ func Serve(ctx context.Context, opt Options) error {
 	}
 	typst := pdf.ProbeBinary(ctx, opt.Config.TypstBin, filepath.Join(opt.Config.DataDir, "cache"))
 	logStartup(opt, rt, typst)
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	svc := &service.Service{
+		DB:        database,
+		Store:     store,
+		Holidays:  holidays.NewCalendar(),
+		Loc:       opt.Config.Location,
+		UploadMax: opt.Config.UploadMaxBytes,
+		ImageTTL:  opt.Config.UnassignedImageTTL,
+	}
+	sessions := &auth.Sessions{
+		DB:       database,
+		Idle:     opt.Config.SessionIdleTimeout,
+		Absolute: opt.Config.SessionAbsoluteTimeout,
+		Secure:   opt.Config.CookieSecure,
+	}
+	go sessions.Run(runCtx)
+	go svc.Sweep(runCtx)
+	var oidcClient *auth.OIDC
+	if opt.Config.OIDCIssuerURL != "" {
+		oidcClient = auth.NewOIDC(auth.OIDCConfig{
+			Issuer:       opt.Config.OIDCIssuerURL,
+			ClientID:     opt.Config.OIDCClientID,
+			ClientSecret: opt.Config.OIDCClientSecret,
+			RedirectURL:  strings.TrimRight(opt.Config.BaseURL, "/") + "/api/v1/auth/oidc/callback",
+			Scopes:       strings.Fields(opt.Config.OIDCScopes),
+			Subjects:     opt.Config.OIDCAllowedSubjects,
+			Emails:       opt.Config.OIDCAllowedEmails,
+			RPLogout:     opt.Config.OIDCRPLogout,
+			PostLogout:   strings.TrimRight(opt.Config.BaseURL, "/") + "/login",
+			Secure:       opt.Config.CookieSecure,
+			Secret:       rt.SecretKey,
+			Log:          opt.Log,
+		})
+		go oidcClient.Maintain(runCtx)
+	}
+	httpAPI := &api.API{
+		Log:          opt.Log,
+		Svc:          svc,
+		Sessions:     sessions,
+		Limiter:      &auth.Limiter{},
+		PasswordHash: opt.Config.AuthPasswordHash,
+		OIDC:         oidcClient,
+		OIDCLabel:    opt.Config.OIDCButtonLabel,
+		Trusted:      opt.Config.TrustedProxies,
+		UploadMax:    opt.Config.UploadMaxBytes,
+		Info: api.Info{
+			Version:               opt.Version.Version,
+			Commit:                opt.Version.Commit,
+			BuildDatum:            opt.Version.Date,
+			StorageBackend:        opt.Config.StorageBackend,
+			ErkennungKonfiguriert: opt.Config.LLMEnabled && !opt.Config.OpenAIKeyMissing(),
+			LLMModel:              opt.Config.LLMModel,
+			LLMBaseURL:            opt.Config.LLMBaseURL,
+			LLMEnabled:            opt.Config.LLMEnabled,
+			TypstVersion:          typst.Version,
+		},
+	}
 
 	var metricsReg *prometheus.Registry
 	var metricsSrv *http.Server
@@ -109,6 +179,7 @@ func Serve(ctx context.Context, opt Options) error {
 		Frontend: opt.Frontend,
 		BaseURL:  opt.Config.BaseURL,
 		Metrics:  metricsReg,
+		API:      httpAPI.Handler(),
 	})
 	if err != nil {
 		return err
@@ -148,12 +219,6 @@ func Serve(ctx context.Context, opt Options) error {
 }
 
 func logStartup(opt Options, rt db.Runtime, typst pdf.Probe) {
-	if !opt.Config.AuthConfigured() {
-		opt.Log.Warn("no authentication method configured; do not expose this process until password or OIDC is set")
-	}
-	if opt.Config.StorageBackend == "s3" {
-		opt.Log.Warn("s3 storage is not implemented; /readyz will fail until it lands")
-	}
 	if opt.Config.OpenAIKeyMissing() {
 		opt.Log.Warn("BELEGAPP_LLM_API_KEY is empty for the OpenAI base URL; recognition stays off until a key is set")
 	}

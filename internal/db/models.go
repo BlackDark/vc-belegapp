@@ -4,6 +4,156 @@
 
 package db
 
+import (
+	"database/sql"
+)
+
+type Aenderungsprotokoll struct {
+	ID         int64
+	Zeitpunkt  string
+	Akteur     string
+	Aktion     string
+	Entitaet   string
+	EntitaetID string
+	Monat      interface{}
+	Vorher     interface{}
+	Nachher    interface{}
+	Diff       interface{}
+	Grund      interface{}
+	RequestID  string
+	PrevHash   string
+	Hash       string
+}
+
+type Belegbilder struct {
+	ID                string
+	BelegID           interface{}
+	Seite             interface{}
+	BlobKey           string
+	ThumbBlobKey      string
+	Sha256            string
+	UploadSha256      string
+	Mime              string
+	Bytes             int64
+	Breite            int64
+	Hoehe             int64
+	ErkennungStatus   string
+	ErkennungErgebnis interface{}
+	ErkennungRoh      interface{}
+	ErkennungFehler   interface{}
+	ErkennungModell   interface{}
+	ErkennungDauerMs  interface{}
+	ErstelltAm        string
+}
+
+type Belege struct {
+	ID                     string
+	Datum                  string
+	Mahlzeit               string
+	Bezugsort              string
+	Arbeitsort             string
+	HaendlerName           string
+	HaendlerOrt            string
+	BelegbetragCent        int64
+	KorrigierterBetragCent sql.NullInt64
+	KorrekturGrund         sql.NullString
+	Notiz                  string
+	Quelle                 string
+	Version                int64
+	ErstelltAm             string
+	GeaendertAm            string
+	GeloeschtAm            sql.NullString
+	LoeschGrund            sql.NullString
+}
+
+type Einstellungen struct {
+	ID                 int64
+	ArbeitnehmerName   string
+	Personalnummer     string
+	ArbeitgeberName    string
+	StandardBezugsort  string
+	StandardArbeitsort string
+	ErkennungAktiv     int64
+	ExportZipStandard  int64
+	ExportCsvStandard  int64
+	GeaendertAm        string
+}
+
+type Jahresregeln struct {
+	Jahr                         int64
+	ZuschussCent                 int64
+	Mahlzeiten                   string
+	StandardMahlzeit             string
+	SbwFruehstueckCent           int64
+	SbwMittagCent                int64
+	SbwAbendCent                 int64
+	HoechstzuschussAufschlagCent int64
+	Pauschalierung               int64
+	PauschsteuersatzBp           int64
+	SoliSatzBp                   int64
+	Gehaltsumwandlung            int64
+	Bundesland                   string
+	KistSatzBp                   int64
+	EigenanteilVariante          string
+	Monatslimit                  int64
+	LimitModus                   string
+	EigeneFeiertage              string
+	Notiz                        string
+	ErstelltAm                   string
+	GeaendertAm                  string
+}
+
+type Job struct {
+	ID                 string
+	Typ                string
+	Payload            string
+	Status             string
+	Versuche           int64
+	NaechsterVersuchAm string
+	Ergebnis           interface{}
+	Fehler             interface{}
+	ErstelltAm         string
+	GeaendertAm        string
+}
+
+type Monate struct {
+	Monat               string
+	Status              string
+	GesperrtAm          interface{}
+	LetzteExportversion int64
+}
+
+type Monatsexporte struct {
+	ID                     string
+	Monat                  string
+	Version                int64
+	ErstelltAm             string
+	PdfBlobKey             string
+	PdfSha256              string
+	CsvBlobKey             interface{}
+	CsvSha256              interface{}
+	ZipBlobKey             interface{}
+	ZipSha256              interface{}
+	RegelnSnapshot         string
+	EinstellungenSnapshot  string
+	Summen                 string
+	BelegIds               string
+	ErklaerungBestaetigtAm string
+	WarnungenBestaetigt    int64
+	ProtokollHash          string
+}
+
+type Sitzungen struct {
+	TokenHash      string
+	Akteur         string
+	ErstelltAm     string
+	ZuletztAktivAm string
+	LaeuftAbAm     string
+	UserAgent      string
+	Ip             string
+	OidcIDToken    string
+}
+
 type System struct {
 	Key   string
 	Value string
