@@ -1,0 +1,62 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:best-practices", ":semanticCommits"],
+  "schedule": ["before 6am on Monday"],
+  "postUpdateOptions": ["gomodTidy"],
+  "packageRules": [
+    {
+      "groupName": "go",
+      "matchManagers": ["gomod"]
+    },
+    {
+      "groupName": "web (prod)",
+      "matchManagers": ["npm"],
+      "matchFileNames": ["web/package.json"],
+      "matchDepTypes": ["dependencies"],
+      "rangeStrategy": "pin"
+    },
+    {
+      "groupName": "web (dev)",
+      "matchManagers": ["npm"],
+      "matchFileNames": ["web/package.json"],
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "rangeStrategy": "pin",
+      "automerge": true
+    },
+    {
+      "description": "Solid 2 and Kobalte majors stay on manual review",
+      "matchPackageNames": ["solid-js", "@kobalte/core"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "groupName": "github-actions",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "automerge": true
+    },
+    {
+      "groupName": "docker",
+      "matchManagers": ["dockerfile", "docker-compose"]
+    },
+    {
+      "description": "Typst SHA256 args must be refreshed in the same pull request",
+      "matchPackageNames": ["typst/typst"],
+      "automerge": false,
+      "labels": ["typst"]
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/(^|/)Dockerfile(\\..*)?$/"],
+      "matchStrings": [
+        "# renovate: datasource=github-releases depName=typst/typst\\nARG TYPST_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "typst/typst",
+      "extractVersionTemplate": "^v(?<version>.*)$"
+    }
+  ]
+}

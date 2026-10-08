@@ -1,0 +1,88 @@
+version: 2
+
+project_name: vc-belegapp
+
+before:
+  hooks:
+    - pnpm -C web install --frozen-lockfile
+    - pnpm -C web build
+    - go generate ./...
+
+builds:
+  - id: belegapp
+    binary: belegapp
+    main: ./cmd/belegapp
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+
+archives:
+  - id: belegapp
+    formats: [tar.gz]
+    files:
+      - LICENSE
+      - README.md
+      - deploy/*
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - --yes
+      - --output-certificate=${certificate}
+      - --output-signature=${signature}
+      - ${artifact}
+
+sboms:
+  - artifacts: archive
+
+dockers_v2:
+  - ids:
+      - belegapp
+    dockerfile: Dockerfile.goreleaser
+    images:
+      - ghcr.io/blackdark/vc-belegapp
+    tags:
+      - "{{.Version}}"
+      - "{{.Major}}.{{.Minor}}"
+      - "{{.Major}}"
+      - latest
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.source: https://github.com/BlackDark/vc-belegapp
+      org.opencontainers.image.licenses: MIT
+      org.opencontainers.image.title: vc-belegapp
+      org.opencontainers.image.version: "{{.Version}}"
+      org.opencontainers.image.revision: "{{.FullCommit}}"
+
+docker_signs:
+  - cmd: cosign
+    artifacts: all
+    args:
+      - sign
+      - --yes
+      - ${artifact}
+
+changelog:
+  disable: true
+
+release:
+  mode: keep-existing

@@ -1,0 +1,11 @@
+.git
+.github
+web/node_modules
+web/dist
+bin
+data
+coverage.out
+*.db
+*.db-wal
+*.db-shm
+*.db-journal

@@ -1,0 +1,30 @@
+services:
+  belegapp:
+    image: ghcr.io/blackdark/vc-belegapp:1
+    restart: unless-stopped
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=512m,mode=1777"]
+    ports: ["127.0.0.1:8080:8080"]
+    volumes: ["./data:/data"] # chown -R 65532:65532 ./data beforehand
+    environment:
+      BELEGAPP_BASE_URL: https://belege.example.de
+      BELEGAPP_TRUSTED_PROXIES: 172.16.0.0/12
+      BELEGAPP_OIDC_ISSUER_URL: https://auth.example.de
+      BELEGAPP_OIDC_CLIENT_ID: belegapp
+      BELEGAPP_OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_secret
+      BELEGAPP_OIDC_ALLOWED_EMAILS: eduard@example.de
+      BELEGAPP_AUTH_PASSWORD_HASH_FILE: /run/secrets/pw_hash
+      BELEGAPP_LLM_API_KEY_FILE: /run/secrets/openai_key
+    secrets: [oidc_secret, pw_hash, openai_key]
+    healthcheck:
+      test: ["CMD", "/belegapp", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+secrets:
+  oidc_secret: { file: ./secrets/oidc_secret }
+  pw_hash: { file: ./secrets/pw_hash }
+  openai_key: { file: ./secrets/openai_key }
