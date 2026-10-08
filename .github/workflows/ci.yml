@@ -106,10 +106,12 @@ jobs:
           provenance: false
           sbom: false
           tags: ghcr.io/blackdark/vc-belegapp:ci
-          outputs: type=oci,dest=/tmp/belegapp-oci.tar
+          # Trivy reads an OCI layout directory (index.json). The .tar form of
+          # this exporter has no Docker manifest.json, so the scan cannot open it.
+          outputs: type=oci,dest=/tmp/belegapp-oci
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          input: /tmp/belegapp-oci.tar
+          input: /tmp/belegapp-oci
           severity: HIGH,CRITICAL
           exit-code: "1"
           ignore-unfixed: true
