@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/BlackDark/vc-belegapp/internal/db"
@@ -33,6 +34,7 @@ type Queue struct {
 	OnResult func(result string, seconds float64)
 	OnStats  func(waiting int)
 	wake     chan struct{}
+	wakeOnce sync.Once
 }
 
 // Enqueue inserts a waiting job and wakes a worker.
@@ -65,9 +67,7 @@ func (q *Queue) Reset(ctx context.Context) error {
 
 // Run processes jobs until ctx is cancelled.
 func (q *Queue) Run(ctx context.Context) {
-	if q.wake == nil {
-		q.wake = make(chan struct{}, 1)
-	}
+	_ = q.wakeCh()
 	workers := q.Workers
 	if workers < 1 {
 		workers = 1
@@ -220,12 +220,16 @@ func (q *Queue) stats(ctx context.Context) {
 	q.OnStats(int(n))
 }
 
+func (q *Queue) wakeCh() chan struct{} {
+	q.wakeOnce.Do(func() {
+		q.wake = make(chan struct{}, 1)
+	})
+	return q.wake
+}
+
 func (q *Queue) kick() {
-	if q.wake == nil {
-		return
-	}
 	select {
-	case q.wake <- struct{}{}:
+	case q.wakeCh() <- struct{}{}:
 	default:
 	}
 }
