@@ -134,7 +134,7 @@ func (a *API) uploadBild(w http.ResponseWriter, r *http.Request) {
 		a.writeErr(w, r, err)
 		return
 	}
-	bild, err := a.Svc.SaveBild(r.Context(), data)
+	bild, err := a.Svc.SaveBild(r.Context(), data, r.FormValue("erkennung") != "false")
 	if err != nil {
 		a.writeErr(w, r, err)
 		return
@@ -163,6 +163,33 @@ func (a *API) bildDatei(thumb bool) http.HandlerFunc {
 		w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 		_, _ = io.Copy(w, rc)
 	}
+}
+
+func (a *API) startErkennung(w http.ResponseWriter, r *http.Request) {
+	bild, err := a.Svc.RestartErkennung(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	a.writeJSON(w, http.StatusAccepted, bild)
+}
+
+func (a *API) testErkennung(w http.ResponseWriter, r *http.Request) {
+	out, err := a.Svc.TestErkennung(r.Context())
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, out)
+}
+
+func (a *API) getJob(w http.ResponseWriter, r *http.Request) {
+	out, err := a.Svc.GetJob(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, out)
 }
 
 func (a *API) deleteBild(w http.ResponseWriter, r *http.Request) {

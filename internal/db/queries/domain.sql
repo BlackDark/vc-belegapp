@@ -111,7 +111,7 @@ INSERT INTO belegbilder (
     mime, bytes, breite, hoehe, erkennung_status, erstellt_am
 ) VALUES (
     ?, NULL, NULL, ?, ?, ?, ?,
-    'image/jpeg', ?, ?, ?, 'keine', ?
+    'image/jpeg', ?, ?, ?, ?, ?
 );
 
 -- name: GetBelegbild :one

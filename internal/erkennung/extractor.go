@@ -5,7 +5,7 @@ import (
 	"errors"
 )
 
-// ErrDeaktiviert is returned by the disabled extractor (M1 has no recognition).
+// ErrDeaktiviert is returned when recognition is switched off.
 var ErrDeaktiviert = errors.New("erkennung: deaktiviert")
 
 // Position is one recognised line.
@@ -39,12 +39,12 @@ type Meta struct {
 }
 
 // ReceiptExtractor pulls structured fields from a receipt image.
-// Implementations: openaicompat (later), fake (tests), Disabled.
+// Implementations: OpenAI (any compatible endpoint), Fake, Disabled.
 type ReceiptExtractor interface {
 	Extract(ctx context.Context, img []byte, mime string) (Ergebnis, Meta, error)
 }
 
-// Disabled refuses extraction. M1 uploads stay on manual entry.
+// Disabled refuses extraction. Uploads stay on manual entry.
 type Disabled struct{}
 
 // Extract returns ErrDeaktiviert.

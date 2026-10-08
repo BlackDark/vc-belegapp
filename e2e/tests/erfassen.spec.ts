@@ -30,7 +30,9 @@ test("login, upload, save, month, duplicate, dark mode", async ({ page }, info) 
   });
   await expect(page).toHaveURL(/\/belege\/neu\?bild=/);
   await expect(page.getByRole("img", { name: "Belegbild" })).toBeVisible();
-  await expect(page.getByText("manuell erfasst")).toBeVisible();
+  await expect(page.getByLabel("Händler")).toHaveValue("Edeka", {
+    timeout: 20_000,
+  });
 
   await page.getByLabel("Datum").fill("2026-10-03");
   await page.getByLabel("Händler").fill("REWE");
@@ -54,6 +56,9 @@ test("login, upload, save, month, duplicate, dark mode", async ({ page }, info) 
     buffer: png,
   });
   await expect(page).toHaveURL(/\/belege\/neu\?bild=/);
+  await expect(page.getByLabel("Händler")).toHaveValue("Edeka", {
+    timeout: 20_000,
+  });
   await page.getByLabel("Datum").fill(datum);
   await page.getByLabel("Händler").fill("Lidl");
   await page.getByLabel("Belegbetrag").fill("3,80");

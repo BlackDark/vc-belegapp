@@ -1,7 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const port = process.env.E2E_PORT ?? "8080";
+const llmPort = process.env.E2E_LLM_PORT ?? "18081";
 const baseURL = `http://127.0.0.1:${port}`;
+const llmURL = `http://127.0.0.1:${llmPort}`;
 // Low-cost PHC (m=8192, t=1, p=1) for the password "belegapp-e2e".
 // hash-password still emits the production parameters.
 const passwordHash =
@@ -39,21 +41,39 @@ export default defineConfig({
       },
     },
   ],
-  webServer: {
-    command: process.env.BELEGAPP_BIN
-      ? `${process.env.BELEGAPP_BIN} serve`
-      : "go run ./cmd/belegapp serve",
-    cwd: "..",
-    url: `${baseURL}/healthz`,
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-    env: {
-      BELEGAPP_LISTEN_ADDR: `127.0.0.1:${port}`,
-      BELEGAPP_DATA_DIR: process.env.BELEGAPP_DATA_DIR ?? "/tmp/belegapp-e2e",
-      BELEGAPP_COOKIE_SECURE: "false",
-      BELEGAPP_BASE_URL: baseURL,
-      BELEGAPP_TZ: "Europe/Berlin",
-      BELEGAPP_AUTH_PASSWORD_HASH: passwordHash,
+  webServer: [
+    {
+      command: "go run ./e2e/fakellm",
+      cwd: "..",
+      url: `${llmURL}/healthz`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+      env: {
+        FAKE_LLM_ADDR: `127.0.0.1:${llmPort}`,
+      },
     },
-  },
+    {
+      command: process.env.BELEGAPP_BIN
+        ? `${process.env.BELEGAPP_BIN} serve`
+        : "go run ./cmd/belegapp serve",
+      cwd: "..",
+      url: `${baseURL}/healthz`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+      env: {
+        BELEGAPP_LISTEN_ADDR: `127.0.0.1:${port}`,
+        BELEGAPP_DATA_DIR: process.env.BELEGAPP_DATA_DIR ?? "/tmp/belegapp-e2e",
+        BELEGAPP_COOKIE_SECURE: "false",
+        BELEGAPP_BASE_URL: baseURL,
+        BELEGAPP_TZ: "Europe/Berlin",
+        BELEGAPP_AUTH_PASSWORD_HASH: passwordHash,
+        BELEGAPP_LLM_BASE_URL: `${llmURL}/v1`,
+        BELEGAPP_LLM_API_KEY: "e2e",
+        BELEGAPP_LLM_MODEL: "fake-vision",
+        BELEGAPP_LLM_RESPONSE_FORMAT: "json_schema",
+        BELEGAPP_LLM_TIMEOUT: "10s",
+        BELEGAPP_JOB_WORKERS: "2",
+      },
+    },
+  ],
 });

@@ -185,7 +185,7 @@ func TestFlowManualReceipt(t *testing.T) {
 		t.Fatalf("audit %d %s", res.Status, res.Raw)
 	}
 	res = doJSON(t, client, http.MethodPost, ts.URL+"/api/v1/belegbilder/x/erkennung", "", map[string]any{})
-	if res.Status != 501 || res.JSON["code"] != "E_NICHT_IMPLEMENTIERT" {
+	if res.Status != 404 || res.JSON["code"] != "E_NICHT_GEFUNDEN" {
 		t.Fatalf("erkennung %d %s", res.Status, res.Raw)
 	}
 

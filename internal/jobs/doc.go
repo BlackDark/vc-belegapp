@@ -1,2 +1,2 @@
-// Package jobs will run the SQLite-backed background queue.
+// Package jobs runs the SQLite-backed background queue.
 package jobs

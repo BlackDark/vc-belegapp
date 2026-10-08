@@ -96,23 +96,8 @@ func recognitionWarnings(in BelegInput, raw string) []validate.Warnung {
 	if erkannt.Datum != nil && *erkannt.Datum != "" && *erkannt.Datum != in.Datum {
 		out = append(out, validate.DatumAbweichung(*erkannt.Datum))
 	}
-	if erkannt.Konfidenz < 0.6 || positionDrift(erkannt) {
+	if erkennung.Unsicher(erkannt) {
 		out = append(out, validate.KIUnsicher())
 	}
 	return out
-}
-
-func positionDrift(erkannt erkennung.Ergebnis) bool {
-	if erkannt.GesamtbetragCent == nil {
-		return false
-	}
-	sum := 0
-	for _, pos := range erkannt.Positionen {
-		sum += pos.BetragCent
-	}
-	diff := sum - *erkannt.GesamtbetragCent
-	if diff < 0 {
-		diff = -diff
-	}
-	return diff > 5
 }

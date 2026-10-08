@@ -121,6 +121,7 @@ func (s *Service) CreateBeleg(ctx context.Context, actor Actor, in BelegInput) (
 			return err
 		}
 		stamp := s.stamp()
+		src := s.quelle(ctx, q, in)
 		if err := q.InsertBeleg(ctx, db.InsertBelegParams{
 			ID:                     newID,
 			Datum:                  built.Datum,
@@ -133,7 +134,7 @@ func (s *Service) CreateBeleg(ctx context.Context, actor Actor, in BelegInput) (
 			KorrigierterBetragCent: nullInt(built.KorrigierterBetragCent),
 			KorrekturGrund:         nullStr(built.KorrekturGrund),
 			Notiz:                  built.Notiz,
-			Quelle:                 "manuell",
+			Quelle:                 src,
 			ErstelltAm:             stamp,
 			GeaendertAm:            stamp,
 		}); err != nil {
@@ -153,7 +154,7 @@ func (s *Service) CreateBeleg(ctx context.Context, actor Actor, in BelegInput) (
 		built.ErstelltAm = stamp
 		built.GeaendertAm = stamp
 		built.noteExport(stamp)
-		built.Quelle = "manuell"
+		built.Quelle = src
 		if err := s.attachBilder(ctx, q, &built); err != nil {
 			return err
 		}
@@ -190,6 +191,7 @@ func (s *Service) UpdateBeleg(ctx context.Context, actor Actor, belegID string, 
 			return err
 		}
 		stamp := s.stamp()
+		src := s.quelle(ctx, q, in)
 		res, err := q.UpdateBeleg(ctx, db.UpdateBelegParams{
 			Datum:                  built.Datum,
 			Mahlzeit:               built.Mahlzeit,
@@ -201,7 +203,7 @@ func (s *Service) UpdateBeleg(ctx context.Context, actor Actor, belegID string, 
 			KorrigierterBetragCent: nullInt(built.KorrigierterBetragCent),
 			KorrekturGrund:         nullStr(built.KorrekturGrund),
 			Notiz:                  built.Notiz,
-			Quelle:                 row.Quelle,
+			Quelle:                 src,
 			GeaendertAm:            stamp,
 			ID:                     belegID,
 			Version:                int64(patch.Version),
@@ -237,7 +239,7 @@ func (s *Service) UpdateBeleg(ctx context.Context, actor Actor, belegID string, 
 		built.ErstelltAm = row.ErstelltAm
 		built.GeaendertAm = stamp
 		built.noteExport(stamp)
-		built.Quelle = row.Quelle
+		built.Quelle = src
 		if err := s.attachBilder(ctx, q, &built); err != nil {
 			return err
 		}

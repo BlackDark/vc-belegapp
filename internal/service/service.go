@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/BlackDark/vc-belegapp/internal/db"
+	"github.com/BlackDark/vc-belegapp/internal/erkennung"
 	"github.com/BlackDark/vc-belegapp/internal/holidays"
+	"github.com/BlackDark/vc-belegapp/internal/jobs"
 	"github.com/BlackDark/vc-belegapp/internal/storage"
 )
 
@@ -18,15 +20,19 @@ type Actor struct {
 	RequestID string
 }
 
-// Service is the M1 application API used by HTTP handlers.
+// Service is the application API used by HTTP handlers.
 type Service struct {
-	DB        *db.DB
-	Store     storage.BlobStore
-	Holidays  holidays.Provider
-	Loc       *time.Location
-	Now       func() time.Time
-	UploadMax int64
-	ImageTTL  time.Duration
+	DB         *db.DB
+	Store      storage.BlobStore
+	Holidays   holidays.Provider
+	Loc        *time.Location
+	Now        func() time.Time
+	UploadMax  int64
+	ImageTTL   time.Duration
+	Extractor  erkennung.ReceiptExtractor
+	Jobs       *jobs.Queue
+	LLMMaxPX   int
+	LLMTimeout time.Duration
 }
 
 func (s *Service) now() time.Time {

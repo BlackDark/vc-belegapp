@@ -32,6 +32,8 @@ export default function Einstellungen() {
   const [ag, setAg] = createSignal("");
   const [bezug, setBezug] = createSignal("supermarkt");
   const [arbeit, setArbeit] = createSignal("betrieb");
+  const [aktiv, setAktiv] = createSignal(true);
+  const [testLaeuft, setTestLaeuft] = createSignal(false);
   createEffect(() => {
     const row = profil.data;
     if (!row) {
@@ -42,11 +44,11 @@ export default function Einstellungen() {
     setAg(row.arbeitgeber_name);
     setBezug(row.standard_bezugsort);
     setArbeit(row.standard_arbeitsort);
+    setAktiv(row.erkennung_aktiv);
   });
 
-  const save = async (event: SubmitEvent) => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget as HTMLFormElement);
+  const save = async (event?: Event) => {
+    event?.preventDefault();
     const current = profil.data;
     if (!current) {
       return;
@@ -58,8 +60,8 @@ export default function Einstellungen() {
       arbeitgeber_name: ag(),
       standard_bezugsort: bezug(),
       standard_arbeitsort: arbeit(),
+      erkennung_aktiv: aktiv(),
     };
-    void data;
     try {
       await client.putEinstellungen(next);
       toast.success("Gespeichert");
@@ -170,18 +172,76 @@ export default function Einstellungen() {
           <option value="system">System</option>
         </select>
       </div>
-      <div>
+      <div class="flex flex-col gap-3">
         <h2 class="text-lg font-medium">Belegerkennung</h2>
-        <p class="text-sm text-zinc-500">
-          {info.data?.llm_model} · {info.data?.llm_base_url}
-        </p>
-        <p class="text-sm">
-          Erkennung ist in dieser Version manuell. Der automatische Abruf folgt
-          später.
-        </p>
+        <label class="flex min-h-12 items-center gap-3 text-sm">
+          <input
+            type="checkbox"
+            checked={aktiv()}
+            onChange={(event) => {
+              setAktiv(event.currentTarget.checked);
+              void save();
+            }}
+          />
+          Belegerkennung aktiv
+        </label>
+        <label class="text-sm">
+          Modell
+          <input
+            readOnly
+            aria-label="Modell"
+            value={info.data?.llm_model ?? ""}
+            class="mt-1 min-h-12 w-full rounded-xl border border-zinc-300 bg-zinc-50 px-3 dark:border-zinc-700 dark:bg-zinc-900"
+          />
+        </label>
+        <label class="text-sm">
+          Basis-URL
+          <input
+            readOnly
+            aria-label="Basis-URL"
+            value={info.data?.llm_base_url ?? ""}
+            class="mt-1 min-h-12 w-full rounded-xl border border-zinc-300 bg-zinc-50 px-3 dark:border-zinc-700 dark:bg-zinc-900"
+          />
+        </label>
+        <Show when={info.data?.erkennung_problem}>
+          <p class="text-sm text-amber-800 dark:text-amber-200">
+            {info.data?.erkennung_problem}
+          </p>
+        </Show>
+        <Show when={info.data && !info.data.erkennung_konfiguriert}>
+          <p class="text-sm text-zinc-500">
+            Nicht konfiguriert. Ohne API-Key bei der OpenAI-Basis-URL oder mit
+            BELEGAPP_LLM_ENABLED=false bleibt die Erfassung manuell.
+          </p>
+        </Show>
         <Button
-          class="mt-2 bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
-          onClick={() => toast("Verbindungstest folgt mit der Erkennung.")}
+          class="bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
+          disabled={testLaeuft()}
+          onClick={() => {
+            setTestLaeuft(true);
+            void client
+              .testErkennung()
+              .then((result) => {
+                if (result.ok) {
+                  toast.success(
+                    `Verbindung ok (${result.modell}, ${result.dauer_ms} ms)`,
+                  );
+                } else {
+                  toast.error(result.fehler || "Verbindung fehlgeschlagen");
+                }
+              })
+              .catch((err: unknown) => {
+                toast.error(
+                  err instanceof ApiError
+                    ? err.message
+                    : "Verbindung fehlgeschlagen",
+                );
+              })
+              .finally(() => {
+                setTestLaeuft(false);
+                void queryClient.invalidateQueries({ queryKey: ["info"] });
+              });
+          }}
         >
           Verbindung testen
         </Button>

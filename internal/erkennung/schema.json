@@ -1,0 +1,37 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ist_kassenbeleg", "datum", "uhrzeit", "haendler_name", "haendler_ort", "gesamtbetrag_cent", "waehrung", "positionen", "bezugsort_vorschlag", "konfidenz", "hinweise"],
+  "properties": {
+    "ist_kassenbeleg": { "type": "boolean" },
+    "datum": { "type": ["string", "null"], "description": "YYYY-MM-DD" },
+    "uhrzeit": { "type": ["string", "null"], "description": "HH:MM" },
+    "haendler_name": { "type": ["string", "null"] },
+    "haendler_ort": { "type": ["string", "null"] },
+    "gesamtbetrag_cent": { "type": ["integer", "null"] },
+    "waehrung": { "type": ["string", "null"], "description": "ISO 4217, z. B. EUR" },
+    "positionen": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["bezeichnung", "betrag_cent", "mwst_satz_prozent", "kategorie"],
+        "properties": {
+          "bezeichnung": { "type": "string" },
+          "betrag_cent": { "type": "integer", "description": "negativ für Rabatte/Pfandrückgabe" },
+          "mwst_satz_prozent": { "type": ["number", "null"] },
+          "kategorie": {
+            "type": "string",
+            "enum": ["lebensmittel", "getraenk_alkoholfrei", "alkohol", "tabak", "pfand", "nonfood", "rabatt", "sonstiges"]
+          }
+        }
+      }
+    },
+    "bezugsort_vorschlag": {
+      "type": ["string", "null"],
+      "enum": ["supermarkt", "restaurant", "kantine", "baeckerei", "lieferdienst", "sonstiges", null]
+    },
+    "konfidenz": { "type": "number", "description": "0..1" },
+    "hinweise": { "type": ["string", "null"] }
+  }
+}
