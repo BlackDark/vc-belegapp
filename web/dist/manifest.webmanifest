@@ -1,0 +1,1 @@
+{"name":"Belegapp","short_name":"Belege","start_url":"/","display":"standalone","background_color":"#fafafa","theme_color":"#14532d","lang":"de","scope":"/","icons":[{"src":"pwa-192.png","sizes":"192x192","type":"image/png"},{"src":"pwa-512.png","sizes":"512x512","type":"image/png"},{"src":"maskable-512.png","sizes":"512x512","type":"image/png","purpose":"maskable"}]}

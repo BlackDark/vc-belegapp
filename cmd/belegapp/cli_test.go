@@ -42,6 +42,17 @@ func TestInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestServeRequiresAuth(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("BELEGAPP_DATA_DIR", dir)
+	t.Setenv("BELEGAPP_LISTEN_ADDR", freeAddr(t))
+	err := run(context.Background(), []string{"serve"}, io.Discard, io.Discard)
+	var exit *exitError
+	if !errors.As(err, &exit) || exit.code != 2 {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestHealthcheck(t *testing.T) {
 	srv := http.NewServeMux()
 	srv.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
@@ -63,6 +74,7 @@ func TestServeReady(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("BELEGAPP_DATA_DIR", dir)
 	t.Setenv("BELEGAPP_LOG_FORMAT", "text")
+	t.Setenv("BELEGAPP_AUTH_PASSWORD_HASH", "$argon2id$v=19$m=65536,t=3,p=2$c2FsdHNhbHRzYWx0$aGFzaGhhc2hoYXNoaGFzaA")
 	t.Setenv("BELEGAPP_LISTEN_ADDR", freeAddr(t))
 	t.Setenv("BELEGAPP_METRICS_ADDR", freeAddr(t))
 	bin := filepath.Join(dir, "typst")

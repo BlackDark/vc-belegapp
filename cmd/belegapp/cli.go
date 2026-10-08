@@ -1,17 +1,26 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"io/fs"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/BlackDark/vc-belegapp/internal/app"
+	"github.com/BlackDark/vc-belegapp/internal/audit"
+	"github.com/BlackDark/vc-belegapp/internal/auth"
 	"github.com/BlackDark/vc-belegapp/internal/config"
+	"github.com/BlackDark/vc-belegapp/internal/db"
 	"github.com/BlackDark/vc-belegapp/internal/logging"
 	"github.com/BlackDark/vc-belegapp/web"
 )
@@ -22,10 +31,10 @@ const usageText = `Usage: belegapp <command>
   migrate         Apply database migrations and exit
   healthcheck     GET /readyz and exit 0 when it returns 200
   version         Print build information
-  hash-password   Print an argon2id PHC hash (later milestone)
+  hash-password   Print an argon2id PHC hash read from stdin
   backup          Write a data export (later milestone)
   restore         Restore a data export (later milestone)
-  verify-audit    Verify the audit hash chain (later milestone)
+  verify-audit    Verify the audit hash chain
 `
 
 func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -46,13 +55,13 @@ func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	case "healthcheck":
 		return cmdHealthcheck(args[1:], stdout, stderr)
 	case "hash-password":
-		return notImplemented("hash-password")
+		return cmdHashPassword(args[1:], stdout, stderr)
 	case "backup":
 		return notImplemented("backup")
 	case "restore":
 		return notImplemented("restore")
 	case "verify-audit":
-		return notImplemented("verify-audit")
+		return cmdVerifyAudit(ctx, args[1:], stdout, stderr)
 	default:
 		return exitf(2, "unknown command %q", args[0])
 	}
@@ -74,12 +83,77 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if err != nil {
 		return err
 	}
-	return app.Serve(ctx, app.Options{
+	err = app.Serve(ctx, app.Options{
 		Config:   cfg,
 		Log:      logging.New(stdout, cfg.LogLevel, cfg.LogFormat),
 		Version:  app.Version{Version: version, Commit: commit, Date: date},
 		Frontend: frontend,
 	})
+	if errors.Is(err, app.ErrAuthRequired) {
+		return exitErr(2, err)
+	}
+	return err
+}
+
+func cmdHashPassword(args []string, stdout, stderr io.Writer) error {
+	if err := parseFlags("hash-password", args, stderr); err != nil {
+		return err
+	}
+	password, err := readSecret(stderr)
+	if err != nil {
+		return exitErr(1, err)
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		return exitErr(1, err)
+	}
+	_, err = fmt.Fprintln(stdout, hash)
+	return err
+}
+
+func readSecret(stderr io.Writer) ([]byte, error) {
+	fd := int(os.Stdin.Fd())
+	if term.IsTerminal(fd) {
+		_, _ = fmt.Fprintln(stderr, "Passwort:")
+		password, err := term.ReadPassword(fd)
+		_, _ = fmt.Fprintln(stderr)
+		return password, err
+	}
+	password, err := io.ReadAll(io.LimitReader(os.Stdin, 1024))
+	if err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(password, "\r\n"), nil
+}
+
+func cmdVerifyAudit(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if err := parseFlags("verify-audit", args, stderr); err != nil {
+		return err
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return exitErr(2, err)
+	}
+	if err := app.Migrate(ctx, app.Options{Config: cfg, Log: logging.New(stderr, cfg.LogLevel, cfg.LogFormat)}); err != nil {
+		return err
+	}
+	database, err := db.Open(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = database.Close() }()
+	report, err := audit.Verify(ctx, database.Read)
+	if err != nil {
+		return err
+	}
+	enc := json.NewEncoder(stdout)
+	if err := enc.Encode(map[string]any{"ok": report.OK, "anzahl": report.Anzahl, "erster_fehler_id": report.ErsterFehlerID}); err != nil {
+		return err
+	}
+	if !report.OK {
+		return exitf(1, "audit chain failed at id %d", report.ErsterFehlerID)
+	}
+	return nil
 }
 
 func cmdMigrate(ctx context.Context, args []string, stderr io.Writer) error {

@@ -1,6 +1,4 @@
 // Package storage is the blob store used for receipt images and exports.
-// M0 implements filesystem Ping and key checks. Put/Get and S3 land with
-// receipt storage.
 package storage
 
 import (
@@ -13,9 +11,6 @@ import (
 
 // ErrNotFound is returned when a key does not exist.
 var ErrNotFound = errors.New("storage: object not found")
-
-// ErrNotImplemented is returned by operations that are not part of M0.
-var ErrNotImplemented = errors.New("storage: not implemented")
 
 // ObjectInfo describes a stored object.
 type ObjectInfo struct {

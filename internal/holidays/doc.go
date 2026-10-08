@@ -1,2 +1,2 @@
-// Package holidays will wrap the public-holiday calendar and custom days.
+// Package holidays lists statutory holidays per Bundesland plus custom days.
 package holidays

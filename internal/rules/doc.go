@@ -1,2 +1,2 @@
-// Package rules will hold yearly subsidy rules and official presets.
+// Package rules validates year rules and builds official suggestions.
 package rules
