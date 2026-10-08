@@ -48,12 +48,38 @@ export type Berechnung = {
   steuerfrei_cent: number;
   regulaer_cent: number;
 };
+export type Position = {
+  bezeichnung: string;
+  betrag_cent: number;
+  kategorie: string;
+};
+export type Erkennungsergebnis = {
+  ist_kassenbeleg: boolean;
+  datum: string | null;
+  uhrzeit: string | null;
+  haendler_name: string | null;
+  haendler_ort: string | null;
+  gesamtbetrag_cent: number | null;
+  waehrung: string | null;
+  positionen: Position[];
+  bezugsort_vorschlag: string | null;
+  konfidenz: number;
+  hinweise: string | null;
+};
+export type Erkennung = {
+  status: string;
+  modell?: string | null;
+  dauer_ms?: number | null;
+  ergebnis?: Erkennungsergebnis | null;
+  korrekturvorschlag_cent?: number | null;
+  fehler?: string | null;
+};
 export type Bild = {
   id: string;
   seite: number | null;
   url: string;
   thumbnail_url: string;
-  erkennung: { status: string };
+  erkennung: Erkennung;
 };
 export type Beleg = {
   id: string;
@@ -142,8 +168,10 @@ export type SystemInfo = {
   commit: string;
   storage_backend: string;
   erkennung_konfiguriert: boolean;
+  erkennung_problem?: string;
   llm_model: string;
   llm_base_url: string;
+  llm_enabled?: boolean;
   typst_version: string;
 };
 
@@ -207,9 +235,22 @@ export const client = {
     api<void>("/api/v1/auth/sitzungen", { method: "DELETE" }),
   protokoll: () =>
     api<{ ok: boolean; anzahl: number }>("/api/v1/protokoll/pruefen"),
-  async upload(file: Blob): Promise<Bild> {
+  bild: (id: string) => api<Bild>(`/api/v1/belegbilder/${id}`),
+  erneut: (id: string) =>
+    api<Bild>(`/api/v1/belegbilder/${id}/erkennung`, { method: "POST" }),
+  testErkennung: () =>
+    api<{
+      ok: boolean;
+      modell: string;
+      dauer_ms: number;
+      fehler?: string | null;
+    }>("/api/v1/erkennung/test", { method: "POST" }),
+  async upload(file: Blob, recognize = true): Promise<Bild> {
     const data = new FormData();
     data.set("datei", file, "beleg.jpg");
+    if (!recognize) {
+      data.set("erkennung", "false");
+    }
     const res = await fetch("/api/v1/belegbilder", {
       method: "POST",
       body: data,

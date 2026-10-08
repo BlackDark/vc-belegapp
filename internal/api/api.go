@@ -79,7 +79,7 @@ func (a *API) Handler() http.Handler {
 		r.Get("/feiertage", a.feiertage)
 		r.Post("/belegbilder", a.uploadBild)
 		r.Get("/belegbilder/{id}", a.getBild)
-		r.Post("/belegbilder/{id}/erkennung", a.notImplemented)
+		r.Post("/belegbilder/{id}/erkennung", a.startErkennung)
 		r.Get("/belegbilder/{id}/datei", a.bildDatei(false))
 		r.Get("/belegbilder/{id}/thumbnail", a.bildDatei(true))
 		r.Delete("/belegbilder/{id}", a.deleteBild)
@@ -98,11 +98,11 @@ func (a *API) Handler() http.Handler {
 		r.Get("/protokoll", a.protokoll)
 		r.Get("/protokoll/pruefen", a.protokollPruefen)
 		r.Post("/datenexport", a.notImplemented)
-		r.Get("/jobs/{id}", a.notImplemented)
+		r.Get("/jobs/{id}", a.getJob)
 		r.Get("/datenexport/{job_id}/datei", a.notImplemented)
 		r.Post("/datenimport/pruefen", a.notImplemented)
 		r.Post("/datenimport", a.notImplemented)
-		r.Post("/erkennung/test", a.notImplemented)
+		r.Post("/erkennung/test", a.testErkennung)
 		r.Get("/system/info", a.systemInfo)
 	})
 	return r
@@ -282,12 +282,20 @@ func (a *API) systemInfo(w http.ResponseWriter, r *http.Request) {
 		"build_datum":            a.Info.BuildDatum,
 		"storage_backend":        a.Info.StorageBackend,
 		"erkennung_konfiguriert": a.Info.ErkennungKonfiguriert,
+		"erkennung_problem":      a.erkennungProblem(),
 		"oidc":                   oidc,
 		"typst_version":          a.Info.TypstVersion,
 		"llm_model":              a.Info.LLMModel,
 		"llm_base_url":           a.Info.LLMBaseURL,
 		"llm_enabled":            a.Info.LLMEnabled,
 	})
+}
+
+func (a *API) erkennungProblem() string {
+	if a.Svc == nil {
+		return ""
+	}
+	return a.Svc.ErkennungProblem()
 }
 
 func (a *API) notImplemented(w http.ResponseWriter, r *http.Request) {

@@ -22,6 +22,7 @@ const (
 	thumbEdge    = 400
 	jpegQuality  = 85
 	thumbQuality = 75
+	llmQuality   = 80
 	maxPixels    = 50_000_000
 	maxDimension = 20000
 )
@@ -197,6 +198,24 @@ func flipV(src image.Image) image.Image {
 		}
 	}
 	return dst
+}
+
+// ForLLM re-encodes a normalised JPEG for the model: long edge at most
+// maxEdge pixels, quality 80, no metadata. The stored original is not sent.
+func ForLLM(data []byte, maxEdge int) ([]byte, error) {
+	if maxEdge < 1 {
+		maxEdge = 1600
+	}
+	img, err := jpeg.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	img = resize(img, maxEdge)
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: llmQuality}); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // HashBytes is the hex SHA-256 of the uploaded bytes.

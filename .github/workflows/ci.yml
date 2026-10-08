@@ -12,9 +12,8 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# pdf (Typst golden file) starts with M3. e2e covers the M1 capture flow
-# (login, upload, manual fields, month view, dark mode). Recognition fill and
-# final PDF export stay out until M2 and M3.
+# pdf (Typst golden file) starts with M3. e2e covers capture plus recognition
+# against e2e/fakellm (no real API key). Final PDF export stays out until M3.
 
 jobs:
   web:

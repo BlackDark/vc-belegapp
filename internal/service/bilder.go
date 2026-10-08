@@ -39,7 +39,8 @@ type Erkennung struct {
 }
 
 // SaveBild normalises an upload and stores the JPEG plus a thumbnail.
-func (s *Service) SaveBild(ctx context.Context, data []byte) (Bild, error) {
+// recognize queues background recognition when the feature is switched on.
+func (s *Service) SaveBild(ctx context.Context, data []byte, recognize bool) (Bild, error) {
 	if s.UploadMax > 0 && int64(len(data)) > s.UploadMax {
 		return Bild{}, problem.New(413, "E_BILD_ZU_GROSS", "Das Bild ist zu groß.")
 	}
@@ -71,21 +72,41 @@ func (s *Service) SaveBild(ctx context.Context, data []byte) (Bild, error) {
 		return Bild{}, err
 	}
 	stamp := s.stamp()
+	status := "keine"
+	if recognize {
+		on, onErr := s.recognitionOn(ctx)
+		if onErr != nil {
+			return Bild{}, onErr
+		}
+		if on {
+			status = "ausstehend"
+		}
+	}
 	err = db.New(s.DB.Write).InsertBelegbild(ctx, db.InsertBelegbildParams{
-		ID:           bildID,
-		BlobKey:      key,
-		ThumbBlobKey: thumb,
-		Sha256:       norm.SHA256,
-		UploadSha256: uploadSum,
-		Bytes:        int64(len(norm.JPEG)),
-		Breite:       int64(norm.Width),
-		Hoehe:        int64(norm.Height),
-		ErstelltAm:   stamp,
+		ID:              bildID,
+		BlobKey:         key,
+		ThumbBlobKey:    thumb,
+		Sha256:          norm.SHA256,
+		UploadSha256:    uploadSum,
+		Bytes:           int64(len(norm.JPEG)),
+		Breite:          int64(norm.Width),
+		Hoehe:           int64(norm.Height),
+		ErkennungStatus: status,
+		ErstelltAm:      stamp,
 	})
 	if err != nil {
 		_ = s.Store.Delete(ctx, key)
 		_ = s.Store.Delete(ctx, thumb)
 		return Bild{}, err
+	}
+	if status == "ausstehend" {
+		if qErr := s.enqueueErkennung(ctx, bildID); qErr != nil {
+			_ = db.New(s.DB.Write).SetErkennungStatus(ctx, db.SetErkennungStatusParams{
+				ErkennungStatus: "fehler",
+				ErkennungFehler: "Erkennung konnte nicht gestartet werden.",
+				ID:              bildID,
+			})
+		}
 	}
 	row, err := db.New(s.DB.Write).GetBelegbild(ctx, bildID)
 	if err != nil {
@@ -289,7 +310,7 @@ func bildFromRow(row db.Belegbilder, dup *string) Bild {
 		Hoehe:        int(row.Hoehe),
 		URL:          "/api/v1/belegbilder/" + row.ID + "/datei",
 		ThumbnailURL: "/api/v1/belegbilder/" + row.ID + "/thumbnail",
-		Erkennung:    Erkennung{Status: row.ErkennungStatus},
+		Erkennung:    erkennungBlock(row),
 		DuplikatVon:  dup,
 	}
 }

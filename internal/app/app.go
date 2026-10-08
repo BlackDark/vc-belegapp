@@ -19,7 +19,9 @@ import (
 	"github.com/BlackDark/vc-belegapp/internal/auth"
 	"github.com/BlackDark/vc-belegapp/internal/config"
 	"github.com/BlackDark/vc-belegapp/internal/db"
+	"github.com/BlackDark/vc-belegapp/internal/erkennung"
 	"github.com/BlackDark/vc-belegapp/internal/holidays"
+	"github.com/BlackDark/vc-belegapp/internal/jobs"
 	"github.com/BlackDark/vc-belegapp/internal/pdf"
 	"github.com/BlackDark/vc-belegapp/internal/server"
 	"github.com/BlackDark/vc-belegapp/internal/service"
@@ -99,13 +101,25 @@ func Serve(ctx context.Context, opt Options) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	svc := &service.Service{
-		DB:        database,
-		Store:     store,
-		Holidays:  holidays.NewCalendar(),
-		Loc:       opt.Config.Location,
-		UploadMax: opt.Config.UploadMaxBytes,
-		ImageTTL:  opt.Config.UnassignedImageTTL,
+		DB:         database,
+		Store:      store,
+		Holidays:   holidays.NewCalendar(),
+		Loc:        opt.Config.Location,
+		UploadMax:  opt.Config.UploadMaxBytes,
+		ImageTTL:   opt.Config.UnassignedImageTTL,
+		Extractor:  newExtractor(opt.Config),
+		LLMMaxPX:   opt.Config.LLMMaxImagePX,
+		LLMTimeout: opt.Config.LLMTimeout,
 	}
+	queue := &jobs.Queue{
+		DB:      database,
+		Workers: opt.Config.JobWorkers,
+		Log:     opt.Log,
+		Handle:  svc.HandleJob,
+		OnRetry: svc.JobRetry,
+		OnFail:  svc.JobFail,
+	}
+	svc.Jobs = queue
 	sessions := &auth.Sessions{
 		DB:       database,
 		Idle:     opt.Config.SessionIdleTimeout,
@@ -114,6 +128,15 @@ func Serve(ctx context.Context, opt Options) error {
 	}
 	go sessions.Run(runCtx)
 	go svc.Sweep(runCtx)
+	jobDone := make(chan struct{})
+	go func() {
+		defer close(jobDone)
+		svc.RunJobs(runCtx)
+	}()
+	defer func() {
+		cancel()
+		<-jobDone
+	}()
 	var oidcClient *auth.OIDC
 	if opt.Config.OIDCIssuerURL != "" {
 		oidcClient = auth.NewOIDC(auth.OIDCConfig{
@@ -158,7 +181,15 @@ func Serve(ctx context.Context, opt Options) error {
 	var metricsReg *prometheus.Registry
 	var metricsSrv *http.Server
 	if opt.Config.MetricsAddr != "" {
-		metricsReg = server.NewMetricsRegistry()
+		metrics := server.NewMetrics()
+		metricsReg = metrics.Registry
+		queue.OnResult = func(result string, seconds float64) {
+			metrics.ErkennungTotal.WithLabelValues(result).Inc()
+			metrics.ErkennungDauer.Observe(seconds)
+		}
+		queue.OnStats = func(waiting int) {
+			metrics.JobsWartend.Set(float64(waiting))
+		}
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", server.MetricsHandler(metricsReg))
 		metricsSrv = &http.Server{
@@ -216,6 +247,20 @@ func Serve(ctx context.Context, opt Options) error {
 		shutdown(httpServer, metricsSrv)
 		return err
 	}
+}
+
+func newExtractor(cfg config.Config) erkennung.ReceiptExtractor {
+	if !cfg.LLMEnabled || cfg.OpenAIKeyMissing() {
+		return erkennung.Disabled{}
+	}
+	return erkennung.NewOpenAI(erkennung.OpenAIOptions{
+		BaseURL:         cfg.LLMBaseURL,
+		APIKey:          cfg.LLMAPIKey,
+		Model:           cfg.LLMModel,
+		Format:          cfg.LLMResponseFormat,
+		ReasoningEffort: cfg.LLMReasoningEffort,
+		Timeout:         cfg.LLMTimeout,
+	})
 }
 
 func logStartup(opt Options, rt db.Runtime, typst pdf.Probe) {

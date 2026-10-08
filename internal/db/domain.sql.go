@@ -374,20 +374,21 @@ INSERT INTO belegbilder (
     mime, bytes, breite, hoehe, erkennung_status, erstellt_am
 ) VALUES (
     ?, NULL, NULL, ?, ?, ?, ?,
-    'image/jpeg', ?, ?, ?, 'keine', ?
+    'image/jpeg', ?, ?, ?, ?, ?
 )
 `
 
 type InsertBelegbildParams struct {
-	ID           string
-	BlobKey      string
-	ThumbBlobKey string
-	Sha256       string
-	UploadSha256 string
-	Bytes        int64
-	Breite       int64
-	Hoehe        int64
-	ErstelltAm   string
+	ID              string
+	BlobKey         string
+	ThumbBlobKey    string
+	Sha256          string
+	UploadSha256    string
+	Bytes           int64
+	Breite          int64
+	Hoehe           int64
+	ErkennungStatus string
+	ErstelltAm      string
 }
 
 func (q *Queries) InsertBelegbild(ctx context.Context, arg InsertBelegbildParams) error {
@@ -400,6 +401,7 @@ func (q *Queries) InsertBelegbild(ctx context.Context, arg InsertBelegbildParams
 		arg.Bytes,
 		arg.Breite,
 		arg.Hoehe,
+		arg.ErkennungStatus,
 		arg.ErstelltAm,
 	)
 	return err
