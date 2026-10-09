@@ -130,6 +130,28 @@ func TestQueueAuthDoesNotRetry(t *testing.T) {
 	}
 }
 
+func TestQueueRequeuesWhenCancelled(t *testing.T) {
+	database := openQueueDB(t)
+	started := make(chan struct{})
+	q := testQueue(database, func(ctx context.Context, _ Job) (float64, string, error) {
+		close(started)
+		<-ctx.Done()
+		return 0, "", ctx.Err()
+	})
+	id, err := q.Enqueue(context.Background(), "erkennung", `{"bild_id":"b"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel := runQueue(t, q)
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("job did not start")
+	}
+	cancel()
+	waitStatus(t, database, id, "wartend")
+}
+
 func TestQueueResetRequeuesRunning(t *testing.T) {
 	database := openQueueDB(t)
 	q := testQueue(database, func(context.Context, Job) (float64, string, error) { return 0.2, "", nil })

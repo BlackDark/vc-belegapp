@@ -1,8 +1,8 @@
 import { cleanup, render, screen, waitFor } from "@solidjs/testing-library";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CaptureInputs } from "../components/CaptureInputs";
 import type { Erkennung } from "../lib/api";
-import { CaptureInputs } from "./Heute";
 import { PruefenForm } from "./Pruefen";
 
 function field(root: ParentNode, name: string): HTMLInputElement {

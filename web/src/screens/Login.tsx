@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/solid-query";
 import { createSignal, Show } from "solid-js";
 import { Button, TextField } from "../components/ui";
 import { ApiError, client } from "../lib/api";
+import { queryKeys } from "../lib/queryKeys";
 
 const fehlerText: Record<string, string> = {
   nicht_berechtigt: "Dieses Konto ist nicht berechtigt.",
@@ -15,7 +16,7 @@ export default function Login() {
   const clientQuery = useQueryClient();
   const [params] = useSearchParams();
   const config = useQuery(() => ({
-    queryKey: ["auth-config"],
+    queryKey: queryKeys.authConfig,
     queryFn: () => client.config(),
   }));
   const [password, setPassword] = createSignal("");
@@ -25,7 +26,7 @@ export default function Login() {
     setError("");
     try {
       await client.login(password());
-      await clientQuery.invalidateQueries({ queryKey: ["me"] });
+      await clientQuery.invalidateQueries({ queryKey: queryKeys.me });
       navigate("/", { replace: true });
     } catch (err) {
       setError(
@@ -40,6 +41,14 @@ export default function Login() {
         <p class="text-sm text-zinc-500">Essenszuschuss</p>
         <h1 class="text-3xl font-semibold">Belegapp</h1>
       </div>
+      <Show when={config.isPending}>
+        <p>Lädt …</p>
+      </Show>
+      <Show when={config.isError}>
+        <p class="rounded-xl bg-amber-100 px-3 py-2 text-sm dark:bg-amber-950">
+          Die Anmeldung ist gerade nicht erreichbar.
+        </p>
+      </Show>
       <Show when={fehlerText[String(params.fehler ?? "")]}>
         <p class="rounded-xl bg-amber-100 px-3 py-2 text-sm dark:bg-amber-950">
           {fehlerText[String(params.fehler)]}

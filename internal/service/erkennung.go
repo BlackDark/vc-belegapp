@@ -113,13 +113,7 @@ func (s *Service) RestartErkennung(ctx context.Context, bildID string) (Bild, er
 		}); err != nil {
 			return Bild{}, err
 		}
-		if err := s.enqueueErkennung(ctx, bildID); err != nil {
-			_ = db.New(s.DB.Write).SetErkennungStatus(ctx, db.SetErkennungStatusParams{
-				ErkennungStatus: "fehler",
-				ErkennungFehler: "Erkennung konnte nicht gestartet werden.",
-				ID:              bildID,
-			})
-		}
+		s.enqueueOrMarkFailed(ctx, bildID)
 	}
 	return s.GetBild(ctx, bildID)
 }
@@ -281,6 +275,16 @@ func (s *Service) recognitionOn(ctx context.Context) (bool, error) {
 	return row.ErkennungAktiv != 0, nil
 }
 
+func (s *Service) enqueueOrMarkFailed(ctx context.Context, bildID string) {
+	if err := s.enqueueErkennung(ctx, bildID); err != nil {
+		_ = db.New(s.DB.Write).SetErkennungStatus(ctx, db.SetErkennungStatusParams{
+			ErkennungStatus: "fehler",
+			ErkennungFehler: "Erkennung konnte nicht gestartet werden.",
+			ID:              bildID,
+		})
+	}
+}
+
 func (s *Service) enqueueErkennung(ctx context.Context, bildID string) error {
 	if s.Jobs == nil {
 		return errors.New("keine Job-Queue")
@@ -381,11 +385,7 @@ func failureText(err error) string {
 	if errors.As(err, &call) && call.Text != "" {
 		return call.Text
 	}
-	text := err.Error()
-	if len(text) > 200 {
-		text = text[:200]
-	}
-	return text
+	return "Erkennung fehlgeschlagen."
 }
 
 func optText(b []byte) any {

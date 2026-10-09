@@ -68,7 +68,7 @@ func (s *Service) PutEinstellungen(ctx context.Context, actor Actor, in Einstell
 		out.ArbeitnehmerName = strings.TrimSpace(in.ArbeitnehmerName)
 		out.Personalnummer = strings.TrimSpace(in.Personalnummer)
 		out.ArbeitgeberName = strings.TrimSpace(in.ArbeitgeberName)
-		return auditChange(ctx, tx, actor, stamp, "aendern", "einstellungen", "1", "", "", prev, out)
+		return auditChange(ctx, tx, actor, stamp, "einstellungen_geaendert", "einstellungen", "1", "", "", prev, out)
 	})
 	return out, err
 }
@@ -215,7 +215,11 @@ func (s *Service) PutJahresregel(ctx context.Context, actor Actor, in rules.Jahr
 		if err != nil {
 			return err
 		}
-		return auditChange(ctx, tx, actor, stamp, "aendern", "jahresregel", year, "", grund, prev, out)
+		aktion := "jahresregel_geaendert"
+		if prev == nil {
+			aktion = "jahresregel_erstellt"
+		}
+		return auditChange(ctx, tx, actor, stamp, aktion, "jahresregel", year, "", grund, prev, out)
 	})
 	return out, err
 }

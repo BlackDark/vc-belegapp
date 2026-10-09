@@ -11,6 +11,7 @@ import {
   Show,
 } from "solid-js";
 import { toast } from "solid-sonner";
+import { CaptureInputs } from "../components/CaptureInputs";
 import { Button, ReasonDialog, TextField } from "../components/ui";
 import { bezugsorte, mahlzeitLabel } from "../lib/amtlich";
 import {
@@ -20,9 +21,10 @@ import {
   type Erkennung,
   type Warnung,
 } from "../lib/api";
+import { todayISO } from "../lib/dates";
 import { downscale } from "../lib/image";
 import { formatCent, parseEuroToCent } from "../lib/money";
-import { CaptureInputs } from "./Heute";
+import { queryKeys } from "../lib/queryKeys";
 
 type Draft = {
   datum: string;
@@ -76,11 +78,12 @@ export function PruefenForm(props: {
   const [applied, setApplied] = createSignal("");
   const [ignored, setIgnored] = createSignal("");
   const [korrekturOffen, setKorrekturOffen] = createSignal(false);
+  const [saving, setSaving] = createSignal(false);
   const jahr = createMemo(
     () => Number(props.initial.datum.slice(0, 4)) || new Date().getFullYear(),
   );
   const regel = useQuery(() => ({
-    queryKey: ["regel", jahr()],
+    queryKey: queryKeys.regel(jahr()),
     queryFn: () => client.regel(jahr()),
     retry: false,
   }));
@@ -177,6 +180,14 @@ export function PruefenForm(props: {
   };
 
   const save = async (value: Draft, grund?: string) => {
+    if (saving()) {
+      return;
+    }
+    if (parseEuroToCent(value.betrag) == null) {
+      toast.error("Bitte einen gültigen Betrag angeben.");
+      return;
+    }
+    setSaving(true);
     try {
       const body = payload(value, grund);
       if (props.beleg) {
@@ -190,6 +201,25 @@ export function PruefenForm(props: {
       toast.error(
         err instanceof ApiError ? err.message : "Speichern fehlgeschlagen",
       );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async (grund?: string) => {
+    if (!props.beleg || saving()) {
+      return;
+    }
+    setSaving(true);
+    try {
+      await client.deleteBeleg(props.beleg.id, props.beleg.version, grund);
+      props.onDone();
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : "Löschen fehlgeschlagen",
+      );
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -209,7 +239,9 @@ export function PruefenForm(props: {
   );
   createEffect(() => {
     watch();
-    void refresh(form.state.values);
+    const value = { ...form.state.values };
+    const timer = setTimeout(() => void refresh(value), 300);
+    onCleanup(() => clearTimeout(timer));
   });
 
   const meals = () => regel.data?.mahlzeiten ?? ["mittag"];
@@ -299,8 +331,8 @@ export function PruefenForm(props: {
           form.setFieldValue("datum", value);
         }}
       />
-      <div>
-        <p class="mb-1 text-sm font-medium">Mahlzeitart</p>
+      <fieldset>
+        <legend class="mb-1 text-sm font-medium">Mahlzeitart</legend>
         <form.Field name="mahlzeit">
           {(field) => (
             <ToggleGroup
@@ -321,7 +353,7 @@ export function PruefenForm(props: {
             </ToggleGroup>
           )}
         </form.Field>
-      </div>
+      </fieldset>
       <label class="flex flex-col gap-1 text-sm font-medium">
         Bezugsort
         <select
@@ -339,8 +371,8 @@ export function PruefenForm(props: {
       </label>
       <form.Field name="arbeitsort">
         {(field) => (
-          <div>
-            <p class="mb-1 text-sm font-medium">Arbeitsort</p>
+          <fieldset>
+            <legend class="mb-1 text-sm font-medium">Arbeitsort</legend>
             <ToggleGroup
               value={field().state.value}
               onChange={(value) => value && field().handleChange(value)}
@@ -359,7 +391,7 @@ export function PruefenForm(props: {
                 Homeoffice
               </ToggleGroup.Item>
             </ToggleGroup>
-          </div>
+          </fieldset>
         )}
       </form.Field>
       <TextField
@@ -450,10 +482,13 @@ export function PruefenForm(props: {
           )}
         </For>
       </ul>
-      <Button type="submit">Speichern</Button>
+      <Button type="submit" disabled={saving()}>
+        Speichern
+      </Button>
       <Show when={props.beleg}>
         <Button
           class="bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
+          disabled={saving()}
           onClick={() => {
             if (!props.beleg) {
               return;
@@ -463,9 +498,7 @@ export function PruefenForm(props: {
               setReasonOpen(true);
               return;
             }
-            void client
-              .deleteBeleg(props.beleg.id, props.beleg.version)
-              .then(() => props.onDone());
+            void remove();
           }}
         >
           Löschen
@@ -481,9 +514,7 @@ export function PruefenForm(props: {
           if (value) {
             void save(value, reason);
           } else if (props.beleg) {
-            void client
-              .deleteBeleg(props.beleg.id, props.beleg.version, reason)
-              .then(() => props.onDone());
+            void remove(reason);
           }
         }}
       />
@@ -499,14 +530,39 @@ export default function Pruefen() {
   const [uploaded, setUploaded] = createSignal<string[]>([]);
   const [attempt, setAttempt] = createSignal(0);
   const [gaveUp, setGaveUp] = createSignal(false);
+  const datumParam = () => {
+    const raw = String(search.datum ?? "");
+    return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : todayISO();
+  };
+  const draftJahr = () =>
+    Number(datumParam().slice(0, 4)) || new Date().getFullYear();
+  const profil = useQuery(() => ({
+    queryKey: queryKeys.einstellungen,
+    queryFn: () => client.einstellungen(),
+    enabled: !params.id,
+  }));
+  const regel = useQuery(() => ({
+    queryKey: queryKeys.regel(draftJahr()),
+    queryFn: () => client.regel(draftJahr()),
+    enabled: !params.id,
+    retry: false,
+  }));
   const addFile = async (file: File) => {
-    const blob = await downscale(file);
-    const first = bildIds().length === 0;
-    const bild = await client.upload(blob, first);
-    setUploaded((ids) => [...ids, bild.id].slice(0, 3));
+    try {
+      const blob = await downscale(file);
+      const first = bildIds().length === 0;
+      const bild = await client.upload(blob, first);
+      setUploaded((ids) => [...ids, bild.id].slice(0, 3));
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError
+          ? err.message
+          : "Das Bild konnte nicht hochgeladen werden.",
+      );
+    }
   };
   const existing = useQuery(() => ({
-    queryKey: ["beleg", params.id ?? ""],
+    queryKey: queryKeys.beleg(params.id ?? ""),
     queryFn: () => client.beleg(params.id ?? ""),
     enabled: Boolean(params.id),
   }));
@@ -532,12 +588,10 @@ export default function Pruefen() {
       };
     }
     return {
-      datum: new Intl.DateTimeFormat("en-CA", {
-        timeZone: "Europe/Berlin",
-      }).format(new Date()),
-      mahlzeit: "mittag",
-      bezugsort: "supermarkt",
-      arbeitsort: "betrieb",
+      datum: datumParam(),
+      mahlzeit: regel.data?.standard_mahlzeit ?? "mittag",
+      bezugsort: profil.data?.standard_bezugsort ?? "supermarkt",
+      arbeitsort: profil.data?.standard_arbeitsort ?? "betrieb",
       haendler_name: "",
       haendler_ort: "",
       betrag: "",
@@ -563,7 +617,7 @@ export default function Pruefen() {
     onCleanup(() => clearTimeout(timer));
   });
   const bild = useQuery(() => ({
-    queryKey: ["bild", firstId()],
+    queryKey: queryKeys.bild(firstId()),
     queryFn: () => client.bild(firstId()),
     enabled: Boolean(firstId()),
     refetchInterval: (query) => {
@@ -584,9 +638,17 @@ export default function Pruefen() {
     if (!id) {
       return;
     }
-    await client.erneut(id);
-    setAttempt((n) => n + 1);
-    await queryClient.invalidateQueries({ queryKey: ["bild", id] });
+    try {
+      await client.erneut(id);
+      setAttempt((n) => n + 1);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.bild(id) });
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError
+          ? err.message
+          : "Erkennung konnte nicht gestartet werden.",
+      );
+    }
   };
 
   return (
@@ -604,7 +666,23 @@ export default function Pruefen() {
           src={`/api/v1/belegbilder/${bildIds()[0]}/datei`}
         />
       </Show>
-      <Show when={!params.id || existing.data}>
+      <Show when={params.id && existing.isPending}>
+        <p>Lädt …</p>
+      </Show>
+      <Show when={params.id && existing.isError}>
+        <p class="rounded-xl bg-amber-100 px-3 py-2 text-sm dark:bg-amber-950">
+          Der Beleg konnte nicht geladen werden.
+        </p>
+      </Show>
+      <Show when={!params.id && profil.isPending}>
+        <p>Lädt …</p>
+      </Show>
+      <Show when={!params.id && profil.isError}>
+        <p class="rounded-xl bg-amber-100 px-3 py-2 text-sm dark:bg-amber-950">
+          Die Einstellungen konnten nicht geladen werden.
+        </p>
+      </Show>
+      <Show when={Boolean(params.id ? existing.data : profil.data)}>
         <PruefenForm
           initial={initial()}
           bildIds={bildIds()}
@@ -617,7 +695,14 @@ export default function Pruefen() {
           }
           onRetry={firstId() ? () => void retry() : undefined}
           onDone={() => {
-            void queryClient.invalidateQueries({ queryKey: ["monat"] });
+            if (params.id) {
+              void queryClient.invalidateQueries({
+                queryKey: queryKeys.beleg(params.id),
+              });
+            }
+            void queryClient.invalidateQueries({
+              queryKey: queryKeys.monatAll,
+            });
             navigate("/monat");
           }}
         />

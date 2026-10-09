@@ -1,14 +1,16 @@
 import { Route, Router } from "@solidjs/router";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
+import { lazy } from "solid-js";
 import { Toaster } from "solid-sonner";
 import Shell from "./components/Shell";
-import Einstellungen from "./screens/Einstellungen";
-import Erfassen from "./screens/Erfassen";
-import Heute from "./screens/Heute";
-import JahresregelPage from "./screens/Jahresregel";
 import Login from "./screens/Login";
-import Monat from "./screens/Monat";
-import Pruefen from "./screens/Pruefen";
+
+const Heute = lazy(() => import("./screens/Heute"));
+const Erfassen = lazy(() => import("./screens/Erfassen"));
+const Pruefen = lazy(() => import("./screens/Pruefen"));
+const Monat = lazy(() => import("./screens/Monat"));
+const Einstellungen = lazy(() => import("./screens/Einstellungen"));
+const JahresregelPage = lazy(() => import("./screens/Jahresregel"));
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, staleTime: 5_000 } },

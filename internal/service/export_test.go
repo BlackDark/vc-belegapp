@@ -161,6 +161,13 @@ func TestExportLocksAndVersions(t *testing.T) {
 	if created.Version != 1 || created.CSVURL == nil || created.ZIPURL == nil || created.PDFSHA256 == "" {
 		t.Fatalf("created %+v", created)
 	}
+	var idRaw string
+	if err := svc.DB.Read.QueryRowContext(ctx, `SELECT beleg_ids FROM monatsexporte WHERE id = ?`, created.ID).Scan(&idRaw); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(idRaw, `"id":"`+first.ID+`"`) || !strings.Contains(idRaw, `"version":1`) || strings.HasPrefix(strings.TrimSpace(idRaw), `["`) {
+		t.Fatalf("beleg_ids %s", idRaw)
+	}
 	doc := fake.last()
 	if doc.Entwurf || doc.Summen.Erstattung != "33,01 €" || doc.Summen.Eigenanteil != "5,56 €" || doc.Summen.GV != "16,78 €" || doc.Summen.Steuerfrei != "16,23 €" {
 		t.Fatalf("sums %+v", doc.Summen)

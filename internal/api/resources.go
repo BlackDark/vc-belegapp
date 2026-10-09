@@ -344,6 +344,9 @@ func pathJahr(r *http.Request) (int, error) {
 }
 
 func decodePatch(w http.ResponseWriter, r *http.Request) (service.BelegPatch, error) {
+	if err := requireJSON(r); err != nil {
+		return service.BelegPatch{}, err
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {

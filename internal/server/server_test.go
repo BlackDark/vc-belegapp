@@ -75,7 +75,7 @@ func TestReadyz(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Status != "unavailable" || body.Checks.Typst.Status != "fail" || body.Checks.Database.Status != "ok" {
+	if body.Status != "unavailable" || body.Checks.Typst.Status != "fail" || body.Checks.Typst.Detail != "" || body.Checks.Database.Status != "ok" {
 		t.Fatalf("%+v", body)
 	}
 }

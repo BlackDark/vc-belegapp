@@ -96,7 +96,7 @@ func Load() (Config, error) {
 }
 
 // AuthConfigured reports whether password login or OIDC is configured.
-// M0 does not require an auth method; authentication is enforced in a later milestone.
+// serve refuses to start when this is false.
 func (c Config) AuthConfigured() bool {
 	return c.AuthPasswordHash != "" || c.OIDCIssuerURL != ""
 }

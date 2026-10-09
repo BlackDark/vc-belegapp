@@ -89,7 +89,7 @@ func New(opt Options) (http.Handler, error) {
 	r.Use(middleware.Recoverer)
 	r.Use(func(next http.Handler) http.Handler { return csrf.Handler(next) })
 
-	h := &handlers{ready: opt.Ready}
+	h := &handlers{ready: opt.Ready, log: opt.Log}
 	r.Get("/healthz", h.healthz)
 	r.Get("/readyz", h.readyz)
 	if opt.API != nil {

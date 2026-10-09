@@ -101,10 +101,11 @@ type BelegPatch struct {
 // PreviewBeleg calculates without writing.
 func (s *Service) PreviewBeleg(ctx context.Context, in BelegInput, selfID string) (Preview, error) {
 	q := db.New(s.DB.Read)
-	built, _, _, err := s.prepare(ctx, q, in, selfID, true)
+	built, _, _, err := s.prepare(ctx, q, in, selfID, true, false)
 	if err != nil {
 		return Preview{}, err
 	}
+	built.noteExport(s.stamp())
 	return Preview{Berechnung: built.Berechnung, Warnungen: built.Warnungen, MonatStatus: built.MonatStatus}, nil
 }
 
@@ -112,7 +113,7 @@ func (s *Service) PreviewBeleg(ctx context.Context, in BelegInput, selfID string
 func (s *Service) CreateBeleg(ctx context.Context, actor Actor, in BelegInput) (Beleg, error) {
 	var out Beleg
 	err := s.tx(ctx, func(ctx context.Context, q *db.Queries, tx *sql.Tx) error {
-		built, _, status, err := s.prepare(ctx, q, in, "", true)
+		built, _, status, err := s.prepare(ctx, q, in, "", true, true)
 		if err != nil {
 			return err
 		}
@@ -159,7 +160,7 @@ func (s *Service) CreateBeleg(ctx context.Context, actor Actor, in BelegInput) (
 			return err
 		}
 		grund := trimmed(in.Aenderungsgrund)
-		if err := auditChange(ctx, tx, actor, stamp, "erstellen", "beleg", newID, built.Datum[:7], grund, nil, built); err != nil {
+		if err := auditChange(ctx, tx, actor, stamp, "beleg_erstellt", "beleg", newID, built.Datum[:7], grund, nil, built); err != nil {
 			return err
 		}
 		out = built
@@ -186,8 +187,18 @@ func (s *Service) UpdateBeleg(ctx context.Context, actor Actor, belegID string, 
 		}
 		in.BildIDs = ids
 		applyPatch(&in, patch)
-		built, _, status, err := s.prepare(ctx, q, in, belegID, true)
+		oldMonth := row.Datum[:7]
+		oldStatus, err := monthStatus(ctx, q, oldMonth)
 		if err != nil {
+			return err
+		}
+		built, _, status, err := s.prepare(ctx, q, in, belegID, true, true)
+		if err != nil {
+			return err
+		}
+		// prepare only sees the destination month. Leaving a locked month
+		// still needs a reason, even when the destination is open.
+		if err := requireChangeReason(oldStatus, trimmed(patch.Aenderungsgrund)); err != nil {
 			return err
 		}
 		stamp := s.stamp()
@@ -227,12 +238,12 @@ func (s *Service) UpdateBeleg(ctx context.Context, actor Actor, belegID string, 
 			if err := markGeaendert(ctx, q, built.Datum[:7]); err != nil {
 				return err
 			}
-			if row.Datum[:7] != built.Datum[:7] {
-				if err := markGeaendert(ctx, q, row.Datum[:7]); err != nil {
-					return err
-				}
-			}
 			built.MonatStatus = "geaendert"
+		}
+		if oldMonth != built.Datum[:7] && oldStatus == "gesperrt" {
+			if err := markGeaendert(ctx, q, oldMonth); err != nil {
+				return err
+			}
 		}
 		built.ID = belegID
 		built.Version = int(row.Version) + 1
@@ -243,7 +254,7 @@ func (s *Service) UpdateBeleg(ctx context.Context, actor Actor, belegID string, 
 		if err := s.attachBilder(ctx, q, &built); err != nil {
 			return err
 		}
-		if err := auditChange(ctx, tx, actor, stamp, "aendern", "beleg", belegID, built.Datum[:7], trimmed(patch.Aenderungsgrund), snapshotRow(row, ids), built); err != nil {
+		if err := auditChange(ctx, tx, actor, stamp, "beleg_geaendert", "beleg", belegID, built.Datum[:7], trimmed(patch.Aenderungsgrund), snapshotRow(row, ids), built); err != nil {
 			return err
 		}
 		out = built
@@ -267,8 +278,8 @@ func (s *Service) DeleteBeleg(ctx context.Context, actor Actor, belegID string, 
 			return err
 		}
 		reason := trimmed(grund)
-		if (status == "gesperrt" || status == "geaendert") && utf8.RuneCountInString(reason) < 5 {
-			return problem.New(422, "E_AENDERUNGSGRUND_FEHLT", "Für einen gesperrten Monat ist ein Änderungsgrund mit mindestens 5 Zeichen nötig.")
+		if err := requireChangeReason(status, reason); err != nil {
+			return err
 		}
 		stamp := s.stamp()
 		res, err := q.SoftDeleteBeleg(ctx, db.SoftDeleteBelegParams{
@@ -297,7 +308,7 @@ func (s *Service) DeleteBeleg(ctx context.Context, actor Actor, belegID string, 
 		if err != nil {
 			return err
 		}
-		return auditChange(ctx, tx, actor, stamp, "loeschen", "beleg", belegID, row.Datum[:7], reason, snapshotRow(row, ids), map[string]any{"geloescht_am": stamp})
+		return auditChange(ctx, tx, actor, stamp, "beleg_geloescht", "beleg", belegID, row.Datum[:7], reason, snapshotRow(row, ids), map[string]any{"geloescht_am": stamp})
 	})
 }
 
@@ -314,7 +325,9 @@ func (s *Service) GetBeleg(ctx context.Context, belegID string) (Beleg, error) {
 	return s.decorate(ctx, q, row, nil)
 }
 
-func (s *Service) prepare(ctx context.Context, q *db.Queries, in BelegInput, selfID string, checkLimit bool) (Beleg, rules.Jahresregel, string, error) {
+// prepare validates a receipt. checkLimit applies the blocking month limit.
+// enforceReason is false for preview: the change reason is collected on save.
+func (s *Service) prepare(ctx context.Context, q *db.Queries, in BelegInput, selfID string, checkLimit, enforceReason bool) (Beleg, rules.Jahresregel, string, error) {
 	in.HaendlerName = strings.TrimSpace(in.HaendlerName)
 	in.HaendlerOrt = strings.TrimSpace(in.HaendlerOrt)
 	in.Notiz = strings.TrimSpace(in.Notiz)
@@ -367,8 +380,10 @@ func (s *Service) prepare(ctx context.Context, q *db.Queries, in BelegInput, sel
 	if err != nil {
 		return Beleg{}, rules.Jahresregel{}, "", err
 	}
-	if (status == "gesperrt" || status == "geaendert") && utf8.RuneCountInString(trimmed(in.Aenderungsgrund)) < 5 {
-		return Beleg{}, rules.Jahresregel{}, "", problem.New(422, "E_AENDERUNGSGRUND_FEHLT", "Für einen gesperrten Monat ist ein Änderungsgrund mit mindestens 5 Zeichen nötig.")
+	if enforceReason {
+		if err := requireChangeReason(status, trimmed(in.Aenderungsgrund)); err != nil {
+			return Beleg{}, rules.Jahresregel{}, "", err
+		}
 	}
 	monthRows, err := listMonth(ctx, q, monat)
 	if err != nil {
@@ -665,6 +680,13 @@ func mapBelegWrite(err error) error {
 		}})
 	}
 	return err
+}
+
+func requireChangeReason(status, reason string) error {
+	if (status == "gesperrt" || status == "geaendert") && utf8.RuneCountInString(reason) < 5 {
+		return problem.New(422, "E_AENDERUNGSGRUND_FEHLT", "Für einen gesperrten Monat ist ein Änderungsgrund mit mindestens 5 Zeichen nötig.")
+	}
+	return nil
 }
 
 func monthStatus(ctx context.Context, q *db.Queries, monat string) (string, error) {

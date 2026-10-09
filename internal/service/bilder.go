@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"time"
 
@@ -49,10 +50,10 @@ func (s *Service) SaveBild(ctx context.Context, data []byte, recognize bool) (Bi
 		return Bild{}, err
 	}
 	norm, err := imaging.Normalize(data)
-	if err == imaging.ErrFormat {
+	if errors.Is(err, imaging.ErrFormat) {
 		return Bild{}, problem.New(422, "E_BILD_FORMAT", "Nur JPEG, PNG oder WebP sind erlaubt.")
 	}
-	if err == imaging.ErrTooLarge {
+	if errors.Is(err, imaging.ErrTooLarge) {
 		return Bild{}, problem.New(422, "E_BILD_ZU_GROSS", "Das Bild überschreitet die Pixelgrenze.")
 	}
 	if err != nil {
@@ -100,13 +101,7 @@ func (s *Service) SaveBild(ctx context.Context, data []byte, recognize bool) (Bi
 		return Bild{}, err
 	}
 	if status == "ausstehend" {
-		if qErr := s.enqueueErkennung(ctx, bildID); qErr != nil {
-			_ = db.New(s.DB.Write).SetErkennungStatus(ctx, db.SetErkennungStatusParams{
-				ErkennungStatus: "fehler",
-				ErkennungFehler: "Erkennung konnte nicht gestartet werden.",
-				ID:              bildID,
-			})
-		}
+		s.enqueueOrMarkFailed(ctx, bildID)
 	}
 	row, err := db.New(s.DB.Write).GetBelegbild(ctx, bildID)
 	if err != nil {
