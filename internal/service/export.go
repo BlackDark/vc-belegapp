@@ -280,6 +280,9 @@ func (s *Service) loadExport(ctx context.Context, monat string) (Monat, Einstell
 	if err != nil {
 		return Monat{}, Einstellungen{}, err
 	}
+	if err = s.applyExportIntegrity(ctx, &view); err != nil {
+		return Monat{}, Einstellungen{}, err
+	}
 	if view.Jahresregel == nil {
 		return Monat{}, Einstellungen{}, problem.New(422, "E_JAHRESREGEL_FEHLT", "Für dieses Jahr ist keine Jahresregel hinterlegt.")
 	}
@@ -288,6 +291,28 @@ func (s *Service) loadExport(ctx context.Context, monat string) (Monat, Einstell
 		return Monat{}, Einstellungen{}, err
 	}
 	return view, einst, nil
+}
+
+// applyExportIntegrity replaces the two checks the month view keeps cheap.
+func (s *Service) applyExportIntegrity(ctx context.Context, view *Monat) error {
+	if view == nil {
+		return nil
+	}
+	q := db.New(s.DB.Read)
+	checks, err := s.pruefpunkte(ctx, q, view.Belege, view.Jahresregel, view.Summen, true)
+	if err != nil {
+		return err
+	}
+	byCode := map[string]Pruefpunkt{}
+	for _, check := range checks {
+		byCode[check.Code] = check
+	}
+	for i, check := range view.Pruefpunkte {
+		if next, ok := byCode[check.Code]; ok && (check.Code == "P_BILDER_VOLLSTAENDIG" || check.Code == "P_PROTOKOLL_INTAKT") {
+			view.Pruefpunkte[i] = next
+		}
+	}
+	return nil
 }
 
 func rejectFinal(view Monat, req ExportRequest) error {

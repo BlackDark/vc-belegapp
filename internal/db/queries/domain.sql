@@ -143,6 +143,15 @@ DELETE FROM belegbilder WHERE id = ? AND beleg_id IS NULL;
 -- name: CountBlobKey :one
 SELECT COUNT(*) FROM belegbilder WHERE blob_key = ? OR thumb_blob_key = ?;
 
+-- name: CountExportBlobKey :one
+SELECT COUNT(*) FROM monatsexporte
+WHERE pdf_blob_key = sqlc.arg('key')
+   OR csv_blob_key = sqlc.arg('key')
+   OR zip_blob_key = sqlc.arg('key');
+
+-- name: ListExportBelegIDs :many
+SELECT beleg_ids FROM monatsexporte;
+
 -- name: ListUnassignedBelegbilderBefore :many
 SELECT * FROM belegbilder WHERE beleg_id IS NULL AND erstellt_am < ?;
 

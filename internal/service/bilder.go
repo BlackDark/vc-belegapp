@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/BlackDark/vc-belegapp/internal/id"
 	"github.com/BlackDark/vc-belegapp/internal/imaging"
 	"github.com/BlackDark/vc-belegapp/internal/problem"
+	"github.com/BlackDark/vc-belegapp/internal/storage"
 )
 
 // Bild is one stored receipt image.
@@ -77,6 +79,8 @@ func (s *Service) SaveBild(ctx context.Context, data []byte, recognize bool) (Bi
 	if recognize {
 		on, onErr := s.recognitionOn(ctx)
 		if onErr != nil {
+			_ = s.Store.Delete(ctx, key)
+			_ = s.Store.Delete(ctx, thumb)
 			return Bild{}, onErr
 		}
 		if on {
@@ -172,8 +176,8 @@ func (s *Service) DeleteBild(ctx context.Context, bildID string) error {
 	if n == 0 {
 		return problem.New(404, "E_NICHT_GEFUNDEN", "Bild nicht gefunden.")
 	}
-	_ = s.Store.Delete(ctx, row.BlobKey)
-	_ = s.Store.Delete(ctx, row.ThumbBlobKey)
+	s.deleteBlobIfFree(ctx, q, row.BlobKey)
+	s.deleteBlobIfFree(ctx, q, row.ThumbBlobKey)
 	return nil
 }
 
@@ -206,7 +210,87 @@ func (s *Service) sweepOnce(ctx context.Context) error {
 	for _, row := range rows {
 		_ = s.DeleteBild(ctx, row.ID)
 	}
-	return nil
+	return s.sweepOrphanBlobs(ctx)
+}
+
+// sweepOrphanBlobs removes bilder/ objects that have no row and are older
+// than the unassigned-image TTL. Export prefixes are not listed. A blob
+// written and not yet inserted is kept until it is older than the TTL.
+func (s *Service) sweepOrphanBlobs(ctx context.Context) error {
+	if s.Store == nil || s.ImageTTL <= 0 {
+		return nil
+	}
+	refs, err := s.referencedBlobKeys(ctx)
+	if err != nil {
+		return err
+	}
+	cutoff := s.now().Add(-s.ImageTTL)
+	return s.Store.List(ctx, "bilder/", func(info storage.ObjectInfo) error {
+		if _, ok := refs[info.Key]; ok {
+			return nil
+		}
+		if info.ModTime.IsZero() || !info.ModTime.Before(cutoff) {
+			return nil
+		}
+		return s.Store.Delete(ctx, info.Key)
+	})
+}
+
+func (s *Service) referencedBlobKeys(ctx context.Context) (map[string]struct{}, error) {
+	q := db.New(s.DB.Read)
+	out := map[string]struct{}{}
+	rows, err := q.ListBelegbildKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		out[row.BlobKey] = struct{}{}
+		out[row.ThumbBlobKey] = struct{}{}
+	}
+	exports, err := q.ListExportBlobKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range exports {
+		out[row.PdfBlobKey] = struct{}{}
+		if key := asString(row.CsvBlobKey); key != "" {
+			out[key] = struct{}{}
+		}
+		if key := asString(row.ZipBlobKey); key != "" {
+			out[key] = struct{}{}
+		}
+	}
+	return out, nil
+}
+
+// deleteBlobIfFree removes a blob when no Belegbild and no Monatsexport still names it.
+func (s *Service) deleteBlobIfFree(ctx context.Context, q *db.Queries, key string) {
+	if key == "" || s.Store == nil {
+		return
+	}
+	n, err := q.CountBlobKey(ctx, db.CountBlobKeyParams{BlobKey: key, ThumbBlobKey: key})
+	if err != nil || n > 0 {
+		return
+	}
+	exports, err := q.CountExportBlobKey(ctx, key)
+	if err != nil || exports > 0 {
+		return
+	}
+	_ = s.Store.Delete(ctx, key)
+}
+
+// blobPresent is the month-view image check: the object exists and its size
+// matches the row. Content hashes run at export time.
+func (s *Service) blobPresent(ctx context.Context, row db.Belegbilder) bool {
+	if s.Store == nil {
+		return false
+	}
+	info, err := s.Store.Stat(ctx, row.BlobKey)
+	if err != nil || info.Size != row.Bytes {
+		return false
+	}
+	_, err = s.Store.Stat(ctx, row.ThumbBlobKey)
+	return err == nil
 }
 
 func (s *Service) bilderOK(ctx context.Context, q *db.Queries, selfID string, ids []string) error {
@@ -261,6 +345,41 @@ func (s *Service) attachBilder(ctx context.Context, q *db.Queries, beleg *Beleg)
 		beleg.Bilder = append(beleg.Bilder, bildFromRow(row, dup))
 	}
 	return nil
+}
+
+func releaseBilder(ctx context.Context, q *db.Queries, belegID string) error {
+	rows, err := q.ListBelegbilderByBeleg(ctx, belegID)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if err := q.UnassignBelegbild(ctx, row.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// receiptExported reports whether a Monatsexport lists this receipt.
+// Those images stay assigned: export blobs are never deleted, and a later
+// Datenexport must still carry the pictures the PDF was built from.
+func receiptExported(ctx context.Context, q *db.Queries, belegID string) (bool, error) {
+	rows, err := q.ListExportBelegIDs(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, raw := range rows {
+		var refs []exportBelegRef
+		if err := json.Unmarshal([]byte(raw), &refs); err != nil {
+			return false, err
+		}
+		for _, ref := range refs {
+			if ref.ID == belegID {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func assignBilder(ctx context.Context, q *db.Queries, belegID string, ids []string) error {

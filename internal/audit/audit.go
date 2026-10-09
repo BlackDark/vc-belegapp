@@ -92,6 +92,52 @@ func List(ctx context.Context, db queryer, monat, entitaetID string, vorID int64
 	return scanAll(rows)
 }
 
+// VerifyTip checks the latest entry only: its stored hash matches the
+// canonical body, and its prev_hash matches the previous row. A break
+// earlier in the chain is left to Verify, which export and verify-audit use.
+func VerifyTip(ctx context.Context, db queryer) (Report, error) {
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM aenderungsprotokoll`).Scan(&n); err != nil {
+		return Report{}, err
+	}
+	if n == 0 {
+		return Report{OK: true}, nil
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, zeitpunkt, akteur, aktion, entitaet, entitaet_id, monat,
+		       vorher, nachher, diff, grund, request_id, prev_hash, hash
+		FROM aenderungsprotokoll
+		ORDER BY id DESC
+		LIMIT 2`)
+	if err != nil {
+		return Report{}, err
+	}
+	defer func() { _ = rows.Close() }()
+	entries, err := scanAll(rows)
+	if err != nil {
+		return Report{}, err
+	}
+	if len(entries) == 0 {
+		return Report{OK: true, Anzahl: n}, nil
+	}
+	tip := entries[0]
+	if len(entries) == 1 {
+		if tip.PrevHash != zeroHash {
+			return Report{Anzahl: n, ErsterFehlerID: tip.ID}, nil
+		}
+	} else if tip.PrevHash != entries[1].Hash {
+		return Report{Anzahl: n, ErsterFehlerID: tip.ID}, nil
+	}
+	sum, err := Hash(&tip)
+	if err != nil {
+		return Report{}, err
+	}
+	if sum != tip.Hash {
+		return Report{Anzahl: n, ErsterFehlerID: tip.ID}, nil
+	}
+	return Report{OK: true, Anzahl: n}, nil
+}
+
 // Verify checks the hash chain from the first entry.
 func Verify(ctx context.Context, db queryer) (Report, error) {
 	rows, err := db.QueryContext(ctx, `
