@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/BlackDark/vc-belegapp/compare/v1.0.0...v1.0.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **ci:** run gh workflow dispatches with an explicit repo ([#12](https://github.com/BlackDark/vc-belegapp/issues/12)) ([0778c0c](https://github.com/BlackDark/vc-belegapp/commit/0778c0ccfd5c3009596b0a5c20715d5a203e84eb))
+* **web:** show the whole receipt in the Heute preview ([#13](https://github.com/BlackDark/vc-belegapp/issues/13)) ([eb3739c](https://github.com/BlackDark/vc-belegapp/commit/eb3739cd6bb14a596f6f74c0c6f9fcb43dcf8b33))
+
 ## 1.0.0 (2026-10-09)
 
 
