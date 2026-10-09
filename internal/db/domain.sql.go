@@ -41,6 +41,20 @@ func (q *Queries) CountBlobKey(ctx context.Context, arg CountBlobKeyParams) (int
 	return count, err
 }
 
+const countExportBlobKey = `-- name: CountExportBlobKey :one
+SELECT COUNT(*) FROM monatsexporte
+WHERE pdf_blob_key = ?1
+   OR csv_blob_key = ?1
+   OR zip_blob_key = ?1
+`
+
+func (q *Queries) CountExportBlobKey(ctx context.Context, key string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countExportBlobKey, key)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countLockedMonths = `-- name: CountLockedMonths :one
 SELECT COUNT(*) FROM monate
 WHERE monat >= ? AND monat <= ? AND status IN ('gesperrt', 'geaendert')
@@ -787,6 +801,33 @@ func (q *Queries) ListErkennungen(ctx context.Context, excludeID interface{}) ([
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listExportBelegIDs = `-- name: ListExportBelegIDs :many
+SELECT beleg_ids FROM monatsexporte
+`
+
+func (q *Queries) ListExportBelegIDs(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listExportBelegIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var beleg_ids string
+		if err := rows.Scan(&beleg_ids); err != nil {
+			return nil, err
+		}
+		items = append(items, beleg_ids)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

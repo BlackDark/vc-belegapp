@@ -308,6 +308,18 @@ func (s *Service) DeleteBeleg(ctx context.Context, actor Actor, belegID string, 
 		if err != nil {
 			return err
 		}
+		exported, err := receiptExported(ctx, q, belegID)
+		if err != nil {
+			return err
+		}
+		// A Monatsexport keeps the images it was built from. Anything else
+		// becomes unassigned and follows BELEGAPP_UNASSIGNED_IMAGE_TTL.
+		// The Beleg row and the audit entry stay.
+		if !exported {
+			if err := releaseBilder(ctx, q, belegID); err != nil {
+				return err
+			}
+		}
 		return auditChange(ctx, tx, actor, stamp, "beleg_geloescht", "beleg", belegID, row.Datum[:7], reason, snapshotRow(row, ids), map[string]any{"geloescht_am": stamp})
 	})
 }
