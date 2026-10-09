@@ -1,9 +1,24 @@
-import { Dialog } from "@kobalte/core/dialog";
 import { A, useNavigate } from "@solidjs/router";
 import { useQuery } from "@tanstack/solid-query";
 import { createSignal, Show } from "solid-js";
+
 import { CaptureInputs, openCaptured } from "../components/CaptureInputs";
-import { Button } from "../components/ui";
+import { Alert, AlertDescription } from "../components/ui/alert";
+import { Badge } from "../components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "../components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
+import { Skeleton } from "../components/ui/skeleton";
 import { type Beleg, client } from "../lib/api";
 import { currentMonth, todayISO } from "../lib/dates";
 import { formatCent } from "../lib/money";
@@ -21,44 +36,104 @@ export default function Heute() {
 
   const beleg = () => monat.data?.belege.find((item) => item.datum === today);
   const limit = () => monat.data?.jahresregel?.monatslimit ?? 15;
+  const summen = () => monat.data?.summen;
+  const pauschal = () => Boolean(monat.data?.jahresregel?.pauschalierung);
 
   return (
-    <section class="flex flex-col gap-4">
-      <h1 class="text-2xl font-semibold">Heute</h1>
-      <Show when={monat.error}>
-        <p class="rounded-xl bg-amber-100 px-3 py-2 text-sm dark:bg-amber-950">
-          Für dieses Jahr fehlt die Jahresregel.{" "}
-          <A
-            class="underline"
-            href={`/einstellungen/jahre/${today.slice(0, 4)}`}
-          >
-            Regel anlegen
-          </A>
+    <section class="flex flex-col gap-6">
+      <div>
+        <h1 class="text-2xl font-semibold tracking-tight">Heute</h1>
+        <p class="text-sm text-muted-foreground">
+          Beleg des Tages und die Summen des laufenden Monats.
         </p>
+      </div>
+      <Show when={monat.error}>
+        <Alert>
+          <AlertDescription>
+            Für dieses Jahr fehlt die Jahresregel.{" "}
+            <A
+              class="font-medium underline underline-offset-4"
+              href={`/einstellungen/jahre/${today.slice(0, 4)}`}
+            >
+              Regel anlegen
+            </A>
+          </AlertDescription>
+        </Alert>
       </Show>
       <Show
-        when={beleg()}
+        when={!monat.isPending}
         fallback={
-          <CaptureInputs onFile={(file) => void openCaptured(navigate, file)} />
+          <div class="flex flex-col gap-3">
+            <Skeleton height={176} radius={12} />
+            <div class="grid gap-3 sm:grid-cols-3">
+              <Skeleton height={104} radius={12} />
+              <Skeleton height={104} radius={12} />
+              <Skeleton height={104} radius={12} />
+            </div>
+          </div>
         }
       >
-        {(item) => <Vorhanden item={item()} />}
+        <Show
+          when={beleg()}
+          fallback={
+            <Card class="rounded-xl">
+              <CardHeader>
+                <CardTitle>Noch kein Beleg</CardTitle>
+                <CardDescription>
+                  Für heute liegt noch kein Beleg vor.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <CaptureInputs
+                  onFile={(file) => void openCaptured(navigate, file)}
+                />
+              </CardContent>
+            </Card>
+          }
+        >
+          {(item) => <Vorhanden item={item()} />}
+        </Show>
+        <div class="grid gap-3 sm:grid-cols-3">
+          <Stat
+            label="Belegtage"
+            hint="Monat"
+            value={`${summen()?.anzahl ?? 0} / ${limit()}`}
+          />
+          <Stat
+            label="Erstattung Σ"
+            hint="Monat"
+            value={formatCent(summen()?.erstattung_cent ?? 0)}
+          />
+          <Card class="rounded-xl">
+            <CardHeader class="p-4 pb-2">
+              <CardDescription>Steuerfrei / Pauschal</CardDescription>
+              <CardTitle class="text-2xl tabular-nums">
+                {formatCent(summen()?.steuerfrei_cent ?? 0)}
+              </CardTitle>
+            </CardHeader>
+            <CardContent class="p-4 pt-0">
+              <Badge variant={pauschal() ? "secondary" : "outline"}>
+                {pauschal()
+                  ? `Pauschal ${formatCent(summen()?.pauschal_gesamt_cent ?? 0)}`
+                  : "ohne Pauschalierung"}
+              </Badge>
+            </CardContent>
+          </Card>
+        </div>
       </Show>
-      <div class="grid grid-cols-2 gap-3">
-        <article class="rounded-2xl bg-zinc-100 p-4 dark:bg-zinc-900">
-          <p class="text-sm text-zinc-500">Monat</p>
-          <p class="text-xl font-semibold">
-            {monat.data?.summen.anzahl ?? 0} / {limit()}
-          </p>
-        </article>
-        <article class="rounded-2xl bg-zinc-100 p-4 dark:bg-zinc-900">
-          <p class="text-sm text-zinc-500">Erstattung Σ</p>
-          <p class="text-xl font-semibold">
-            {formatCent(monat.data?.summen.erstattung_cent ?? 0)}
-          </p>
-        </article>
-      </div>
     </section>
+  );
+}
+
+function Stat(props: { label: string; hint: string; value: string }) {
+  return (
+    <Card class="rounded-xl">
+      <CardHeader class="p-4">
+        <CardDescription>{props.label}</CardDescription>
+        <CardTitle class="text-2xl tabular-nums">{props.value}</CardTitle>
+        <p class="text-xs text-muted-foreground">{props.hint}</p>
+      </CardHeader>
+    </Card>
   );
 }
 
@@ -66,54 +141,49 @@ function Vorhanden(props: { item: Beleg }) {
   const [offen, setOffen] = createSignal(false);
   const bild = () => props.item.bilder[0];
   return (
-    <article class="flex items-center gap-4 rounded-2xl border border-zinc-200 p-4 dark:border-zinc-800">
-      <A href={`/belege/${props.item.id}`} class="min-w-0 flex-1">
-        <p class="text-sm text-zinc-500">Beleg vorhanden</p>
-        <p class="text-2xl font-semibold">
-          {formatCent(props.item.belegbetrag_cent)}
-        </p>
-        <p>Erstattung {formatCent(props.item.berechnung.erstattung_cent)}</p>
-      </A>
-      <Show when={bild()}>
-        {(row) => (
-          <>
-            <button
-              type="button"
-              class="shrink-0 cursor-pointer rounded-xl bg-zinc-100 p-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800 dark:bg-zinc-900"
-              aria-label="Belegbild öffnen"
-              onClick={() => setOffen(true)}
-            >
-              {/* Fixed portrait frame. object-contain keeps the whole receipt visible. */}
-              <img
-                alt="Beleg"
-                class="h-40 w-28 object-contain"
-                src={row().thumbnail_url}
-              />
-            </button>
-            <Dialog open={offen()} onOpenChange={setOffen}>
-              <Dialog.Portal>
-                <Dialog.Overlay class="fixed inset-0 z-20 bg-black/40" />
-                <Dialog.Content class="fixed inset-x-4 top-8 z-20 mx-auto flex max-h-[calc(100dvh-7rem)] w-full max-w-lg flex-col gap-3 overflow-y-auto rounded-2xl bg-white p-4 shadow-xl dark:bg-zinc-900">
-                  <Dialog.Title class="text-lg font-semibold">
-                    Belegbild
-                  </Dialog.Title>
+    <Card class="rounded-xl">
+      <CardContent class="flex items-center gap-4 p-4">
+        <A href={`/belege/${props.item.id}`} class="min-w-0 flex-1">
+          <p class="text-sm text-muted-foreground">Beleg vorhanden</p>
+          <p class="text-2xl font-semibold tabular-nums">
+            {formatCent(props.item.belegbetrag_cent)}
+          </p>
+          <p class="text-sm">
+            Erstattung {formatCent(props.item.berechnung.erstattung_cent)}
+          </p>
+        </A>
+        <Show when={bild()}>
+          {(row) => (
+            <>
+              <button
+                type="button"
+                class="shrink-0 cursor-pointer rounded-xl border bg-muted p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                aria-label="Belegbild öffnen"
+                onClick={() => setOffen(true)}
+              >
+                {/* Fixed portrait frame. object-contain keeps the whole receipt visible. */}
+                <img
+                  alt="Beleg"
+                  class="h-40 w-28 object-contain"
+                  src={row().thumbnail_url}
+                />
+              </button>
+              <Dialog open={offen()} onOpenChange={setOffen}>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Belegbild</DialogTitle>
+                  </DialogHeader>
                   <img
                     alt="Belegbild"
-                    class="max-h-[65vh] w-full rounded-xl bg-zinc-100 object-contain dark:bg-zinc-950"
+                    class="max-h-[65vh] w-full rounded-xl bg-muted object-contain"
                     src={row().url}
                   />
-                  <Button
-                    class="bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
-                    onClick={() => setOffen(false)}
-                  >
-                    Schließen
-                  </Button>
-                </Dialog.Content>
-              </Dialog.Portal>
-            </Dialog>
-          </>
-        )}
-      </Show>
-    </article>
+                </DialogContent>
+              </Dialog>
+            </>
+          )}
+        </Show>
+      </CardContent>
+    </Card>
   );
 }

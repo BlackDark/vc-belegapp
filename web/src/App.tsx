@@ -1,8 +1,8 @@
 import { Route, Router } from "@solidjs/router";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
-import { lazy } from "solid-js";
-import { Toaster } from "solid-sonner";
+import { createEffect, createSignal, lazy, onCleanup } from "solid-js";
 import Shell from "./components/Shell";
+import { Toaster } from "./components/ui/sonner";
 import Login from "./screens/Login";
 
 const Heute = lazy(() => import("./screens/Heute"));
@@ -34,7 +34,26 @@ export default function App() {
           />
         </Route>
       </Router>
-      <Toaster theme="system" />
+      <AppToaster />
     </QueryClientProvider>
   );
+}
+
+function AppToaster() {
+  const [mode, setMode] = createSignal<"light" | "dark">("dark");
+  createEffect(() => {
+    const sync = () => {
+      setMode(
+        document.documentElement.classList.contains("dark") ? "dark" : "light",
+      );
+    };
+    sync();
+    const observer = new MutationObserver(sync);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+    onCleanup(() => observer.disconnect());
+  });
+  return <Toaster theme={mode()} />;
 }

@@ -51,7 +51,8 @@ const demo = [
 ];
 
 async function shot(page: Page, info: TestInfo, name: string, fullPage = true) {
-  const dir = path.join("screenshots", info.project.name);
+  const root = process.env.BELEGAPP_SHOT_DIR ?? "screenshots";
+  const dir = path.join(root, info.project.name);
   await mkdir(dir, { recursive: true });
   await page.screenshot({ path: path.join(dir, `${name}.png`), fullPage });
 }
@@ -138,9 +139,11 @@ async function seedDemo(page: Page) {
 
 test("all pages", async ({ page }, info) => {
   test.setTimeout(240_000);
-  await page.addInitScript(() => {
-    localStorage.setItem("belegapp-theme", "hell");
-  });
+  const theme = process.env.BELEGAPP_SHOT_THEME === "hell" ? "hell" : "dunkel";
+  await page.emulateMedia({ colorScheme: theme === "hell" ? "light" : "dark" });
+  await page.addInitScript((value) => {
+    localStorage.setItem("belegapp-theme", value);
+  }, theme);
 
   await page.goto("/login");
   await expect(page.getByRole("heading", { name: "Belegapp" })).toBeVisible();

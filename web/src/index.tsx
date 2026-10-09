@@ -2,7 +2,10 @@ import { registerSW } from "virtual:pwa-register";
 import { render } from "solid-js/web";
 import { toast } from "solid-sonner";
 import App from "./App";
+import { watchSystemTheme } from "./lib/theme";
 import "./index.css";
+
+watchSystemTheme();
 
 const updateSW = registerSW({
   onNeedRefresh() {

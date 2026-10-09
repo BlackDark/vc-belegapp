@@ -1,4 +1,3 @@
-import { ToggleGroup } from "@kobalte/core/toggle-group";
 import { createForm } from "@tanstack/solid-form";
 import { useQuery } from "@tanstack/solid-query";
 import {
@@ -10,7 +9,19 @@ import {
   Show,
 } from "solid-js";
 import { toast } from "solid-sonner";
-import { Button, ReasonDialog, TextField } from "../components/ui";
+import { Choice } from "../components/choice";
+import { LabeledField } from "../components/field";
+import { ReasonDialog } from "../components/ReasonDialog";
+import { Alert, AlertDescription } from "../components/ui/alert";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { Card, CardContent } from "../components/ui/card";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "../components/ui/collapsible";
+import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
 import { bezugsorte, mahlzeitLabel } from "../lib/amtlich";
 import {
   ApiError,
@@ -277,30 +288,32 @@ export function PruefenForm(props: {
       <Show when={running()}>
         <p
           role="status"
-          class="animate-pulse rounded-xl bg-zinc-100 px-3 py-3 text-sm dark:bg-zinc-900"
+          class="animate-pulse rounded-xl border bg-muted px-3 py-3 text-sm"
         >
           Erkennung läuft…
         </p>
       </Show>
       <Show when={manual()}>
-        <div class="rounded-xl bg-amber-100 px-3 py-3 text-sm dark:bg-amber-950">
-          <p>
-            <Show when={props.erkennung?.fehler}>
-              {(text) => <span>{text()} </span>}
+        <Alert>
+          <AlertDescription>
+            <p>
+              <Show when={props.erkennung?.fehler}>
+                {(text) => <span>{text()} </span>}
+              </Show>
+              Bitte manuell ausfüllen.
+            </p>
+            <Show when={props.onRetry}>
+              <Button class="mt-3" onClick={() => props.onRetry?.()}>
+                Erneut erkennen
+              </Button>
             </Show>
-            Bitte manuell ausfüllen.
-          </p>
-          <Show when={props.onRetry}>
-            <Button class="mt-3" onClick={() => props.onRetry?.()}>
-              Erneut erkennen
-            </Button>
-          </Show>
-        </div>
+          </AlertDescription>
+        </Alert>
       </Show>
       <Show when={showSuggestion()}>
         <div
           data-testid="korrekturvorschlag"
-          class="rounded-xl border border-emerald-700 px-3 py-3 text-sm"
+          class="rounded-xl border border-primary px-3 py-3 text-sm"
         >
           <p>
             Vorschlag anerkannter Betrag{" "}
@@ -310,7 +323,7 @@ export function PruefenForm(props: {
           <div class="mt-3 flex gap-2">
             <Button onClick={acceptSuggestion}>Übernehmen</Button>
             <Button
-              class="bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
+              variant="outline"
               onClick={() => setIgnored(suggestionKey())}
             >
               Ignorieren
@@ -318,7 +331,7 @@ export function PruefenForm(props: {
           </div>
         </div>
       </Show>
-      <TextField
+      <LabeledField
         label="Datum"
         type="date"
         value={values().datum}
@@ -338,33 +351,24 @@ export function PruefenForm(props: {
             >
               <For each={meals()}>
                 {(meal) => (
-                  <ToggleGroup.Item
-                    value={meal}
-                    class="min-h-12 rounded-xl border border-zinc-300 data-[pressed]:bg-emerald-800 data-[pressed]:text-white dark:border-zinc-700"
-                  >
+                  <ToggleGroupItem value={meal} class="min-h-11">
                     {mahlzeitLabel[meal] ?? meal}
-                  </ToggleGroup.Item>
+                  </ToggleGroupItem>
                 )}
               </For>
             </ToggleGroup>
           )}
         </form.Field>
       </fieldset>
-      <label class="flex flex-col gap-1 text-sm font-medium">
-        Bezugsort
-        <select
-          class="min-h-12 rounded-xl border border-zinc-300 bg-white px-3 dark:border-zinc-700 dark:bg-zinc-900"
-          value={values().bezugsort}
-          onChange={(event) => {
-            setDirty((prev) => ({ ...prev, bezugsort: true }));
-            form.setFieldValue("bezugsort", event.currentTarget.value);
-          }}
-        >
-          <For each={bezugsorte}>
-            {(item) => <option value={item[0]}>{item[1]}</option>}
-          </For>
-        </select>
-      </label>
+      <Choice
+        label="Bezugsort"
+        value={values().bezugsort}
+        options={bezugsorte}
+        onChange={(value) => {
+          setDirty((prev) => ({ ...prev, bezugsort: true }));
+          form.setFieldValue("bezugsort", value);
+        }}
+      />
       <form.Field name="arbeitsort">
         {(field) => (
           <fieldset>
@@ -374,23 +378,17 @@ export function PruefenForm(props: {
               onChange={(value) => value && field().handleChange(value)}
               class="grid grid-cols-2 gap-2"
             >
-              <ToggleGroup.Item
-                value="betrieb"
-                class="min-h-12 rounded-xl border border-zinc-300 data-[pressed]:bg-emerald-800 data-[pressed]:text-white dark:border-zinc-700"
-              >
+              <ToggleGroupItem value="betrieb" class="min-h-11">
                 Betrieb
-              </ToggleGroup.Item>
-              <ToggleGroup.Item
-                value="homeoffice"
-                class="min-h-12 rounded-xl border border-zinc-300 data-[pressed]:bg-emerald-800 data-[pressed]:text-white dark:border-zinc-700"
-              >
+              </ToggleGroupItem>
+              <ToggleGroupItem value="homeoffice" class="min-h-11">
                 Homeoffice
-              </ToggleGroup.Item>
+              </ToggleGroupItem>
             </ToggleGroup>
           </fieldset>
         )}
       </form.Field>
-      <TextField
+      <LabeledField
         label="Händler"
         value={values().haendler_name}
         onChange={(value) => {
@@ -398,7 +396,7 @@ export function PruefenForm(props: {
           form.setFieldValue("haendler_name", value);
         }}
       />
-      <TextField
+      <LabeledField
         label="Ort"
         value={values().haendler_ort}
         onChange={(value) => {
@@ -406,7 +404,7 @@ export function PruefenForm(props: {
           form.setFieldValue("haendler_ort", value);
         }}
       />
-      <TextField
+      <LabeledField
         label="Belegbetrag"
         inputmode="decimal"
         value={values().betrag}
@@ -416,64 +414,76 @@ export function PruefenForm(props: {
         }}
       />
       <Show when={(props.erkennung?.ergebnis?.positionen.length ?? 0) > 0}>
-        <details class="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
-          <summary>Positionen</summary>
-          <ul class="mt-3 flex flex-col gap-2">
-            <For each={props.erkennung?.ergebnis?.positionen ?? []}>
-              {(pos) => (
-                <li class="flex items-center justify-between gap-2 text-sm">
-                  <span>{pos.bezeichnung}</span>
-                  <span class="rounded-full bg-zinc-100 px-2 py-1 dark:bg-zinc-800">
-                    {kategorien[pos.kategorie] ?? pos.kategorie}
-                  </span>
-                  <span>{formatCent(pos.betrag_cent)}</span>
-                </li>
-              )}
-            </For>
-          </ul>
-        </details>
+        <Collapsible class="rounded-xl border">
+          <CollapsibleTrigger class="flex w-full items-center px-4 py-3 text-left text-sm font-medium">
+            Positionen
+          </CollapsibleTrigger>
+          <CollapsibleContent class="px-4 pb-4">
+            <ul class="flex flex-col gap-2">
+              <For each={props.erkennung?.ergebnis?.positionen ?? []}>
+                {(pos) => (
+                  <li class="flex items-center justify-between gap-2 text-sm">
+                    <span>{pos.bezeichnung}</span>
+                    <Badge variant="secondary">
+                      {kategorien[pos.kategorie] ?? pos.kategorie}
+                    </Badge>
+                    <span class="tabular-nums">
+                      {formatCent(pos.betrag_cent)}
+                    </span>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </CollapsibleContent>
+        </Collapsible>
       </Show>
       <details
-        class="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800"
+        class="rounded-xl border"
         open={korrekturOffen()}
         onToggle={(event) => setKorrekturOffen(event.currentTarget.open)}
       >
-        <summary>Korrigierter Betrag</summary>
-        <div class="mt-3 flex flex-col gap-3">
-          <TextField
+        <summary class="cursor-pointer px-4 py-3 text-sm font-medium">
+          Korrigierter Betrag
+        </summary>
+        <div class="flex flex-col gap-3 px-4 pb-4">
+          <LabeledField
             label="Anerkannter Betrag"
             inputmode="decimal"
             value={values().korrigiert}
             onChange={(value) => form.setFieldValue("korrigiert", value)}
           />
-          <TextField
+          <LabeledField
             label="Grund"
             value={values().korrektur_grund}
             onChange={(value) => form.setFieldValue("korrektur_grund", value)}
           />
         </div>
       </details>
-      <TextField
+      <LabeledField
         label="Notiz"
         value={values().notiz}
         onChange={(value) => form.setFieldValue("notiz", value)}
       />
       <Show when={berechnung()}>
         {(calc) => (
-          <article class="rounded-2xl bg-zinc-100 p-4 dark:bg-zinc-900">
-            <p>Erstattung {formatCent(calc().erstattung_cent)}</p>
-            <p>Eigenanteil {formatCent(calc().eigenanteil_cent)}</p>
-            <p>Geldwerter Vorteil {formatCent(calc().gv_cent)}</p>
-            <p>Steuerfrei {formatCent(calc().steuerfrei_cent)}</p>
-            <p>Regulär {formatCent(calc().regulaer_cent)}</p>
-          </article>
+          <Card class="rounded-xl">
+            <CardContent class="grid gap-1 p-4 text-sm">
+              <p>Erstattung {formatCent(calc().erstattung_cent)}</p>
+              <p>Eigenanteil {formatCent(calc().eigenanteil_cent)}</p>
+              <p>Geldwerter Vorteil {formatCent(calc().gv_cent)}</p>
+              <p>Steuerfrei {formatCent(calc().steuerfrei_cent)}</p>
+              <p>Regulär {formatCent(calc().regulaer_cent)}</p>
+            </CardContent>
+          </Card>
         )}
       </Show>
       <ul class="flex flex-col gap-2">
         <For each={warnungen()}>
           {(warn) => (
-            <li class="rounded-xl bg-amber-100 px-3 py-2 text-sm dark:bg-amber-950">
-              {warn.text}
+            <li>
+              <Alert>
+                <AlertDescription>{warn.text}</AlertDescription>
+              </Alert>
             </li>
           )}
         </For>
@@ -483,7 +493,7 @@ export function PruefenForm(props: {
       </Button>
       <Show when={props.beleg}>
         <Button
-          class="bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
+          variant="destructive"
           disabled={saving()}
           onClick={() => {
             if (!props.beleg) {

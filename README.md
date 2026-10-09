@@ -294,7 +294,7 @@ pnpm -C e2e exec playwright install --with-deps chromium
 cd e2e && pnpm test
 ```
 
-CI passes `BELEGAPP_BIN` from the linux/amd64 job. Without it, Playwright runs `go run ./cmd/belegapp`. `screenshots.spec.ts` records the pages above at a 1280×800 desktop viewport and an iPhone 15 viewport (`Europe/Berlin`, light theme). CI uploads the raw PNGs as `e2e-screenshots`. Commit the optimised WebPs under `docs/screenshots/` after `make screenshots`.
+CI passes `BELEGAPP_BIN` from the linux/amd64 job. Without it, Playwright runs `go run ./cmd/belegapp`. `screenshots.spec.ts` records the pages above at a 1280×800 desktop viewport and an iPhone 15 viewport (`Europe/Berlin`, dark theme). CI uploads the raw PNGs as `e2e-screenshots`. Commit the optimised WebPs under `docs/screenshots/` after `make screenshots`.
 
 ### Architecture
 
