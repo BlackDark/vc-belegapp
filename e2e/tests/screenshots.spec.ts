@@ -157,6 +157,9 @@ test("all pages", async ({ page }, info) => {
   const todayShot = page.locator("img[alt='Beleg']");
   if ((await todayShot.count()) > 0) {
     await expect(todayShot).toBeVisible();
+    await expect(todayShot).toHaveCSS("object-fit", "contain");
+    const box = await todayShot.boundingBox();
+    expect(box && box.height > box.width).toBe(true);
   }
   await shot(page, info, "heute");
 
