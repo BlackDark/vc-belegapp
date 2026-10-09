@@ -1,9 +1,19 @@
 name: CI
 
 on:
-  pull_request:
+  # Push to every branch, not pull_request. release-please opens its PR
+  # with GITHUB_TOKEN. GitHub creates those pull_request runs and holds
+  # them for approval. If nobody approves them, the run finishes as a
+  # failure with zero jobs. The annotation is "This workflow run required
+  # approval but was not approved before it expired." A push from that
+  # token does not create a run, so this workflow does not start for that push.
+  # release-please.yml dispatches this workflow on that branch, and the
+  # PR lists those checks. A push to a branch with an open PR reports its
+  # checks on the PR. Tag pushes are not included, so a v* tag does not
+  # start this file directly. release.yml calls it.
   push:
-    branches: [main]
+    branches:
+      - "**"
   workflow_call:
     inputs:
       dry-run:
@@ -11,9 +21,6 @@ on:
         type: boolean
         default: true
         required: false
-  # release-please opens its PR with GITHUB_TOKEN, which does not start
-  # pull_request workflows. release-please.yml dispatches this workflow on
-  # the release branch; the checks attach to that commit.
   workflow_dispatch:
     inputs:
       dry-run:
@@ -27,7 +34,9 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # Superseded branch pushes cancel. main and workflow_dispatch do not.
+  # The release-branch dispatch must be allowed to finish.
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
 
 # web builds the bundle once. Each GoReleaser target is cross-compiled on
 # its own runner (CGO_ENABLED=0, no QEMU) so e2e can start from linux/amd64
@@ -347,7 +356,10 @@ jobs:
   # release.yml calls this workflow with dry-run: false.
   release-dry-run:
     name: release-dry-run
-    if: github.event_name == 'pull_request' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry-run)
+    # workflow_call is the tag release, which passes dry-run false and skips
+    # this job. pull_request stays in the condition so a run still started
+    # from the previous workflow file on main does not drop the snapshot.
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.dry-run)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

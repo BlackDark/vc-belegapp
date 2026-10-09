@@ -42,11 +42,13 @@ jobs:
           # No checkout in this job. Without --repo, gh runs git and
           # fails with "not a git repository".
           gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
-      # GITHUB_TOKEN cannot open a pull_request workflow run, but it can
-      # workflow_dispatch. ci.yml on the release branch then reports checks
-      # for that commit, which the PR lists. release-please sets `prs` to a
-      # JSON array only when a release PR was opened or updated (an update
-      # can set `prs` without `prs_created`). An empty output skips this step.
+      # ci.yml does not listen for pull_request. A GITHUB_TOKEN pull request
+      # would create an approval-gated run that fails with zero jobs.
+      # workflow_dispatch is allowed for this token. ci.yml on the release
+      # branch then reports checks for that commit, which the PR lists.
+      # release-please sets `prs` to a JSON array only when a release PR
+      # was opened or updated. An update can set `prs` without
+      # `prs_created`. An empty output skips this step.
       - name: CI for the release pull request
         if: steps.release.outputs.prs != '' && steps.release.outputs.prs != '[]' && steps.release.outputs.prs != 'null'
         env:

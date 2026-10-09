@@ -338,12 +338,14 @@ Decisions: [docs/adr](docs/adr). Specification: [docs/SPEC.md](docs/SPEC.md). Te
 
 | Workflow | When | What |
 | --- | --- | --- |
-| `ci.yml` | Pull request, push to `main`, dispatch | Web bundle, linux/amd64, linux/arm64, darwin, `go test`, PDF golden + veraPDF, Playwright, multi-arch image, Trivy, read-only smoke. `release-dry-run` runs the same GoReleaser setup as a tag (`release --snapshot --clean --skip=publish,sign,announce`) and fails if the checkout is dirty. |
+| `ci.yml` | Push to any branch, dispatch, `workflow_call` | Web bundle, linux/amd64, linux/arm64, darwin, `go test`, PDF golden + veraPDF, Playwright, multi-arch image, Trivy, read-only smoke. `release-dry-run` runs the same GoReleaser setup as a tag (`release --snapshot --clean --skip=publish,sign,announce`) and fails if the checkout is dirty. |
 | `release-please.yml` | Push to `main` | Release PR and, on merge, tag `vX.Y.Z`. Dispatches `ci.yml` on the release-PR branch and `release.yml` on the tag. |
 | `release.yml` | Tag `v*` | Re-runs CI, smokes the image, GoReleaser. |
-| `codeql.yml` | Pull request, weekly | CodeQL for Go and TypeScript |
+| `codeql.yml` | Push to any branch, weekly | CodeQL for Go and TypeScript |
 
-`release-please` uses `GITHUB_TOKEN`. A pull request or tag created with that token does not start `pull_request` or `push` workflows, so the workflow dispatches the others itself with `gh workflow run --repo "$GITHUB_REPOSITORY"`. That job does not check out the repository; without `--repo`, `gh` fails looking for a git directory. Suggested rulesets that are not applied yet: [`.github/rulesets`](.github/rulesets).
+`release-please` uses `GITHUB_TOKEN`. A tag created with that token does not start workflows, so the workflow dispatches `release.yml` with `gh workflow run --repo "$GITHUB_REPOSITORY"`. That job does not check out the repository. Without `--repo`, `gh` fails looking for a git directory.
+
+A pull request created with the same token does start `pull_request` workflows. GitHub holds them for approval, and an unapproved run finishes as a failure with no jobs. `ci.yml` and `codeql.yml` therefore trigger on a push to any branch. A push from `GITHUB_TOKEN` does not create a run, so a release PR does not get a red CI or CodeQL check from that event. The workflow still dispatches `ci.yml` on the release branch, and the pull request lists those checks. A push to a branch that has an open pull request reports its checks on the pull request. A pull request from a fork has no branch push in this repository, so it does not start these two workflows. Suggested rulesets that are not applied yet: [`.github/rulesets`](.github/rulesets).
 
 ## Release
 
