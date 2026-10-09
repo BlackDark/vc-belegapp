@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/BlackDark/vc-belegapp/compare/v1.1.0...v1.1.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **ci:** stop zero-job failures on release-please pull requests ([#19](https://github.com/BlackDark/vc-belegapp/issues/19)) ([bc06b27](https://github.com/BlackDark/vc-belegapp/commit/bc06b274bff21d698142b3acb3bce1b7ae0f4bf0))
+
 ## [1.1.0](https://github.com/BlackDark/vc-belegapp/compare/v1.0.2...v1.1.0) (2026-10-09)
 
 
