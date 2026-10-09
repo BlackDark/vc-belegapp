@@ -109,7 +109,7 @@ func (q *Queue) loop(ctx context.Context, poll time.Duration) {
 		}
 		if err != nil {
 			if q.Log != nil && ctx.Err() == nil {
-				q.Log.Error("job claim", "err", err.Error())
+				q.Log.Error("job claim", "err", err)
 			}
 			select {
 			case <-ctx.Done():
@@ -124,7 +124,7 @@ func (q *Queue) loop(ctx context.Context, poll time.Duration) {
 
 func (q *Queue) execute(ctx context.Context, job Job) {
 	if q.Handle == nil {
-		_ = q.finish(ctx, job, "fehler", q.stamp(), nil, "kein Handler")
+		q.finishLogged(ctx, job, "fehler", q.stamp(), nil, "kein Handler")
 		return
 	}
 	seconds, result, err := q.Handle(ctx, job)
@@ -132,7 +132,7 @@ func (q *Queue) execute(ctx context.Context, job Job) {
 		if result == "" {
 			result = `{"ok":true}`
 		}
-		_ = q.finish(ctx, job, "fertig", q.stamp(), result, nil)
+		q.finishLogged(ctx, job, "fertig", q.stamp(), result, nil)
 		if q.OnResult != nil {
 			q.OnResult("fertig", seconds)
 		}
@@ -143,12 +143,17 @@ func (q *Queue) execute(ctx context.Context, job Job) {
 		return
 	}
 	if ctx.Err() != nil {
+		// The worker context is already cancelled, so the status write needs
+		// a detached context. The next process start still resets leftovers.
+		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancel()
+		q.finishLogged(finishCtx, job, "wartend", q.stamp(), nil, nil)
 		return
 	}
 	kind := retryKind(err)
 	if shouldRetry(kind, job.Versuche) {
 		next := q.now().Add(q.backoff(job.Versuche, kind))
-		_ = q.finish(ctx, job, "wartend", next.UTC().Format(time.RFC3339), nil, safeText(err))
+		q.finishLogged(ctx, job, "wartend", next.UTC().Format(time.RFC3339), nil, safeText(err))
 		if q.OnRetry != nil {
 			q.OnRetry(ctx, job, err)
 		}
@@ -158,7 +163,7 @@ func (q *Queue) execute(ctx context.Context, job Job) {
 		q.stats(ctx)
 		return
 	}
-	_ = q.finish(ctx, job, "fehler", q.stamp(), nil, safeText(err))
+	q.finishLogged(ctx, job, "fehler", q.stamp(), nil, safeText(err))
 	if q.OnFail != nil {
 		q.OnFail(ctx, job, err)
 	}
@@ -197,6 +202,12 @@ func (q *Queue) claim(ctx context.Context) (Job, error) {
 		return Job{}, err
 	}
 	return Job{ID: row.ID, Typ: row.Typ, Payload: row.Payload, Versuche: int(row.Versuche) + 1}, nil
+}
+
+func (q *Queue) finishLogged(ctx context.Context, job Job, status, next string, result, failure any) {
+	if err := q.finish(ctx, job, status, next, result, failure); err != nil && q.Log != nil {
+		q.Log.Error("job finish", "id", job.ID, "status", status, "err", err)
+	}
 }
 
 func (q *Queue) finish(ctx context.Context, job Job, status, next string, result, failure any) error {
