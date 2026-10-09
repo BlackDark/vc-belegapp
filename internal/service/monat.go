@@ -29,13 +29,17 @@ type Pruefpunkt struct {
 }
 
 // ExportInfo is one stored export version.
+// AufbewahrungBis is the retention clock (end of the calendar year).
+// AufbewahrungAbgelaufen does not delete anything; SPEC §5.2 keeps the blobs.
 type ExportInfo struct {
-	ID         string `json:"id"`
-	Version    int    `json:"version"`
-	ErstelltAm string `json:"erstellt_am"`
-	PDF        bool   `json:"pdf"`
-	CSV        bool   `json:"csv"`
-	ZIP        bool   `json:"zip"`
+	ID                     string `json:"id"`
+	Version                int    `json:"version"`
+	ErstelltAm             string `json:"erstellt_am"`
+	PDF                    bool   `json:"pdf"`
+	CSV                    bool   `json:"csv"`
+	ZIP                    bool   `json:"zip"`
+	AufbewahrungBis        string `json:"aufbewahrung_bis"`
+	AufbewahrungAbgelaufen bool   `json:"aufbewahrung_abgelaufen"`
 }
 
 // Monat is the month view.
@@ -172,13 +176,16 @@ func (s *Service) listExports(ctx context.Context, q *db.Queries, monat string) 
 	}
 	out := make([]ExportInfo, 0, len(rows))
 	for _, row := range rows {
+		until, elapsed := s.retentionOf(row.ErstelltAm)
 		out = append(out, ExportInfo{
-			ID:         row.ID,
-			Version:    int(row.Version),
-			ErstelltAm: row.ErstelltAm,
-			PDF:        true,
-			CSV:        asString(row.CsvBlobKey) != "",
-			ZIP:        asString(row.ZipBlobKey) != "",
+			ID:                     row.ID,
+			Version:                int(row.Version),
+			ErstelltAm:             row.ErstelltAm,
+			PDF:                    true,
+			CSV:                    asString(row.CsvBlobKey) != "",
+			ZIP:                    asString(row.ZipBlobKey) != "",
+			AufbewahrungBis:        until,
+			AufbewahrungAbgelaufen: elapsed,
 		})
 	}
 	return out, nil

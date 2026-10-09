@@ -105,10 +105,15 @@ Every variable uses the prefix `BELEGAPP_`. Secrets may be set as `BELEGAPP_<NAM
 | `BELEGAPP_LLM_TIMEOUT` | `60s` | |
 | `BELEGAPP_LLM_MAX_IMAGE_PX` | `1600` | Long edge of the JPEG sent to the model |
 | `BELEGAPP_JOB_WORKERS` | `2` | Parallel recognition jobs |
+| `BELEGAPP_UNASSIGNED_IMAGE_TTL` | `24h` | Unassigned images, then their blobs |
+| `BELEGAPP_EXPORT_RETENTION_YEARS` | `10` | Retention clock for a Monatsexport; nothing is deleted when it elapses |
+| `BELEGAPP_UPLOAD_MAX_BYTES` | `15728640` | 15 MiB |
+| `BELEGAPP_IMPORT_MAX_BYTES` | `4294967296` | 4 GiB |
+| `BELEGAPP_PDF_TIMEOUT` | `120s` | Typst compile |
 | `BELEGAPP_TYPST_BIN` | `typst` | `/usr/local/bin/typst` in the image |
 | `BELEGAPP_METRICS_ADDR` | empty | For example `:9090`, no auth |
 
-`serve` exits with code 2 when neither `BELEGAPP_AUTH_PASSWORD_HASH` nor `BELEGAPP_OIDC_ISSUER` is set. `migrate` does not need authentication. Incomplete OIDC or S3 configuration is still a startup error (exit 2). A missing API key on the OpenAI base URL logs a warning and the process still starts; uploads stay at status `keine` and are entered manually.
+`serve` exits with code 2 when neither `BELEGAPP_AUTH_PASSWORD_HASH` nor `BELEGAPP_OIDC_ISSUER_URL` is set. `migrate` does not need authentication. Incomplete OIDC or S3 configuration is still a startup error (exit 2). A missing API key on the OpenAI base URL logs a warning and the process still starts; uploads stay at status `keine` and are entered manually.
 
 ### Ollama
 

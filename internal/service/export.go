@@ -275,6 +275,19 @@ func (s *Service) OpenExport(ctx context.Context, exportID, kind string) (Export
 	return ExportDownload{Body: body, Name: name, ContentType: contentType}, nil
 }
 
+// ExportPruefpunkte runs the export-time checks (image hashes and the full
+// audit chain). The month view stays on the cheaper Stat and tip checks.
+func (s *Service) ExportPruefpunkte(ctx context.Context, monat string) ([]Pruefpunkt, error) {
+	view, err := s.GetMonat(ctx, monat)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.applyExportIntegrity(ctx, &view); err != nil {
+		return nil, err
+	}
+	return view.Pruefpunkte, nil
+}
+
 func (s *Service) loadExport(ctx context.Context, monat string) (Monat, Einstellungen, error) {
 	view, err := s.GetMonat(ctx, monat)
 	if err != nil {

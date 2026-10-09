@@ -10,6 +10,15 @@ import (
 	"github.com/BlackDark/vc-belegapp/internal/service"
 )
 
+func (a *API) getMonatPruefpunkte(w http.ResponseWriter, r *http.Request) {
+	checks, err := a.Svc.ExportPruefpunkte(r.Context(), chi.URLParam(r, "monat"))
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, map[string]any{"pruefpunkte": checks})
+}
+
 func (a *API) previewMonat(w http.ResponseWriter, r *http.Request) {
 	body, err := a.Svc.PreviewMonat(r.Context(), a.actor(r), chi.URLParam(r, "monat"))
 	if err != nil {

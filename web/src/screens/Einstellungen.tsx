@@ -101,6 +101,8 @@ export default function Einstellungen() {
   const [bezug, setBezug] = createSignal("supermarkt");
   const [arbeit, setArbeit] = createSignal("betrieb");
   const [aktiv, setAktiv] = createSignal(true);
+  const [csvStd, setCsvStd] = createSignal(true);
+  const [zipStd, setZipStd] = createSignal(false);
   const [testLaeuft, setTestLaeuft] = createSignal(false);
   const [exportLaeuft, setExportLaeuft] = createSignal(false);
   const [exportStatus, setExportStatus] = createSignal("");
@@ -196,6 +198,8 @@ export default function Einstellungen() {
     setBezug(row.standard_bezugsort);
     setArbeit(row.standard_arbeitsort);
     setAktiv(row.erkennung_aktiv);
+    setCsvStd(row.export_csv_standard);
+    setZipStd(row.export_zip_standard);
     setSeeded(true);
   });
 
@@ -213,6 +217,8 @@ export default function Einstellungen() {
       standard_bezugsort: bezug(),
       standard_arbeitsort: arbeit(),
       erkennung_aktiv: aktiv(),
+      export_csv_standard: csvStd(),
+      export_zip_standard: zipStd(),
     };
     try {
       await client.putEinstellungen(next);
@@ -290,6 +296,23 @@ export default function Einstellungen() {
               <option value="betrieb">Betrieb</option>
               <option value="homeoffice">Homeoffice</option>
             </select>
+          </label>
+          <h2 class="text-lg font-medium">Monatsexport</h2>
+          <label class="flex min-h-12 items-center gap-3 text-sm">
+            <input
+              type="checkbox"
+              checked={csvStd()}
+              onChange={(event) => setCsvStd(event.currentTarget.checked)}
+            />
+            CSV im Monatsexport vorauswählen
+          </label>
+          <label class="flex min-h-12 items-center gap-3 text-sm">
+            <input
+              type="checkbox"
+              checked={zipStd()}
+              onChange={(event) => setZipStd(event.currentTarget.checked)}
+            />
+            ZIP mit Originalbildern im Monatsexport vorauswählen
           </label>
           <Button type="submit">Profil speichern</Button>
         </form>

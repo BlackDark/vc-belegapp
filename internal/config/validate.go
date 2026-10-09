@@ -105,6 +105,9 @@ func (c *Config) validate() error {
 	if c.UnassignedImageTTL <= 0 {
 		return fmt.Errorf("BELEGAPP_UNASSIGNED_IMAGE_TTL must be positive")
 	}
+	if c.ExportRetentionYears < 1 || c.ExportRetentionYears > 100 {
+		return fmt.Errorf("BELEGAPP_EXPORT_RETENTION_YEARS must be from 1 to 100")
+	}
 	if strings.TrimSpace(c.TypstBin) == "" {
 		return fmt.Errorf("BELEGAPP_TYPST_BIN is empty")
 	}

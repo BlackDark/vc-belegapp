@@ -145,6 +145,10 @@ func (s *Service) applyImport(ctx context.Context, arc *export.Archive, actor Ac
 		_ = s.rollback(ctx, safetyZip, safetyDB)
 		return ImportResult{}, err
 	}
+	if _, err := s.MigrateBildKeys(ctx); err != nil {
+		_ = s.rollback(ctx, safetyZip, safetyDB)
+		return ImportResult{}, err
+	}
 	report, err := audit.Verify(ctx, s.DB.Read)
 	if err != nil || !report.OK {
 		_ = s.rollback(ctx, safetyZip, safetyDB)
