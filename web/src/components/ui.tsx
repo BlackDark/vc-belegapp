@@ -1,7 +1,7 @@
 import { Button as KButton } from "@kobalte/core/button";
 import { Dialog } from "@kobalte/core/dialog";
 import { TextField as KText } from "@kobalte/core/text-field";
-import type { JSX } from "solid-js";
+import { createEffect, createSignal, type JSX } from "solid-js";
 
 export function Button(props: {
   type?: "button" | "submit";
@@ -53,7 +53,13 @@ export function ReasonDialog(props: {
   onOpenChange: (open: boolean) => void;
   onConfirm: (reason: string) => void;
 }) {
-  let value = "";
+  const [value, setValue] = createSignal("");
+  createEffect(() => {
+    if (props.open) {
+      setValue("");
+    }
+  });
+  const reason = () => value().trim();
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <Dialog.Portal>
@@ -62,16 +68,18 @@ export function ReasonDialog(props: {
           <Dialog.Title class="text-lg font-semibold">
             {props.title}
           </Dialog.Title>
-          <p class="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
+          <Dialog.Description class="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
             Der Monat ist gesperrt. Bitte einen Grund mit mindestens 5 Zeichen
             angeben.
-          </p>
-          <textarea
-            class="mt-3 min-h-24 w-full rounded-xl border border-zinc-300 p-3 dark:border-zinc-700 dark:bg-zinc-950"
-            onInput={(event) => {
-              value = event.currentTarget.value;
-            }}
-          />
+          </Dialog.Description>
+          <label class="mt-3 block text-sm font-medium">
+            Änderungsgrund
+            <textarea
+              class="mt-1 min-h-24 w-full rounded-xl border border-zinc-300 p-3 dark:border-zinc-700 dark:bg-zinc-950"
+              value={value()}
+              onInput={(event) => setValue(event.currentTarget.value)}
+            />
+          </label>
           <div class="mt-3 flex gap-2">
             <Button
               class="flex-1 bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
@@ -81,7 +89,8 @@ export function ReasonDialog(props: {
             </Button>
             <Button
               class="flex-1"
-              onClick={() => props.onConfirm(value.trim())}
+              disabled={reason().length < 5}
+              onClick={() => props.onConfirm(reason())}
             >
               Bestätigen
             </Button>

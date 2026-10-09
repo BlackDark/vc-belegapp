@@ -6,6 +6,7 @@ import { toast } from "solid-sonner";
 import { Button } from "../components/ui";
 import { bezugsorte } from "../lib/amtlich";
 import { ApiError, client, type Einstellungen as Profil } from "../lib/api";
+import { queryKeys } from "../lib/queryKeys";
 import { applyTheme, readTheme, type Theme } from "../lib/theme";
 
 type ImportPreview = {
@@ -43,12 +44,21 @@ function uploadImport(
       }
     };
     xhr.onload = () => {
-      const body = xhr.responseText
-        ? (JSON.parse(xhr.responseText) as ImportPreview & {
+      let body: (ImportPreview & { detail?: string; code?: string }) | null =
+        null;
+      if (xhr.responseText) {
+        try {
+          body = JSON.parse(xhr.responseText) as ImportPreview & {
             detail?: string;
             code?: string;
-          })
-        : null;
+          };
+        } catch {
+          reject(
+            new ApiError(xhr.status, { detail: "Die Antwort war kein JSON." }),
+          );
+          return;
+        }
+      }
       if (xhr.status >= 200 && xhr.status < 300 && body) {
         resolve(body);
         return;
@@ -69,19 +79,19 @@ export default function Einstellungen() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const profil = useQuery(() => ({
-    queryKey: ["einstellungen"],
+    queryKey: queryKeys.einstellungen,
     queryFn: () => client.einstellungen(),
   }));
   const regeln = useQuery(() => ({
-    queryKey: ["regeln"],
+    queryKey: queryKeys.regeln,
     queryFn: () => client.regeln(),
   }));
   const info = useQuery(() => ({
-    queryKey: ["info"],
+    queryKey: queryKeys.info,
     queryFn: () => client.info(),
   }));
   const sitzungen = useQuery(() => ({
-    queryKey: ["sitzungen"],
+    queryKey: queryKeys.sitzungen,
     queryFn: () => client.sitzungen(),
   }));
   const [theme, setTheme] = createSignal<Theme>(readTheme());
@@ -102,6 +112,7 @@ export default function Einstellungen() {
   const [importResult, setImportResult] = createSignal<ImportResult | null>(
     null,
   );
+  const [seeded, setSeeded] = createSignal(false);
 
   const startExport = async () => {
     setExportLaeuft(true);
@@ -176,7 +187,7 @@ export default function Einstellungen() {
   };
   createEffect(() => {
     const row = profil.data;
-    if (!row) {
+    if (!row || seeded()) {
       return;
     }
     setName(row.arbeitnehmer_name);
@@ -185,6 +196,7 @@ export default function Einstellungen() {
     setBezug(row.standard_bezugsort);
     setArbeit(row.standard_arbeitsort);
     setAktiv(row.erkennung_aktiv);
+    setSeeded(true);
   });
 
   const save = async (event?: Event) => {
@@ -205,7 +217,9 @@ export default function Einstellungen() {
     try {
       await client.putEinstellungen(next);
       toast.success("Gespeichert");
-      await queryClient.invalidateQueries({ queryKey: ["einstellungen"] });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.einstellungen,
+      });
     } catch (err) {
       toast.error(
         err instanceof ApiError ? err.message : "Speichern fehlgeschlagen",
@@ -216,6 +230,14 @@ export default function Einstellungen() {
   return (
     <section class="flex flex-col gap-6">
       <h1 class="text-2xl font-semibold">Einstellungen</h1>
+      <Show when={profil.isPending}>
+        <p>Lädt …</p>
+      </Show>
+      <Show when={profil.isError}>
+        <p class="rounded-xl bg-amber-100 px-3 py-2 text-sm dark:bg-amber-950">
+          Die Einstellungen konnten nicht geladen werden.
+        </p>
+      </Show>
       <Show when={profil.data}>
         <form
           class="flex flex-col gap-3"
@@ -379,7 +401,9 @@ export default function Einstellungen() {
               })
               .finally(() => {
                 setTestLaeuft(false);
-                void queryClient.invalidateQueries({ queryKey: ["info"] });
+                void queryClient.invalidateQueries({
+                  queryKey: queryKeys.info,
+                });
               });
           }}
         >
@@ -525,11 +549,11 @@ export default function Einstellungen() {
         <Button
           class="mt-2 bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
           onClick={() =>
-            void client
-              .deleteOtherSessions()
-              .then(() =>
-                queryClient.invalidateQueries({ queryKey: ["sitzungen"] }),
-              )
+            void client.deleteOtherSessions().then(() =>
+              queryClient.invalidateQueries({
+                queryKey: queryKeys.sitzungen,
+              }),
+            )
           }
         >
           Andere Sitzungen beenden
@@ -554,10 +578,19 @@ export default function Einstellungen() {
       <Button
         class="bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
         onClick={() => {
-          void client.logout().then(() => {
-            void queryClient.invalidateQueries({ queryKey: ["me"] });
-            navigate("/login");
-          });
+          void (async () => {
+            try {
+              await client.logout();
+              queryClient.clear();
+              navigate("/login");
+            } catch (err) {
+              toast.error(
+                err instanceof ApiError
+                  ? err.message
+                  : "Abmelden fehlgeschlagen",
+              );
+            }
+          })();
         }}
       >
         Abmelden

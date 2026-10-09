@@ -5,18 +5,19 @@ import { toast } from "solid-sonner";
 import { Button } from "../components/ui";
 import { amtlich, kistVorschlag, laender, mahlzeitLabel } from "../lib/amtlich";
 import { ApiError, client, type Jahresregel } from "../lib/api";
+import { queryKeys } from "../lib/queryKeys";
 
 export default function JahresregelPage() {
   const params = useParams();
   const jahr = () => Number(params.jahr);
   const queryClient = useQueryClient();
   const existing = useQuery(() => ({
-    queryKey: ["regel", jahr()],
+    queryKey: queryKeys.regel(jahr()),
     queryFn: () => client.regel(jahr()),
     retry: false,
   }));
   const suggest = useQuery(() => ({
-    queryKey: ["vorschlag", jahr()],
+    queryKey: queryKeys.vorschlag(jahr()),
     queryFn: () => client.vorschlag(jahr()),
     enabled: existing.isError,
   }));
@@ -43,8 +44,10 @@ export default function JahresregelPage() {
     try {
       await client.putRegel({ ...current, jahr: jahr() });
       toast.success("Jahresregel gespeichert");
-      await queryClient.invalidateQueries({ queryKey: ["regel", jahr()] });
-      await queryClient.invalidateQueries({ queryKey: ["regeln"] });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.regel(jahr()),
+      });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.regeln });
     } catch (err) {
       toast.error(
         err instanceof ApiError ? err.message : "Speichern fehlgeschlagen",
@@ -55,7 +58,27 @@ export default function JahresregelPage() {
   return (
     <section class="flex flex-col gap-4">
       <h1 class="text-2xl font-semibold">Jahresregel {params.jahr}</h1>
-      <Show when={draft()} fallback={<p>Lädt …</p>}>
+      <Show
+        when={draft()}
+        fallback={
+          <Show
+            when={existing.isError && suggest.isError}
+            fallback={<p>Lädt …</p>}
+          >
+            <p class="rounded-xl bg-amber-100 px-3 py-2 text-sm dark:bg-amber-950">
+              Die Jahresregel konnte nicht geladen werden.
+            </p>
+            <Button
+              onClick={() => {
+                void existing.refetch();
+                void suggest.refetch();
+              }}
+            >
+              Erneut versuchen
+            </Button>
+          </Show>
+        }
+      >
         {(row) => (
           <div class="flex flex-col gap-3">
             <label class="text-sm">

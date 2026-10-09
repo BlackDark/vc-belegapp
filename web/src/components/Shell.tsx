@@ -1,14 +1,15 @@
 import { A, useLocation, useNavigate } from "@solidjs/router";
 import { useQuery } from "@tanstack/solid-query";
 import { CalendarDays, Camera, Settings, Sun } from "lucide-solid";
-import { type ParentProps, Show } from "solid-js";
+import { type ParentProps, Show, Suspense } from "solid-js";
 import { ApiError, client } from "../lib/api";
+import { queryKeys } from "../lib/queryKeys";
 
 export default function Shell(props: ParentProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const me = useQuery(() => ({
-    queryKey: ["me"],
+    queryKey: queryKeys.me,
     queryFn: () => client.me(),
     retry: false,
   }));
@@ -37,10 +38,16 @@ export default function Shell(props: ParentProps) {
             active={location.pathname.startsWith("/einstellungen")}
           />
         </aside>
-        <main class="px-4 pb-28 pt-4">{props.children}</main>
+        <main class="px-4 pb-28 pt-4">
+          <Suspense fallback={<p>Lädt …</p>}>{props.children}</Suspense>
+        </main>
         <nav class="fixed inset-x-0 bottom-0 z-10 border-t border-zinc-200 bg-white/95 px-6 py-2 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/95 md:hidden">
           <div class="mx-auto grid max-w-lg grid-cols-3 items-end">
-            <A href="/" class="flex flex-col items-center gap-1 py-2 text-xs">
+            <A
+              href="/"
+              aria-current={location.pathname === "/" ? "page" : undefined}
+              class="flex flex-col items-center gap-1 py-2 text-xs"
+            >
               <Sun size={22} /> Heute
             </A>
             <button
@@ -54,12 +61,20 @@ export default function Shell(props: ParentProps) {
             <div class="flex justify-around">
               <A
                 href="/monat"
+                aria-current={
+                  location.pathname.startsWith("/monat") ? "page" : undefined
+                }
                 class="flex flex-col items-center gap-1 py-2 text-xs"
               >
                 <CalendarDays size={22} /> Monat
               </A>
               <A
                 href="/einstellungen"
+                aria-current={
+                  location.pathname.startsWith("/einstellungen")
+                    ? "page"
+                    : undefined
+                }
                 class="flex flex-col items-center gap-1 py-2 text-xs"
               >
                 <Settings size={22} /> Mehr
@@ -76,6 +91,7 @@ function NavLink(props: { href: string; label: string; active: boolean }) {
   return (
     <A
       href={props.href}
+      aria-current={props.active ? "page" : undefined}
       class={`rounded-xl px-3 py-2 ${props.active ? "bg-emerald-800 text-white" : ""}`}
     >
       {props.label}

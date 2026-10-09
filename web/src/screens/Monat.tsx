@@ -6,6 +6,7 @@ import { Button } from "../components/ui";
 import { ApiError, client, type Monat as MonatData } from "../lib/api";
 import { currentMonth } from "../lib/dates";
 import { formatCent } from "../lib/money";
+import { queryKeys } from "../lib/queryKeys";
 
 const statusLabel: Record<string, string> = {
   offen: "Offen",
@@ -27,7 +28,7 @@ export default function Monat() {
   const [open, setOpen] = createSignal(false);
   const queryClient = useQueryClient();
   const query = useQuery(() => ({
-    queryKey: ["monat", monat()],
+    queryKey: queryKeys.monat(monat()),
     queryFn: () => client.monat(monat()),
     retry: false,
   }));
@@ -44,12 +45,15 @@ export default function Monat() {
           onInput={(event) => setMonat(event.currentTarget.value)}
         />
       </div>
-      <Show
-        when={query.data}
-        fallback={
-          <p>{query.isPending ? "Lädt …" : "Keine Daten für diesen Monat."}</p>
-        }
-      >
+      <Show when={query.isPending}>
+        <p>Lädt …</p>
+      </Show>
+      <Show when={query.isError}>
+        <p class="rounded-xl bg-amber-100 px-3 py-2 text-sm dark:bg-amber-950">
+          Der Monat konnte nicht geladen werden.
+        </p>
+      </Show>
+      <Show when={query.data}>
         {(data) => (
           <>
             <p class="w-fit rounded-full bg-zinc-200 px-3 py-1 text-sm dark:bg-zinc-800">
@@ -88,7 +92,9 @@ export default function Monat() {
                 {(tag) => (
                   <A
                     href={
-                      tag.beleg_id ? `/belege/${tag.beleg_id}` : "/erfassen"
+                      tag.beleg_id
+                        ? `/belege/${tag.beleg_id}`
+                        : `/belege/neu?datum=${tag.datum}`
                     }
                     class={`rounded-lg px-1 py-2 ${tag.wochenende || tag.feiertag ? "bg-amber-100 dark:bg-amber-950" : "bg-zinc-100 dark:bg-zinc-900"} ${tag.beleg_id ? "font-semibold" : ""}`}
                   >
@@ -170,7 +176,9 @@ export default function Monat() {
               data={data()}
               onOpenChange={setOpen}
               onDone={() =>
-                queryClient.invalidateQueries({ queryKey: ["monat", monat()] })
+                queryClient.invalidateQueries({
+                  queryKey: queryKeys.monat(monat()),
+                })
               }
             />
           </>
@@ -195,7 +203,7 @@ function ExportDialog(props: {
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
   const settings = useQuery(() => ({
-    queryKey: ["einstellungen"],
+    queryKey: queryKeys.einstellungen,
     queryFn: () => client.einstellungen(),
     enabled: props.open,
   }));
