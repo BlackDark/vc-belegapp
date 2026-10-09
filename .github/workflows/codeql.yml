@@ -1,7 +1,14 @@
 name: CodeQL
 
 on:
-  pull_request:
+  # Same constraint as ci.yml. A pull_request run created by
+  # github-actions[bot] waits for approval and then fails with zero jobs.
+  # A push from GITHUB_TOKEN does not create a run, so the release PR
+  # does not show a red CodeQL check. Branch pushes still run the
+  # analysis, and an open PR lists those checks.
+  push:
+    branches:
+      - "**"
   schedule:
     - cron: "0 6 * * 1"
 
