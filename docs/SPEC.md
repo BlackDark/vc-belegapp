@@ -209,7 +209,7 @@ Profil (Name, Personalnummer, Arbeitgeber), Standardwerte, Jahresregeln (Liste +
 | erkennung_dauer_ms | INTEGER NULL | |
 | erstellt_am | TEXT NOT NULL | |
 
-Nicht zugeordnete Belegbilder werden nach `BELEGAPP_UNASSIGNED_IMAGE_TTL` gelöscht (Zeile + Blobs, sofern der Blob weder von einem anderen Belegbild noch von einem Monatsexport referenziert wird). Soft-Delete eines Belegs, der in keinem `monatsexporte.beleg_ids` steht, hebt die Zuordnung auf; die Bilder fallen danach unter dieselbe Frist, gerechnet ab `erstellt_am`. Bilder eines exportierten Belegs bleiben zugeordnet. Die Belegzeile und das Änderungsprotokoll bleiben. Blobs unter `bilder/`, die keine Zeile haben und älter als die Frist sind, werden entfernt. Monatsexport-Blobs werden nie gelöscht.
+Nicht zugeordnete Belegbilder werden nach `BELEGAPP_UNASSIGNED_IMAGE_TTL` gelöscht (Zeile + Blobs, sofern der Blob weder von einem anderen Belegbild noch von einem Monatsexport referenziert wird). Soft-Delete eines Belegs, der in keinem `monatsexporte.beleg_ids` steht, hebt die Zuordnung auf; die Bilder fallen danach unter dieselbe Frist, gerechnet ab `erstellt_am`. Bilder eines exportierten Belegs bleiben zugeordnet. Die Belegzeile und das Änderungsprotokoll bleiben. Blobs unter `bilder/` und `thumbs/`, die keine Zeile haben und älter als die Frist sind, werden entfernt. Neue Bilder liegen inhaltsadressiert (`bilder/{sha[0:2]}/{sha256}.jpg`, `thumbs/{sha[0:2]}/{sha256}.jpg`). Bestehende Schlüssel `bilder/{id}.jpg` und `bilder/{id}.thumb.jpg` werden beim Start und nach einem Datenimport dorthin kopiert; der alte Blob wird gelöscht, wenn keine Zeile und kein Monatsexport ihn noch nennt. Die Kopie ist idempotent. Monatsexport-Blobs werden nie gelöscht.
 
 **`belege`**
 | Spalte | Typ | Constraint/Default |
@@ -261,7 +261,7 @@ Zeile wird bei Bedarf angelegt (fehlend = `offen`).
 | warnungen_bestaetigt | INTEGER NOT NULL | |
 | protokoll_hash | TEXT NOT NULL | Hash des letzten Änderungsprotokoll-Eintrags zum Exportzeitpunkt |
 
-Monatsexporte und ihre Blobs werden nie gelöscht.
+Monatsexporte und ihre Blobs werden nie automatisch gelöscht. `BELEGAPP_EXPORT_RETENTION_YEARS` (Default 10) setzt nur die Aufbewahrungsuhr: `aufbewahrung_bis` ist das Ende des Kalenderjahres `Jahr(erstellt_am) + N` in `BELEGAPP_TZ` (ein Export aus 2026 mit N=6 endet am 31.12.2032, analog § 41 Abs. 1 EStG; der App-Default folgt der Empfehlung „mindestens 10 Jahre“ in `docs/research/steuer.md`). `aufbewahrung_abgelaufen` steht in der Monatsansicht und an den Exportversionen, löst aber keine Löschung aus.
 
 **`aenderungsprotokoll`** (append-only)
 | Spalte | Typ | Inhalt |
@@ -474,7 +474,7 @@ Beispielmonat M1 (Oktober 2026, NW) mit Belegen: Mo 05.10. REWE 8,40 · Di 06.10
 
 ✗ blockiert den finalen Export (`422 E_PRUEFPUNKT_FEHLGESCHLAGEN`), ⚠ erfordert `warnungen_bestaetigt`.
 
-Die Monatsansicht prüft `P_BILDER_VOLLSTAENDIG` per Stat (Blob vorhanden, Größe = `bytes`) und `P_PROTOKOLL_INTAKT` nur am letzten Eintrag. Finaler Export und PDF-Vorschau hashen jedes Bild und prüfen die gesamte Hash-Kette.
+Die Monatsansicht prüft `P_BILDER_VOLLSTAENDIG` per Stat (Blob vorhanden, Größe = `bytes`) und `P_PROTOKOLL_INTAKT` nur am letzten Eintrag. Finaler Export und PDF-Vorschau hashen jedes Bild und prüfen die gesamte Hash-Kette. Schlägt der finale Export mit `E_PRUEFPUNKT_FEHLGESCHLAGEN` fehl, lädt der Export-Dialog `GET /monate/{monat}/pruefpunkte` und ersetzt die angezeigten Häkchen durch dieses Ergebnis.
 
 ### 7.4 Feiertagskalender
 - Quelle: `github.com/rickar/cal/v2/de` (gesetzliche Feiertage je Bundesland, landesweit) + `jahresregeln.eigene_feiertage`.
@@ -527,6 +527,7 @@ Die Monatsansicht prüft `P_BILDER_VOLLSTAENDIG` per Stat (Blob vorhanden, Grö�
 | PATCH | `/belege/{id}` | Teiländerung, Pflicht `version`; `aenderungsgrund` falls Monat gesperrt/geändert |
 | DELETE | `/belege/{id}` | Soft-Delete; Body `{version, aenderungsgrund?}` |
 | GET | `/monate/{monat}` | Monatsansicht (8.3) |
+| GET | `/monate/{monat}/pruefpunkte` | Export-Prüfung `{pruefpunkte}` (Hash je Bild, volle Hash-Kette) |
 | POST | `/monate/{monat}/vorschau` | `application/pdf` mit Wasserzeichen ENTWURF |
 | POST | `/monate/{monat}/exporte` | finaler Monatsexport → `201` Monatsexport |
 | GET | `/monate/{monat}/exporte` | Liste der Exportversionen |
@@ -582,7 +583,8 @@ Die Monatsansicht prüft `P_BILDER_VOLLSTAENDIG` per Stat (Blob vorhanden, Grö�
   "belege": [ {…Beleg…} ], "summen": { …6.4… },
   "pruefpunkte": [ { "code": "P_MONATSLIMIT", "ergebnis": "ok" } ],
   "warnungen": [ { "code": "W_FEIERTAG", "beleg_id": "…", "text": "…" } ],
-  "exporte": [ { "id": "…", "version": 1, "erstellt_am": "…", "pdf": true, "csv": true, "zip": false } ] }
+  "exporte": [ { "id": "…", "version": 1, "erstellt_am": "…", "pdf": true, "csv": true, "zip": false,
+                 "aufbewahrung_bis": "2036-12-31T22:59:59Z", "aufbewahrung_abgelaufen": false } ] }
 ```
 
 **Monatsexport – Request**
@@ -717,7 +719,7 @@ type BlobStore interface {
 }
 type ObjectInfo struct { Key string; Size int64; ContentType string; ModTime time.Time }
 ```
-- Keys: nur `[a-z0-9/._-]`, kein `..`, kein führendes `/`. Bilder inhaltsadressiert (`bilder/ab/<sha256>.jpg`) → unveränderlich, Dedup.
+- Keys: nur `[a-z0-9/._-]`, kein `..`, kein führendes `/`. Bilder inhaltsadressiert (`bilder/{sha[0:2]}/{sha256}.jpg`, Thumbnail `thumbs/{sha[0:2]}/{sha256}.jpg`) → unveränderlich, Dedup. Gleicher Inhalt teilt sich Blob und Thumbnail. Beim Start und nach Datenimport werden Alt-Schlüssel `bilder/{id}.jpg` / `bilder/{id}.thumb.jpg` umkopiert (idempotent, Referenzzähler vor dem Löschen). Ein Blob, dessen Hash nicht zur Zeile passt, bleibt auf dem alten Schlüssel.
 - **fs**: `os.Root` auf `BELEGAPP_STORAGE_FS_DIR`; Schreiben in Temp-Datei, `fsync`, `rename`; Dateien 0640, Verzeichnisse 0750.
 - **s3**: `minio-go/v7`; Endpoint, Region, Bucket, Prefix, Path-Style, TLS konfigurierbar; `Ping` = `BucketExists` (Ergebnis 30 s gecacht). Optional SSE-S3 (`BELEGAPP_S3_SSE=true`).
 - Contract-Tests laufen gegen beide Implementierungen (fs mit TempDir, s3 mit `gofakes3` in-process; optional MinIO/Garage per Testcontainers).
@@ -736,7 +738,7 @@ db/belegapp.sqlite       Snapshot per VACUUM INTO (inkl. Änderungsprotokoll, oh
 blobs/<key>              alle referenzierten Blobs (Bilder, Thumbnails, Monatsexporte)
 csv/belege.csv           alle Belege, Format 12.5
 ```
-Erstellung als Job in Temp-Datei, dann Ablage unter `datenexporte/<zeitstempel>.zip` im BlobStore (Download 24 h, danach gelöscht; CLI schreibt direkt in Datei).
+Erstellung als Job in Temp-Datei, dann Ablage unter `datenexporte/<zeitstempel>.zip` im BlobStore (Download 24 h, danach gelöscht; CLI schreibt direkt in Datei). `format_version` bleibt 1: die Schlüssel sind Daten in `blobs/<key>` und in `belegbilder`, kein zweites Archivlayout. Import liest Alt- und Neu-Schlüssel und migriert danach auf die inhaltsadressierte Form.
 
 ### 11.4 Datenimport
 1. ZIP-Struktur, Manifest, alle Prüfsummen validieren; `format_version` bekannt; `schema_version ≤` aktuell (sonst `422 E_IMPORT_ZU_NEU`).
@@ -807,8 +809,8 @@ Letzte Zeile `summe;…` mit Summen. Für den Datenexport zusätzlich Spalte `be
 | Heute | Status heute (Beleg vorhanden: Karte mit Thumbnail/Betrag/Erstattung; sonst Kamera- und Galerie-Button groß), Monatsfortschritt „n / Limit“, ΣE des Monats, Hinweis bei fehlender Jahresregel |
 | Prüfen/Bearbeiten | Bild (Pinch-Zoom, Seitenwechsel, „+ Seite“), Erkennungsstatus (Skeleton/Fehler/„Erneut erkennen“), Felder: Datum, Mahlzeitart (Segmented, nur erlaubte), Bezugsort (Select), Arbeitsort (Toggle), Händler, Ort, Belegbetrag, Korrigierter Betrag + Grund (aufklappbar), Notiz; Positionsliste mit Kategorie-Badges; Korrekturvorschlag-Hinweis; Berechnungskarte (E, U, G, F, R); Warnungsliste; Speichern/Löschen; Änderungsgrund-Dialog im gesperrten Monat |
 | Monat | Monatsauswahl, Status-Badge, Kalender (Tageszellen mit Betrag/Wochenende/Feiertag/Warnung), Summenkarte, Belegliste, Buttons Vorschau/Exportieren, Banner bei `geaendert` |
-| Export-Dialog | Prüfpunkte, Warnungen, Optionen CSV/ZIP, Arbeitnehmererklärung (Checkbox, Volltext), „Warnungen geprüft“, Vorschau, Final exportieren; Liste der Exportversionen mit Downloads |
-| Einstellungen | Profil; Standardwerte; Jahresregeln (Liste; Editor mit Abschnitten Zuschuss, Sachbezugswerte (Button „amtliche Werte übernehmen“), Steuer (Pauschalierung, Gehaltsumwandlung, Bundesland → Kirchensteuer-Vorschlag, Satz), Berechnung (Eigenanteil-Variante mit Erklärung), Monatslimit + Modus, Eigene Feiertage); Belegerkennung (an/aus, Modell, Basis-URL read-only, „Verbindung testen“); Speicher (Backend read-only); Sitzungen; Datenexport/-import; Änderungsprotokoll (Liste, „Kette prüfen“); Darstellung; Über |
+| Export-Dialog | Prüfpunkte, Warnungen, Optionen CSV/ZIP, Arbeitnehmererklärung (Checkbox, Volltext), „Warnungen geprüft“, Vorschau, Final exportieren; bei `E_PRUEFPUNKT_FEHLGESCHLAGEN` die Export-Prüfpunkte neu laden; Liste der Exportversionen mit Downloads und Aufbewahrungsuhr |
+| Einstellungen | Profil; Monatsexport-Standards `export_csv_standard` / `export_zip_standard`; Jahresregeln (Liste; Editor mit Abschnitten Zuschuss, Sachbezugswerte (Button „amtliche Werte übernehmen“), Steuer (Pauschalierung, Gehaltsumwandlung, Bundesland → Kirchensteuer-Vorschlag, Satz), Berechnung (Eigenanteil-Variante mit Erklärung), Monatslimit + Modus, Eigene Feiertage); Belegerkennung (an/aus, Modell, Basis-URL read-only, „Verbindung testen“); Speicher (Backend read-only); Sitzungen; Datenexport/-import; Änderungsprotokoll (Liste, „Kette prüfen“); Darstellung; Über |
 
 ### 13.3 PWA
 - `vite-plugin-pwa`: `registerType: "prompt"` (Toast „Neue Version – neu laden“), Manifest `name: "Belegapp"`, `short_name: "Belege"`, `lang: "de"`, `display: "standalone"`, `start_url: "/"`, Theme-Farben hell/dunkel, Icons 192/512 + maskable (generiert mit `@vite-pwa/assets-generator`), iOS-`apple-touch-icon`.
@@ -866,6 +868,7 @@ Alle Variablen mit Präfix `BELEGAPP_`; für Geheimnisse zusätzlich `<NAME>_FIL
 | `BELEGAPP_UPLOAD_MAX_BYTES` | `15728640` | 15 MiB |
 | `BELEGAPP_IMPORT_MAX_BYTES` | `4294967296` | 4 GiB (Datenimport) |
 | `BELEGAPP_UNASSIGNED_IMAGE_TTL` | `24h` | |
+| `BELEGAPP_EXPORT_RETENTION_YEARS` | `10` | Kalenderjahre der Aufbewahrungsuhr; keine automatische Löschung |
 | `BELEGAPP_TYPST_BIN` | `typst` | Pfad zum Typst-Binary |
 | `BELEGAPP_PDF_TIMEOUT` | `120s` | |
 | `BELEGAPP_METRICS_ADDR` | `` | z. B. `:9090`; leer = aus |
@@ -1037,3 +1040,12 @@ Coverage-Ziel: `internal/calc` 100 %, Backend gesamt ≥ 70 %.
 10. Gespeichert wird das normalisierte Bild (≤ 2400 px, ohne EXIF/GPS), nicht das Original.
 11. Datenimport ersetzt immer den gesamten Bestand (kein Zusammenführen) und legt vorher automatisch eine Sicherung an.
 12. Bezugsorte: Supermarkt, Restaurant, Kantine, Bäckerei, Lieferdienst, Sonstiges; Arbeitsort Betrieb/Homeoffice als zusätzliches Feld.
+
+### 19.4 Intentional deviations
+
+- Monatsexport blobs are never deleted automatically. `BELEGAPP_EXPORT_RETENTION_YEARS` (default 10, the app recommendation in `docs/research/steuer.md` §2.6; 6 matches the Lohnkonto window in § 41 Abs. 1 EStG) only sets `aufbewahrung_bis` / `aufbewahrung_abgelaufen`. Reclaim after the window is not implemented.
+- Datenexport `format_version` stays 1. Per-id keys (`bilder/{id}.jpg`, `bilder/{id}.thumb.jpg`) and content-addressed keys are both valid archive members. Import and process start copy legacy keys onto `bilder/{sha[0:2]}/{sha256}.jpg` and `thumbs/{sha[0:2]}/{sha256}.jpg`.
+- The month screen still uses the cheap image and audit checks. Export, PDF preview, and `GET /monate/{monat}/pruefpunkte` hash images and walk the full chain. The export dialog reloads that result when final export returns `E_PRUEFPUNKT_FEHLGESCHLAGEN`.
+- Job rows store `err.Error()` for the operator (`safeText`, truncated). That text is not part of the public problem JSON.
+- LLM and OIDC base URLs are operator configuration. Private hosts stay allowed so a local Ollama endpoint works. There is no switch to block them.
+- An image whose stored bytes do not match `belegbilder.sha256` is left on its old key and the process still starts. The export-time hash check then fails closed.

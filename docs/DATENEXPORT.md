@@ -56,7 +56,9 @@ The database member is a `VACUUM INTO` snapshot. Sitzungen and jobs are removed 
 
 Blobs are the keys referenced by Belegbilder (image and thumbnail) and Monatsexporte (PDF, CSV, ZIP). Previous Datenexport zips are not included. On import, a destination key with the same SHA-256 is left as it is. A different hash is overwritten. Keys that exist only on the destination are left in place.
 
-A soft-deleted Beleg that is not listed in any Monatsexport has its images unassigned. After `BELEGAPP_UNASSIGNED_IMAGE_TTL` those rows and blobs are gone, so a later archive does not contain them. The Beleg row and the audit log stay. Images of a Beleg that appears in `monatsexporte.beleg_ids` stay assigned, and Monatsexport blobs are never deleted.
+A soft-deleted Beleg that is not listed in any Monatsexport has its images unassigned. After `BELEGAPP_UNASSIGNED_IMAGE_TTL` those rows and blobs are gone, so a later archive does not contain them. The Beleg row and the audit log stay. Images of a Beleg that appears in `monatsexporte.beleg_ids` stay assigned. Monatsexport blobs are never deleted. `BELEGAPP_EXPORT_RETENTION_YEARS` (default 10) only fills `aufbewahrung_bis` on the month view.
+
+`format_version` stays 1. Blob keys are data, not a second layout. An archive may contain either legacy keys (`blobs/bilder/{id}.jpg`, `blobs/bilder/{id}.thumb.jpg`) or content-addressed keys (`blobs/bilder/{sha[0:2]}/{sha256}.jpg`, `blobs/thumbs/{sha[0:2]}/{sha256}.jpg`). Import accepts both. After the database is replaced, the same startup migration copies legacy objects onto the content-addressed keys and deletes the old object when nothing else names it. A second import of an already migrated archive is a no-op for those keys.
 
 `csv/belege.csv` is UTF-8 with BOM, `;` separated, CRLF. The monthly header plus `beleg_id`, all years, active Belege only, and a `summe` line.
 
