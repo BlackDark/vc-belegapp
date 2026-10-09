@@ -35,6 +35,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.UploadMaxBytes != 15<<20 || cfg.ImportMaxBytes != 4<<30 || cfg.JobWorkers != 2 {
 		t.Fatalf("limits: upload=%d import=%d workers=%d", cfg.UploadMaxBytes, cfg.ImportMaxBytes, cfg.JobWorkers)
 	}
+	if cfg.ExportRetentionYears != 10 || cfg.UnassignedImageTTL != 24*time.Hour {
+		t.Fatalf("retention %d ttl %s", cfg.ExportRetentionYears, cfg.UnassignedImageTTL)
+	}
 	if cfg.OIDCButtonLabel != "Mit SSO anmelden" || cfg.AuthConfigured() {
 		t.Fatalf("auth defaults")
 	}
@@ -60,6 +63,7 @@ func TestLoadRejectsInvalid(t *testing.T) {
 		{"s3 bucket", "BELEGAPP_STORAGE_BACKEND", "s3", "BELEGAPP_S3_BUCKET"},
 		{"llm format", "BELEGAPP_LLM_RESPONSE_FORMAT", "text", "BELEGAPP_LLM_RESPONSE_FORMAT"},
 		{"workers", "BELEGAPP_JOB_WORKERS", "0", "BELEGAPP_JOB_WORKERS"},
+		{"retention", "BELEGAPP_EXPORT_RETENTION_YEARS", "0", "BELEGAPP_EXPORT_RETENTION_YEARS"},
 		{"base url path", "BELEGAPP_BASE_URL", "https://belege.example.de/app", "BELEGAPP_BASE_URL"},
 	}
 	for _, tt := range tests {

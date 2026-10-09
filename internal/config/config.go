@@ -70,14 +70,15 @@ type Config struct {
 	LLMTimeout         time.Duration `env:"BELEGAPP_LLM_TIMEOUT" envDefault:"60s"`
 	LLMMaxImagePX      int           `env:"BELEGAPP_LLM_MAX_IMAGE_PX" envDefault:"1600"`
 
-	JobWorkers         int           `env:"BELEGAPP_JOB_WORKERS" envDefault:"2"`
-	UploadMaxBytes     int64         `env:"BELEGAPP_UPLOAD_MAX_BYTES" envDefault:"15728640"`
-	ImportMaxBytes     int64         `env:"BELEGAPP_IMPORT_MAX_BYTES" envDefault:"4294967296"`
-	UnassignedImageTTL time.Duration `env:"BELEGAPP_UNASSIGNED_IMAGE_TTL" envDefault:"24h"`
-	TypstBin           string        `env:"BELEGAPP_TYPST_BIN" envDefault:"typst"`
-	PDFTimeout         time.Duration `env:"BELEGAPP_PDF_TIMEOUT" envDefault:"120s"`
-	MetricsAddr        string        `env:"BELEGAPP_METRICS_ADDR"`
-	Location           *time.Location
+	JobWorkers           int           `env:"BELEGAPP_JOB_WORKERS" envDefault:"2"`
+	UploadMaxBytes       int64         `env:"BELEGAPP_UPLOAD_MAX_BYTES" envDefault:"15728640"`
+	ImportMaxBytes       int64         `env:"BELEGAPP_IMPORT_MAX_BYTES" envDefault:"4294967296"`
+	UnassignedImageTTL   time.Duration `env:"BELEGAPP_UNASSIGNED_IMAGE_TTL" envDefault:"24h"`
+	ExportRetentionYears int           `env:"BELEGAPP_EXPORT_RETENTION_YEARS" envDefault:"10"`
+	TypstBin             string        `env:"BELEGAPP_TYPST_BIN" envDefault:"typst"`
+	PDFTimeout           time.Duration `env:"BELEGAPP_PDF_TIMEOUT" envDefault:"120s"`
+	MetricsAddr          string        `env:"BELEGAPP_METRICS_ADDR"`
+	Location             *time.Location
 }
 
 // Load reads configuration from the environment and validates it.

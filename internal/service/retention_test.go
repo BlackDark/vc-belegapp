@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -204,6 +205,69 @@ func TestSweepRemovesOrphanBlobs(t *testing.T) {
 	}
 	if _, err := svc.Store.Stat(ctx, "exporte/2026-10/v1/keep.pdf"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRetentionClock(t *testing.T) {
+	loc, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 10, 8, 15, 0, 0, 0, loc)
+	until, elapsed := RetentionDeadline(at, at, 6, loc)
+	want := time.Date(2032, 12, 31, 23, 59, 59, 0, loc)
+	if !until.Equal(want) || elapsed {
+		t.Fatalf("statutory %s elapsed %v", until, elapsed)
+	}
+	if _, elapsed = RetentionDeadline(want, at, 6, loc); elapsed {
+		t.Fatal("window ended on the last second")
+	}
+	if _, elapsed = RetentionDeadline(want.Add(time.Second), at, 6, loc); !elapsed {
+		t.Fatal("window stayed open")
+	}
+	until, _ = RetentionDeadline(at, at, 10, loc)
+	if !until.Equal(time.Date(2036, 12, 31, 23, 59, 59, 0, loc)) {
+		t.Fatal(until)
+	}
+}
+
+func TestExportKeptAfterRetention(t *testing.T) {
+	ctx := context.Background()
+	svc := exportSvc(t, &fakePDF{})
+	svc.RetentionYears = 6
+	saveRule(t, svc)
+	beleg := addBeleg(t, svc, colorPNG(t, 7, 8, 9), sampleInput())
+	created, err := svc.CreateExport(ctx, Actor{Name: "eduard"}, "2026-10", ExportRequest{ErklaerungBestaetigt: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	month, err := svc.GetMonat(ctx, "2026-10")
+	if err != nil || len(month.Exporte) != 1 || month.Exporte[0].AufbewahrungAbgelaufen {
+		t.Fatalf("clock %+v %v", month.Exporte, err)
+	}
+	if !strings.HasPrefix(month.Exporte[0].AufbewahrungBis, "2032-12-31") {
+		t.Fatalf("until %s", month.Exporte[0].AufbewahrungBis)
+	}
+	var imageKey, pdfKey string
+	if err := svc.DB.Read.QueryRowContext(ctx, `SELECT blob_key FROM belegbilder WHERE beleg_id = ?`, beleg.ID).Scan(&imageKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DB.Read.QueryRowContext(ctx, `SELECT pdf_blob_key FROM monatsexporte WHERE id = ?`, created.ID).Scan(&pdfKey); err != nil {
+		t.Fatal(err)
+	}
+	svc.Now = func() time.Time { return time.Date(2033, 1, 2, 0, 0, 0, 0, time.UTC) }
+	if err := svc.sweepOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	month, err = svc.GetMonat(ctx, "2026-10")
+	if err != nil || !month.Exporte[0].AufbewahrungAbgelaufen {
+		t.Fatalf("elapsed %+v %v", month.Exporte, err)
+	}
+	if _, err := svc.Store.Stat(ctx, imageKey); err != nil {
+		t.Fatal("image reclaimed")
+	}
+	if _, err := svc.Store.Stat(ctx, pdfKey); err != nil {
+		t.Fatal("pdf reclaimed")
 	}
 }
 

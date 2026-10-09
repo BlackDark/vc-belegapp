@@ -25,19 +25,20 @@ type Actor struct {
 
 // Service is the application API used by HTTP handlers.
 type Service struct {
-	DB         *db.DB
-	Store      storage.BlobStore
-	Holidays   holidays.Provider
-	Loc        *time.Location
-	Now        func() time.Time
-	UploadMax  int64
-	ImageTTL   time.Duration
-	Extractor  erkennung.ReceiptExtractor
-	Jobs       *jobs.Queue
-	LLMMaxPX   int
-	LLMTimeout time.Duration
-	PDF        pdf.Renderer
-	AppVersion string
+	DB             *db.DB
+	Store          storage.BlobStore
+	Holidays       holidays.Provider
+	Loc            *time.Location
+	Now            func() time.Time
+	UploadMax      int64
+	ImageTTL       time.Duration
+	RetentionYears int
+	Extractor      erkennung.ReceiptExtractor
+	Jobs           *jobs.Queue
+	LLMMaxPX       int
+	LLMTimeout     time.Duration
+	PDF            pdf.Renderer
+	AppVersion     string
 
 	exportMu  sync.Mutex
 	exporting map[string]struct{}
