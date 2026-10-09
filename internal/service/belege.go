@@ -158,6 +158,9 @@ func (s *Service) CreateBeleg(ctx context.Context, actor Actor, in BelegInput) (
 		if err := auditChange(ctx, tx, actor, stamp, "beleg_erstellt", "beleg", newID, built.Datum[:7], grund, nil, built); err != nil {
 			return err
 		}
+		if err := auditBildSet(ctx, tx, actor, stamp, built.Datum[:7], grund, newID, nil, in.BildIDs); err != nil {
+			return err
+		}
 		out = built
 		return nil
 	})
@@ -224,7 +227,12 @@ func (s *Service) UpdateBeleg(ctx context.Context, actor Actor, belegID string, 
 		if n == 0 {
 			return problem.New(409, "E_VERSION_KONFLIKT", "Der Beleg wurde zwischenzeitlich geändert.")
 		}
+		var beforeBilder []db.Belegbilder
 		if patch.BildIDs != nil {
+			beforeBilder, err = q.ListBelegbilderByBeleg(ctx, belegID)
+			if err != nil {
+				return err
+			}
 			if err := assignBilder(ctx, q, belegID, in.BildIDs); err != nil {
 				return err
 			}
@@ -249,8 +257,14 @@ func (s *Service) UpdateBeleg(ctx context.Context, actor Actor, belegID string, 
 		if err := s.attachBilder(ctx, q, &built); err != nil {
 			return err
 		}
-		if err := auditChange(ctx, tx, actor, stamp, "beleg_geaendert", "beleg", belegID, built.Datum[:7], trimmed(patch.Aenderungsgrund), snapshotRow(row, ids), built); err != nil {
+		grund := trimmed(patch.Aenderungsgrund)
+		if err := auditChange(ctx, tx, actor, stamp, "beleg_geaendert", "beleg", belegID, built.Datum[:7], grund, snapshotRow(row, ids), built); err != nil {
 			return err
+		}
+		if patch.BildIDs != nil {
+			if err := auditBildSet(ctx, tx, actor, stamp, built.Datum[:7], grund, belegID, beforeBilder, in.BildIDs); err != nil {
+				return err
+			}
 		}
 		out = built
 		return nil
@@ -299,9 +313,13 @@ func (s *Service) DeleteBeleg(ctx context.Context, actor Actor, belegID string, 
 				return err
 			}
 		}
-		ids, err := s.bildIDs(ctx, q, belegID)
+		bildRows, err := q.ListBelegbilderByBeleg(ctx, belegID)
 		if err != nil {
 			return err
+		}
+		ids := make([]string, 0, len(bildRows))
+		for _, bild := range bildRows {
+			ids = append(ids, bild.ID)
 		}
 		exported, err := receiptExported(ctx, q, belegID)
 		if err != nil {
@@ -315,7 +333,13 @@ func (s *Service) DeleteBeleg(ctx context.Context, actor Actor, belegID string, 
 				return err
 			}
 		}
-		return auditChange(ctx, tx, actor, stamp, "beleg_geloescht", "beleg", belegID, row.Datum[:7], reason, snapshotRow(row, ids), map[string]any{"geloescht_am": stamp})
+		if err := auditChange(ctx, tx, actor, stamp, "beleg_geloescht", "beleg", belegID, row.Datum[:7], reason, snapshotRow(row, ids), map[string]any{"geloescht_am": stamp}); err != nil {
+			return err
+		}
+		if exported {
+			return nil
+		}
+		return auditBildSet(ctx, tx, actor, stamp, row.Datum[:7], reason, belegID, bildRows, nil)
 	})
 }
 

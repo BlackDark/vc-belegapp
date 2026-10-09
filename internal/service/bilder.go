@@ -3,9 +3,11 @@ package service
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
+	"sort"
 	"time"
 
 	"github.com/BlackDark/vc-belegapp/internal/db"
@@ -31,7 +33,7 @@ type Bild struct {
 	DuplikatVon  *string   `json:"duplikat_von"`
 }
 
-// Erkennung is the recognition block. M1 leaves it at status "keine".
+// Erkennung is the recognition block stored on a Belegbild.
 type Erkennung struct {
 	Status                 string              `json:"status"`
 	Modell                 *string             `json:"modell"`
@@ -65,13 +67,17 @@ func (s *Service) SaveBild(ctx context.Context, data []byte, recognize bool) (Bi
 	if err != nil {
 		return Bild{}, err
 	}
-	key := "bilder/" + bildID + ".jpg"
-	thumb := "bilder/" + bildID + ".thumb.jpg"
+	key, ok := BildBlobKey(norm.SHA256)
+	thumb, okThumb := ThumbBlobKey(norm.SHA256)
+	if !ok || !okThumb {
+		return Bild{}, errors.New("image hash is not a storage key")
+	}
+	q := db.New(s.DB.Write)
 	if err := s.Store.Put(ctx, key, bytes.NewReader(norm.JPEG), int64(len(norm.JPEG)), "image/jpeg"); err != nil {
 		return Bild{}, err
 	}
 	if err := s.Store.Put(ctx, thumb, bytes.NewReader(norm.Thumb), int64(len(norm.Thumb)), "image/jpeg"); err != nil {
-		_ = s.Store.Delete(ctx, key)
+		s.deleteBlobIfFree(ctx, q, key)
 		return Bild{}, err
 	}
 	stamp := s.stamp()
@@ -79,15 +85,15 @@ func (s *Service) SaveBild(ctx context.Context, data []byte, recognize bool) (Bi
 	if recognize {
 		on, onErr := s.recognitionOn(ctx)
 		if onErr != nil {
-			_ = s.Store.Delete(ctx, key)
-			_ = s.Store.Delete(ctx, thumb)
+			s.deleteBlobIfFree(ctx, q, key)
+			s.deleteBlobIfFree(ctx, q, thumb)
 			return Bild{}, onErr
 		}
 		if on {
 			status = "ausstehend"
 		}
 	}
-	err = db.New(s.DB.Write).InsertBelegbild(ctx, db.InsertBelegbildParams{
+	err = q.InsertBelegbild(ctx, db.InsertBelegbildParams{
 		ID:              bildID,
 		BlobKey:         key,
 		ThumbBlobKey:    thumb,
@@ -100,8 +106,8 @@ func (s *Service) SaveBild(ctx context.Context, data []byte, recognize bool) (Bi
 		ErstelltAm:      stamp,
 	})
 	if err != nil {
-		_ = s.Store.Delete(ctx, key)
-		_ = s.Store.Delete(ctx, thumb)
+		s.deleteBlobIfFree(ctx, q, key)
+		s.deleteBlobIfFree(ctx, q, thumb)
 		return Bild{}, err
 	}
 	if status == "ausstehend" {
@@ -213,9 +219,10 @@ func (s *Service) sweepOnce(ctx context.Context) error {
 	return s.sweepOrphanBlobs(ctx)
 }
 
-// sweepOrphanBlobs removes bilder/ objects that have no row and are older
-// than the unassigned-image TTL. Export prefixes are not listed. A blob
-// written and not yet inserted is kept until it is older than the TTL.
+// sweepOrphanBlobs removes bilder/ and thumbs/ objects that have no row and
+// are older than the unassigned-image TTL. Export prefixes are not listed.
+// A blob written and not yet inserted is kept until it is older than the TTL.
+// Monatsexport objects are never removed, including after the retention window.
 func (s *Service) sweepOrphanBlobs(ctx context.Context) error {
 	if s.Store == nil || s.ImageTTL <= 0 {
 		return nil
@@ -225,15 +232,21 @@ func (s *Service) sweepOrphanBlobs(ctx context.Context) error {
 		return err
 	}
 	cutoff := s.now().Add(-s.ImageTTL)
-	return s.Store.List(ctx, "bilder/", func(info storage.ObjectInfo) error {
-		if _, ok := refs[info.Key]; ok {
-			return nil
+	for _, prefix := range []string{"bilder/", "thumbs/"} {
+		err := s.Store.List(ctx, prefix, func(info storage.ObjectInfo) error {
+			if _, ok := refs[info.Key]; ok {
+				return nil
+			}
+			if info.ModTime.IsZero() || !info.ModTime.Before(cutoff) {
+				return nil
+			}
+			return s.Store.Delete(ctx, info.Key)
+		})
+		if err != nil {
+			return err
 		}
-		if info.ModTime.IsZero() || !info.ModTime.Before(cutoff) {
-			return nil
-		}
-		return s.Store.Delete(ctx, info.Key)
-	})
+	}
+	return nil
 }
 
 func (s *Service) referencedBlobKeys(ctx context.Context) (map[string]struct{}, error) {
@@ -361,8 +374,8 @@ func releaseBilder(ctx context.Context, q *db.Queries, belegID string) error {
 }
 
 // receiptExported reports whether a Monatsexport lists this receipt.
-// Those images stay assigned: export blobs are never deleted, and a later
-// Datenexport must still carry the pictures the PDF was built from.
+// Those images stay assigned. SPEC §5.2 never deletes Monatsexport blobs;
+// the retention clock only reports when the window has passed.
 func receiptExported(ctx context.Context, q *db.Queries, belegID string) (bool, error) {
 	rows, err := q.ListExportBelegIDs(ctx)
 	if err != nil {
@@ -380,6 +393,57 @@ func receiptExported(ctx context.Context, q *db.Queries, belegID string) (bool, 
 		}
 	}
 	return false, nil
+}
+
+func auditBildSet(ctx context.Context, tx *sql.Tx, actor Actor, stamp, monat, grund, belegID string, before []db.Belegbilder, after []string) error {
+	prevSeite := map[string]int{}
+	for _, row := range before {
+		seite := 0
+		if row.Seite != nil {
+			seite = asInt(row.Seite)
+		}
+		prevSeite[row.ID] = seite
+	}
+	nextSeite := map[string]int{}
+	for i, id := range after {
+		nextSeite[id] = i + 1
+	}
+	var added, removed []string
+	for id := range nextSeite {
+		if _, ok := prevSeite[id]; !ok {
+			added = append(added, id)
+		}
+	}
+	for id := range prevSeite {
+		if _, ok := nextSeite[id]; !ok {
+			removed = append(removed, id)
+		}
+	}
+	sort.Strings(added)
+	sort.Strings(removed)
+	for _, id := range added {
+		if err := auditChange(ctx, tx, actor, stamp, "belegbild_hinzugefuegt", "belegbild", id, monat, grund, nil, bildLink(id, belegID, nextSeite[id])); err != nil {
+			return err
+		}
+	}
+	for _, id := range removed {
+		if err := auditChange(ctx, tx, actor, stamp, "belegbild_entfernt", "belegbild", id, monat, grund, bildLink(id, belegID, prevSeite[id]), bildLink(id, "", 0)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func bildLink(id, belegID string, seite int) map[string]any {
+	var owner any
+	if belegID != "" {
+		owner = belegID
+	}
+	var page any
+	if seite > 0 {
+		page = seite
+	}
+	return map[string]any{"id": id, "beleg_id": owner, "seite": page}
 }
 
 func assignBilder(ctx context.Context, q *db.Queries, belegID string, ids []string) error {

@@ -128,6 +128,12 @@ INSERT INTO belegbilder (
 -- name: GetBelegbild :one
 SELECT * FROM belegbilder WHERE id = ?;
 
+-- name: ListBelegbilder :many
+SELECT * FROM belegbilder ORDER BY id ASC;
+
+-- name: UpdateBelegbildKeys :exec
+UPDATE belegbilder SET blob_key = ?, thumb_blob_key = ? WHERE id = ?;
+
 -- name: ListBelegbilderByBeleg :many
 SELECT * FROM belegbilder WHERE beleg_id = ? ORDER BY seite ASC;
 

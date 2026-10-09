@@ -177,9 +177,13 @@ func TestSweepRemovesOrphanBlobs(t *testing.T) {
 	}
 	put("bilder/orphan.jpg")
 	put("bilder/fresh.jpg")
+	put("thumbs/orphan.jpg")
 	put("exporte/2026-10/v1/keep.pdf")
 	old := time.Now().Add(-48 * time.Hour)
 	if err := os.Chtimes(filepath.Join(fs.Dir, "bilder/orphan.jpg"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(filepath.Join(fs.Dir, "thumbs/orphan.jpg"), old, old); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chtimes(filepath.Join(fs.Dir, "exporte/2026-10/v1/keep.pdf"), old, old); err != nil {
@@ -191,6 +195,9 @@ func TestSweepRemovesOrphanBlobs(t *testing.T) {
 	}
 	if _, err := svc.Store.Stat(ctx, "bilder/orphan.jpg"); err == nil {
 		t.Fatal("orphan kept")
+	}
+	if _, err := svc.Store.Stat(ctx, "thumbs/orphan.jpg"); err == nil {
+		t.Fatal("thumb orphan kept")
 	}
 	if _, err := svc.Store.Stat(ctx, "bilder/fresh.jpg"); err != nil {
 		t.Fatal(err)

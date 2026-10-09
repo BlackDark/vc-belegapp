@@ -667,6 +667,52 @@ func (q *Queries) ListBelegbildKeys(ctx context.Context) ([]ListBelegbildKeysRow
 	return items, nil
 }
 
+const listBelegbilder = `-- name: ListBelegbilder :many
+SELECT id, beleg_id, seite, blob_key, thumb_blob_key, sha256, upload_sha256, mime, bytes, breite, hoehe, erkennung_status, erkennung_ergebnis, erkennung_roh, erkennung_fehler, erkennung_modell, erkennung_dauer_ms, erstellt_am FROM belegbilder ORDER BY id ASC
+`
+
+func (q *Queries) ListBelegbilder(ctx context.Context) ([]Belegbilder, error) {
+	rows, err := q.db.QueryContext(ctx, listBelegbilder)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Belegbilder
+	for rows.Next() {
+		var i Belegbilder
+		if err := rows.Scan(
+			&i.ID,
+			&i.BelegID,
+			&i.Seite,
+			&i.BlobKey,
+			&i.ThumbBlobKey,
+			&i.Sha256,
+			&i.UploadSha256,
+			&i.Mime,
+			&i.Bytes,
+			&i.Breite,
+			&i.Hoehe,
+			&i.ErkennungStatus,
+			&i.ErkennungErgebnis,
+			&i.ErkennungRoh,
+			&i.ErkennungFehler,
+			&i.ErkennungModell,
+			&i.ErkennungDauerMs,
+			&i.ErstelltAm,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBelegbilderByBeleg = `-- name: ListBelegbilderByBeleg :many
 SELECT id, beleg_id, seite, blob_key, thumb_blob_key, sha256, upload_sha256, mime, bytes, breite, hoehe, erkennung_status, erkennung_ergebnis, erkennung_roh, erkennung_fehler, erkennung_modell, erkennung_dauer_ms, erstellt_am FROM belegbilder WHERE beleg_id = ? ORDER BY seite ASC
 `
@@ -1188,6 +1234,21 @@ func (q *Queries) UpdateBeleg(ctx context.Context, arg UpdateBelegParams) (sql.R
 		arg.ID,
 		arg.Version,
 	)
+}
+
+const updateBelegbildKeys = `-- name: UpdateBelegbildKeys :exec
+UPDATE belegbilder SET blob_key = ?, thumb_blob_key = ? WHERE id = ?
+`
+
+type UpdateBelegbildKeysParams struct {
+	BlobKey      string
+	ThumbBlobKey string
+	ID           string
+}
+
+func (q *Queries) UpdateBelegbildKeys(ctx context.Context, arg UpdateBelegbildKeysParams) error {
+	_, err := q.db.ExecContext(ctx, updateBelegbildKeys, arg.BlobKey, arg.ThumbBlobKey, arg.ID)
+	return err
 }
 
 const updateEinstellungen = `-- name: UpdateEinstellungen :exec

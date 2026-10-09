@@ -123,6 +123,16 @@ func Serve(ctx context.Context, opt Options) error {
 		PDF:        renderer,
 		AppVersion: appVersion,
 	}
+	migrated, err := svc.MigrateBildKeys(ctx)
+	if err != nil {
+		return err
+	}
+	if migrated.Moved > 0 {
+		opt.Log.Info("image key migration", "moved", migrated.Moved)
+	}
+	if len(migrated.Skipped) > 0 {
+		opt.Log.Warn("image key migration left legacy keys", "skipped", migrated.Skipped)
+	}
 	queue := &jobs.Queue{
 		DB:      database,
 		Workers: opt.Config.JobWorkers,
