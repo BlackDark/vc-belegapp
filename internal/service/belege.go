@@ -186,8 +186,18 @@ func (s *Service) UpdateBeleg(ctx context.Context, actor Actor, belegID string, 
 		}
 		in.BildIDs = ids
 		applyPatch(&in, patch)
+		oldMonth := row.Datum[:7]
+		oldStatus, err := monthStatus(ctx, q, oldMonth)
+		if err != nil {
+			return err
+		}
 		built, _, status, err := s.prepare(ctx, q, in, belegID, true)
 		if err != nil {
+			return err
+		}
+		// prepare only sees the destination month. Leaving a locked month
+		// still needs a reason, even when the destination is open.
+		if err := requireChangeReason(oldStatus, trimmed(patch.Aenderungsgrund)); err != nil {
 			return err
 		}
 		stamp := s.stamp()
@@ -227,12 +237,12 @@ func (s *Service) UpdateBeleg(ctx context.Context, actor Actor, belegID string, 
 			if err := markGeaendert(ctx, q, built.Datum[:7]); err != nil {
 				return err
 			}
-			if row.Datum[:7] != built.Datum[:7] {
-				if err := markGeaendert(ctx, q, row.Datum[:7]); err != nil {
-					return err
-				}
-			}
 			built.MonatStatus = "geaendert"
+		}
+		if oldMonth != built.Datum[:7] && oldStatus == "gesperrt" {
+			if err := markGeaendert(ctx, q, oldMonth); err != nil {
+				return err
+			}
 		}
 		built.ID = belegID
 		built.Version = int(row.Version) + 1
@@ -267,8 +277,8 @@ func (s *Service) DeleteBeleg(ctx context.Context, actor Actor, belegID string, 
 			return err
 		}
 		reason := trimmed(grund)
-		if (status == "gesperrt" || status == "geaendert") && utf8.RuneCountInString(reason) < 5 {
-			return problem.New(422, "E_AENDERUNGSGRUND_FEHLT", "Für einen gesperrten Monat ist ein Änderungsgrund mit mindestens 5 Zeichen nötig.")
+		if err := requireChangeReason(status, reason); err != nil {
+			return err
 		}
 		stamp := s.stamp()
 		res, err := q.SoftDeleteBeleg(ctx, db.SoftDeleteBelegParams{
@@ -367,8 +377,8 @@ func (s *Service) prepare(ctx context.Context, q *db.Queries, in BelegInput, sel
 	if err != nil {
 		return Beleg{}, rules.Jahresregel{}, "", err
 	}
-	if (status == "gesperrt" || status == "geaendert") && utf8.RuneCountInString(trimmed(in.Aenderungsgrund)) < 5 {
-		return Beleg{}, rules.Jahresregel{}, "", problem.New(422, "E_AENDERUNGSGRUND_FEHLT", "Für einen gesperrten Monat ist ein Änderungsgrund mit mindestens 5 Zeichen nötig.")
+	if err := requireChangeReason(status, trimmed(in.Aenderungsgrund)); err != nil {
+		return Beleg{}, rules.Jahresregel{}, "", err
 	}
 	monthRows, err := listMonth(ctx, q, monat)
 	if err != nil {
@@ -665,6 +675,13 @@ func mapBelegWrite(err error) error {
 		}})
 	}
 	return err
+}
+
+func requireChangeReason(status, reason string) error {
+	if (status == "gesperrt" || status == "geaendert") && utf8.RuneCountInString(reason) < 5 {
+		return problem.New(422, "E_AENDERUNGSGRUND_FEHLT", "Für einen gesperrten Monat ist ein Änderungsgrund mit mindestens 5 Zeichen nötig.")
+	}
+	return nil
 }
 
 func monthStatus(ctx context.Context, q *db.Queries, monat string) (string, error) {
