@@ -12,22 +12,18 @@ ldflags="-s -w -X main.version=${version} -X main.commit=${commit} -X main.date=
 
 go mod download
 
-pids=""
-for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+# One target per runner. Parallel compiles on a single runner split the
+# cores and finish no sooner, which held up e2e.
+if [ "$#" -eq 0 ]; then
+  set -- linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
+fi
+
+for target in "$@"; do
   os=${target%%/*}
   arch=${target#*/}
   dest="$out/$os/$arch"
   mkdir -p "$dest"
   echo "build $target"
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
-    go build -trimpath -ldflags "$ldflags" -o "$dest/belegapp" ./cmd/belegapp &
-  pids="$pids $!"
+    go build -trimpath -ldflags "$ldflags" -o "$dest/belegapp" ./cmd/belegapp
 done
-
-status=0
-for pid in $pids; do
-  if ! wait "$pid"; then
-    status=1
-  fi
-done
-exit "$status"

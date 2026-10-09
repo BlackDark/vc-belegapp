@@ -17,10 +17,10 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# web builds the bundle once. binaries embeds it and cross-compiles every
-# GoReleaser target on the runner (CGO_ENABLED=0, no QEMU). go tests and e2e
-# both consume that work instead of compiling again. docker only copies the
-# linux binaries into distroless.
+# web builds the bundle once. Each GoReleaser target is cross-compiled on
+# its own runner (CGO_ENABLED=0, no QEMU) so e2e can start from linux/amd64
+# without waiting for the other arches. docker only copies the linux
+# binaries into distroless.
 
 jobs:
   web:
@@ -52,8 +52,10 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
 
-  binaries:
-    name: binaries
+  # One arch per runner. Sharing a runner splits the cores, so four
+  # parallel compiles finish no sooner than the slowest one and e2e waits.
+  linux-amd64:
+    name: linux-amd64
     needs: web
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -68,14 +70,66 @@ jobs:
           name: web-dist
           path: web/dist
       - run: ./scripts/place-web-dist.sh
-      - run: ./scripts/build-binaries.sh
+      - run: ./scripts/build-binaries.sh linux/amd64
         env:
           VERSION: ci
           COMMIT: ${{ github.sha }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: belegapp-binaries
-          path: dist/
+          name: belegapp-linux-amd64
+          path: dist/linux/amd64/belegapp
+          if-no-files-found: error
+
+  linux-arm64:
+    name: linux-arm64
+    needs: web
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-dist
+          path: web/dist
+      - run: ./scripts/place-web-dist.sh
+      - run: ./scripts/build-binaries.sh linux/arm64
+        env:
+          VERSION: ci
+          COMMIT: ${{ github.sha }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: belegapp-linux-arm64
+          path: dist/linux/arm64/belegapp
+          if-no-files-found: error
+
+  darwin:
+    name: darwin
+    needs: web
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-dist
+          path: web/dist
+      - run: ./scripts/place-web-dist.sh
+      - run: ./scripts/build-binaries.sh darwin/amd64 darwin/arm64
+        env:
+          VERSION: ci
+          COMMIT: ${{ github.sha }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: belegapp-darwin
+          path: dist/darwin/
           if-no-files-found: error
 
   go:
@@ -152,7 +206,7 @@ jobs:
 
   docker:
     name: docker
-    needs: binaries
+    needs: [linux-amd64, linux-arm64]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -162,12 +216,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: belegapp-binaries
-          path: ${{ runner.temp }}/belegapp-binaries
+          name: belegapp-linux-amd64
+          path: ${{ runner.temp }}/image/linux/amd64
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: belegapp-linux-arm64
+          path: ${{ runner.temp }}/image/linux/arm64
       - name: Image context
         run: |
-          mkdir -p "$RUNNER_TEMP/image"
-          cp -a "$RUNNER_TEMP/belegapp-binaries/linux" "$RUNNER_TEMP/image/linux"
           chmod +x "$RUNNER_TEMP/image"/linux/*/belegapp
           test -s "$RUNNER_TEMP/image/linux/amd64/belegapp"
           test -s "$RUNNER_TEMP/image/linux/arm64/belegapp"
@@ -221,7 +277,7 @@ jobs:
 
   e2e:
     name: e2e
-    needs: binaries
+    needs: linux-amd64
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -232,8 +288,8 @@ jobs:
           cache: true
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: belegapp-binaries
-          path: dist
+          name: belegapp-linux-amd64
+          path: dist/linux/amd64
       - name: Install Typst
         run: |
           ./scripts/install-typst.sh "$HOME/.local/bin"

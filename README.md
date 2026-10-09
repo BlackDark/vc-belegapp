@@ -141,7 +141,7 @@ Queries live in `internal/db/queries`, migrations in `internal/db/migrations`. G
 
 | Workflow | Trigger | Contents |
 |---|---|---|
-| `ci.yml` | PR, push to `main`, `workflow_call`, `workflow_dispatch` | `web` builds the bundle once. `binaries` embeds it and cross-compiles linux/darwin amd64/arm64. `go` and `pdf` test. `e2e` runs Playwright against the linux/amd64 binary (it does not wait for `go`). `docker` copies those binaries into distroless, scans with Trivy, and smokes amd64. `release-config` on pull requests runs `goreleaser check`, and a snapshot when release files change. |
+| `ci.yml` | PR, push to `main`, `workflow_call`, `workflow_dispatch` | `web` builds the bundle once. `linux-amd64`, `linux-arm64`, and `darwin` each embed it and cross-compile on their own runner. `go` and `pdf` test. `e2e` runs Playwright against the linux/amd64 binary (it does not wait for `go` or the other arches). `docker` copies the linux binaries into distroless, scans with Trivy, and smokes amd64. `release-config` on pull requests runs `goreleaser check`, and a snapshot when release files change. |
 | `release-please.yml` | Push to `main` | Release PR, changelog, tag `vX.Y.Z`. Dispatches `release.yml` on the tag and `ci.yml` on the release-PR branch. |
 | `release.yml` | Tag `v*`, `workflow_dispatch` | Fails unless the ref is a `v*` tag. Runs `ci.yml`, smokes `Dockerfile.goreleaser` with the CI linux/amd64 binary, then GoReleaser v2: archives, SBOM, Cosign, GHCR. Appends `ghcr.io/blackdark/vc-belegapp:<version>` to the release notes. |
 | `codeql.yml` | PR, weekly | CodeQL for Go and TypeScript |
