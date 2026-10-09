@@ -209,7 +209,7 @@ Profil (Name, Personalnummer, Arbeitgeber), Standardwerte, Jahresregeln (Liste +
 | erkennung_dauer_ms | INTEGER NULL | |
 | erstellt_am | TEXT NOT NULL | |
 
-Nicht zugeordnete Belegbilder werden nach `BELEGAPP_UNASSIGNED_IMAGE_TTL` gelöscht (Zeile + Blobs, sofern Blob nicht anderweitig referenziert).
+Nicht zugeordnete Belegbilder werden nach `BELEGAPP_UNASSIGNED_IMAGE_TTL` gelöscht (Zeile + Blobs, sofern der Blob weder von einem anderen Belegbild noch von einem Monatsexport referenziert wird). Soft-Delete eines Belegs, der in keinem `monatsexporte.beleg_ids` steht, hebt die Zuordnung auf; die Bilder fallen danach unter dieselbe Frist, gerechnet ab `erstellt_am`. Bilder eines exportierten Belegs bleiben zugeordnet. Die Belegzeile und das Änderungsprotokoll bleiben. Blobs unter `bilder/`, die keine Zeile haben und älter als die Frist sind, werden entfernt. Monatsexport-Blobs werden nie gelöscht.
 
 **`belege`**
 | Spalte | Typ | Constraint/Default |
@@ -473,6 +473,8 @@ Beispielmonat M1 (Oktober 2026, NW) mit Belegen: Mo 05.10. REWE 8,40 · Di 06.10
 | P_PROTOKOLL_INTAKT | Hash-Kette des Änderungsprotokolls gültig | ✗ |
 
 ✗ blockiert den finalen Export (`422 E_PRUEFPUNKT_FEHLGESCHLAGEN`), ⚠ erfordert `warnungen_bestaetigt`.
+
+Die Monatsansicht prüft `P_BILDER_VOLLSTAENDIG` per Stat (Blob vorhanden, Größe = `bytes`) und `P_PROTOKOLL_INTAKT` nur am letzten Eintrag. Finaler Export und PDF-Vorschau hashen jedes Bild und prüfen die gesamte Hash-Kette.
 
 ### 7.4 Feiertagskalender
 - Quelle: `github.com/rickar/cal/v2/de` (gesetzliche Feiertage je Bundesland, landesweit) + `jahresregeln.eigene_feiertage`.
@@ -885,6 +887,7 @@ CLI: `belegapp serve` (Default) · `hash-password` · `healthcheck [--url]` · `
 - Metriken (optional, `BELEGAPP_METRICS_ADDR`, eigener Port, kein Auth): `belegapp_http_requests_total{route,method,code}`, `belegapp_http_request_duration_seconds`, `belegapp_erkennung_total{ergebnis}`, `belegapp_erkennung_dauer_seconds`, `belegapp_pdf_dauer_seconds`, `belegapp_belege_total`, `belegapp_jobs_wartend` + Go-Runtime-Metriken.
 
 ### 15.3 Docker Compose (Beispiel, `deploy/docker-compose.yml`)
+Pflichtwerte kommen aus `deploy/.env` (Vorlage `deploy/.env.example`). `${VAR:?}` bricht `docker compose` ab, solange der Wert leer ist. Der Prozess selbst startet mit Passwort-Hash oder OIDC; das Beispiel setzt beides und den LLM-Key.
 ```yaml
 services:
   belegapp:
@@ -893,17 +896,22 @@ services:
     user: "65532:65532"
     read_only: true
     cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
+    # Seccomp bleibt das Engine-Default (entspricht Kubernetes RuntimeDefault).
+    security_opt:
+      - no-new-privileges:true
     tmpfs: ["/tmp:size=512m,mode=1777"]
+    mem_limit: 512m
+    mem_reservation: 64m
+    cpus: 1
     ports: ["127.0.0.1:8080:8080"]
     volumes: ["./data:/data"]          # vorher: chown -R 65532:65532 ./data
     environment:
-      BELEGAPP_BASE_URL: https://belege.example.de
-      BELEGAPP_TRUSTED_PROXIES: 172.16.0.0/12
-      BELEGAPP_OIDC_ISSUER_URL: https://auth.example.de
-      BELEGAPP_OIDC_CLIENT_ID: belegapp
+      BELEGAPP_BASE_URL: ${BELEGAPP_BASE_URL:?set BELEGAPP_BASE_URL}
+      BELEGAPP_TRUSTED_PROXIES: ${BELEGAPP_TRUSTED_PROXIES:-172.16.0.0/12}
+      BELEGAPP_OIDC_ISSUER_URL: ${BELEGAPP_OIDC_ISSUER_URL:?set BELEGAPP_OIDC_ISSUER_URL}
+      BELEGAPP_OIDC_CLIENT_ID: ${BELEGAPP_OIDC_CLIENT_ID:?set BELEGAPP_OIDC_CLIENT_ID}
       BELEGAPP_OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_secret
-      BELEGAPP_OIDC_ALLOWED_EMAILS: eduard@example.de
+      BELEGAPP_OIDC_ALLOWED_EMAILS: ${BELEGAPP_OIDC_ALLOWED_EMAILS:?set BELEGAPP_OIDC_ALLOWED_EMAILS}
       BELEGAPP_AUTH_PASSWORD_HASH_FILE: /run/secrets/pw_hash
       BELEGAPP_LLM_API_KEY_FILE: /run/secrets/openai_key
     secrets: [oidc_secret, pw_hash, openai_key]
@@ -912,17 +920,21 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 10s
 secrets:
-  oidc_secret: { file: ./secrets/oidc_secret }
-  pw_hash:     { file: ./secrets/pw_hash }
-  openai_key:  { file: ./secrets/openai_key }
+  oidc_secret:
+    file: ${OIDC_SECRET_FILE:?path to the OIDC client secret}
+  pw_hash:
+    file: ${PASSWORD_HASH_FILE:?path to the argon2id password hash}
+  openai_key:
+    file: ${LLM_API_KEY_FILE:?path to the LLM API key}
 ```
 
 ### 15.4 Kubernetes (`deploy/k8s/`, Kustomize)
 - `Deployment`: `replicas: 1`, `strategy: Recreate` (SQLite); Pod-`securityContext`: `runAsNonRoot: true`, `runAsUser/Group: 65532`, `fsGroup: 65532`, `seccompProfile: RuntimeDefault`; Container: `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`.
 - Volumes: PVC `ReadWriteOnce` für `/data` (kein NFS/CIFS), `emptyDir` (`sizeLimit: 1Gi`) für `/tmp`.
 - Probes: liveness `/healthz` (period 20 s), readiness `/readyz` (period 10 s), startup `/readyz` (failureThreshold 30).
-- Ressourcen: requests `50m`/`64Mi`, limits `512Mi` (kein CPU-Limit).
+- Ressourcen: requests `50m`/`64Mi`, limits `1` CPU / `512Mi` (Deployment und Backup-CronJob).
 - `Secret` für Hash/OIDC/LLM/S3; `ConfigMap` für übrige Env; `Service` + `Ingress` (TLS via cert-manager, Body-Limit ≥ Import-Größe, z. B. `nginx.ingress.kubernetes.io/proxy-body-size: 4g`).
 - Optional `NetworkPolicy`: Egress nur DNS, IdP, LLM, S3.
 - Optional Litestream-Sidecar für SQLite-Replikation (dokumentiert, nicht Teil von v1).

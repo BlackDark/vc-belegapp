@@ -56,6 +56,8 @@ The database member is a `VACUUM INTO` snapshot. Sitzungen and jobs are removed 
 
 Blobs are the keys referenced by Belegbilder (image and thumbnail) and Monatsexporte (PDF, CSV, ZIP). Previous Datenexport zips are not included. On import, a destination key with the same SHA-256 is left as it is. A different hash is overwritten. Keys that exist only on the destination are left in place.
 
+A soft-deleted Beleg that is not listed in any Monatsexport has its images unassigned. After `BELEGAPP_UNASSIGNED_IMAGE_TTL` those rows and blobs are gone, so a later archive does not contain them. The Beleg row and the audit log stay. Images of a Beleg that appears in `monatsexporte.beleg_ids` stay assigned, and Monatsexport blobs are never deleted.
+
 `csv/belege.csv` is UTF-8 with BOM, `;` separated, CRLF. The monthly header plus `beleg_id`, all years, active Belege only, and a `summe` line.
 
 ## Rejected archives

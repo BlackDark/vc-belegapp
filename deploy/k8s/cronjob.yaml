@@ -41,8 +41,9 @@ spec:
                 requests:
                   cpu: 50m
                   memory: 64Mi
-                limits:
-                  memory: 512Mi
+              limits:
+                cpu: "1"
+                memory: 512Mi
           volumes:
             - name: data
               persistentVolumeClaim:

@@ -1,3 +1,6 @@
+# Copy deploy/.env.example to deploy/.env and fill it in.
+# `docker compose` refuses to start while a ${VAR:?} value is empty.
+# The process itself accepts either a password hash or OIDC. This example sets both, plus the LLM key.
 services:
   belegapp:
     image: ghcr.io/blackdark/vc-belegapp:1
@@ -5,17 +8,23 @@ services:
     user: "65532:65532"
     read_only: true
     cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
+    # Seccomp stays the engine default, the same policy as Kubernetes RuntimeDefault.
+    # Do not set seccomp:unconfined.
+    security_opt:
+      - no-new-privileges:true
     tmpfs: ["/tmp:size=512m,mode=1777"]
+    mem_limit: 512m
+    mem_reservation: 64m
+    cpus: 1
     ports: ["127.0.0.1:8080:8080"]
     volumes: ["./data:/data"] # chown -R 65532:65532 ./data beforehand
     environment:
-      BELEGAPP_BASE_URL: https://belege.example.de
-      BELEGAPP_TRUSTED_PROXIES: 172.16.0.0/12
-      BELEGAPP_OIDC_ISSUER_URL: https://auth.example.de
-      BELEGAPP_OIDC_CLIENT_ID: belegapp
+      BELEGAPP_BASE_URL: ${BELEGAPP_BASE_URL:?set BELEGAPP_BASE_URL}
+      BELEGAPP_TRUSTED_PROXIES: ${BELEGAPP_TRUSTED_PROXIES:-172.16.0.0/12}
+      BELEGAPP_OIDC_ISSUER_URL: ${BELEGAPP_OIDC_ISSUER_URL:?set BELEGAPP_OIDC_ISSUER_URL}
+      BELEGAPP_OIDC_CLIENT_ID: ${BELEGAPP_OIDC_CLIENT_ID:?set BELEGAPP_OIDC_CLIENT_ID}
       BELEGAPP_OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_secret
-      BELEGAPP_OIDC_ALLOWED_EMAILS: eduard@example.de
+      BELEGAPP_OIDC_ALLOWED_EMAILS: ${BELEGAPP_OIDC_ALLOWED_EMAILS:?set BELEGAPP_OIDC_ALLOWED_EMAILS}
       BELEGAPP_AUTH_PASSWORD_HASH_FILE: /run/secrets/pw_hash
       BELEGAPP_LLM_API_KEY_FILE: /run/secrets/openai_key
     secrets: [oidc_secret, pw_hash, openai_key]
@@ -24,7 +33,11 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 10s
 secrets:
-  oidc_secret: { file: ./secrets/oidc_secret }
-  pw_hash: { file: ./secrets/pw_hash }
-  openai_key: { file: ./secrets/openai_key }
+  oidc_secret:
+    file: ${OIDC_SECRET_FILE:?path to the OIDC client secret}
+  pw_hash:
+    file: ${PASSWORD_HASH_FILE:?path to the argon2id password hash}
+  openai_key:
+    file: ${LLM_API_KEY_FILE:?path to the LLM API key}

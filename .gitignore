@@ -17,6 +17,7 @@ e2e/screenshots/
 /data/
 .env
 .env.*
+!.env.example
 .DS_Store
 *.exe
 *.test
