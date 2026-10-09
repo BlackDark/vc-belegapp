@@ -180,11 +180,6 @@ func Hash(e *Entry) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// CanonicalJSON returns the specification's canonical encoding.
-func CanonicalJSON(v any) ([]byte, error) {
-	return canonical(v)
-}
-
 // DiffJSON returns a canonical JSON array of {feld, alt, neu} for keys that differ.
 func DiffJSON(before, after json.RawMessage) (json.RawMessage, error) {
 	left, err := decodeObject(before)

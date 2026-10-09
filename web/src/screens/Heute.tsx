@@ -19,7 +19,7 @@ import {
   DialogTitle,
 } from "../components/ui/dialog";
 import { Skeleton } from "../components/ui/skeleton";
-import { type Beleg, client } from "../lib/api";
+import { ApiError, type Beleg, client } from "../lib/api";
 import { currentMonth, todayISO } from "../lib/dates";
 import { formatCent } from "../lib/money";
 import { queryKeys } from "../lib/queryKeys";
@@ -34,6 +34,9 @@ export default function Heute() {
     retry: false,
   }));
 
+  const yearMissing = () =>
+    monat.error instanceof ApiError &&
+    monat.error.code === "E_JAHRESREGEL_FEHLT";
   const beleg = () => monat.data?.belege.find((item) => item.datum === today);
   const limit = () => monat.data?.jahresregel?.monatslimit ?? 15;
   const summen = () => monat.data?.summen;
@@ -47,32 +50,35 @@ export default function Heute() {
           Beleg des Tages und die Summen des laufenden Monats.
         </p>
       </div>
-      <Show when={monat.error}>
+      <Show when={monat.isPending}>
+        <div class="flex flex-col gap-3">
+          <Skeleton height={176} radius={12} />
+          <div class="grid gap-3 sm:grid-cols-3">
+            <Skeleton height={104} radius={12} />
+            <Skeleton height={104} radius={12} />
+            <Skeleton height={104} radius={12} />
+          </div>
+        </div>
+      </Show>
+      <Show when={monat.isError}>
         <Alert>
           <AlertDescription>
-            Für dieses Jahr fehlt die Jahresregel.{" "}
-            <A
-              class="font-medium underline underline-offset-4"
-              href={`/einstellungen/jahre/${today.slice(0, 4)}`}
+            <Show
+              when={yearMissing()}
+              fallback={<>Der Monat konnte nicht geladen werden.</>}
             >
-              Regel anlegen
-            </A>
+              Für dieses Jahr fehlt die Jahresregel.{" "}
+              <A
+                class="font-medium underline underline-offset-4"
+                href={`/einstellungen/jahre/${today.slice(0, 4)}`}
+              >
+                Regel anlegen
+              </A>
+            </Show>
           </AlertDescription>
         </Alert>
       </Show>
-      <Show
-        when={!monat.isPending}
-        fallback={
-          <div class="flex flex-col gap-3">
-            <Skeleton height={176} radius={12} />
-            <div class="grid gap-3 sm:grid-cols-3">
-              <Skeleton height={104} radius={12} />
-              <Skeleton height={104} radius={12} />
-              <Skeleton height={104} radius={12} />
-            </div>
-          </div>
-        }
-      >
+      <Show when={monat.isSuccess}>
         <Show
           when={beleg()}
           fallback={
