@@ -11,6 +11,7 @@ jobs:
   release-please:
     name: release-please
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
       pull-requests: write
@@ -29,3 +30,27 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh workflow run release.yml --ref "${{ steps.release.outputs.tag_name }}"
+      # GITHUB_TOKEN cannot open a pull_request workflow run, but it can
+      # workflow_dispatch. ci.yml on the release branch then reports checks
+      # for that commit, which the PR lists. Updates to an existing release
+      # PR set prs without prs_created, and those commits need a new run too.
+      - name: CI for the release pull request
+        if: steps.release.outputs.prs != '' && steps.release.outputs.prs != '[]'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRS: ${{ steps.release.outputs.prs }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, sys
+          prs = json.loads(os.environ["PRS"])
+          if isinstance(prs, dict):
+              prs = list(prs.values())
+          if not prs:
+              sys.exit("release-please reported a PR but the payload was empty")
+          for pr in prs:
+              branch = pr.get("headBranchName") or pr.get("head_branch_name")
+              if not branch:
+                  sys.exit(f"release PR has no head branch: {sorted(pr)}")
+              print(f"dispatch ci.yml --ref {branch}")
+              subprocess.check_call(["gh", "workflow", "run", "ci.yml", "--ref", branch])
+          PY

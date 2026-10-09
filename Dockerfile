@@ -1,5 +1,9 @@
 # syntax=docker/dockerfile:1
 
+# Standalone path for `docker build .`. This image compiles the web bundle
+# and the Go binary inside the build. CI and releases do not use this file:
+# they cross-compile on the runner and copy the binary with Dockerfile.goreleaser.
+#
 # TYPST_SHA256_* must be updated together with TYPST_VERSION.
 # renovate: datasource=github-releases depName=typst/typst
 ARG TYPST_VERSION=0.15.1
