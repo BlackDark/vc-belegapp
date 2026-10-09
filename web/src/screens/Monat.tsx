@@ -140,6 +140,13 @@ export default function Monat() {
                   {(exp) => (
                     <li class="flex flex-wrap items-center gap-3 rounded-xl border border-zinc-200 px-3 py-2 dark:border-zinc-800">
                       <span>Version {exp.version}</span>
+                      <Show when={exp.aufbewahrung_bis}>
+                        <span class="text-sm text-zinc-600 dark:text-zinc-300">
+                          {exp.aufbewahrung_abgelaufen
+                            ? `Aufbewahrungsfrist abgelaufen (${exp.aufbewahrung_bis.slice(0, 10)}). Keine automatische Löschung.`
+                            : `Aufbewahrung bis ${exp.aufbewahrung_bis.slice(0, 10)}`}
+                        </span>
+                      </Show>
                       <a
                         class="underline"
                         rel="external"
@@ -202,6 +209,9 @@ function ExportDialog(props: {
   const [seeded, setSeeded] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
+  const [strict, setStrict] = createSignal<MonatData["pruefpunkte"] | null>(
+    null,
+  );
   const settings = useQuery(() => ({
     queryKey: queryKeys.einstellungen,
     queryFn: () => client.einstellungen(),
@@ -219,10 +229,11 @@ function ExportDialog(props: {
       setErklaerung(false);
       setWarnungen(false);
       setError("");
+      setStrict(null);
     }
   });
-  const blocking = () =>
-    props.data.pruefpunkte.some((item) => item.ergebnis === "fehler");
+  const checks = () => strict() ?? props.data.pruefpunkte;
+  const blocking = () => checks().some((item) => item.ergebnis === "fehler");
   const needWarn = () =>
     props.data.warnungen.length > 0 ||
     props.data.pruefpunkte.some((item) => item.ergebnis === "warnung");
@@ -263,6 +274,18 @@ function ExportDialog(props: {
       await props.onDone();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Export fehlgeschlagen");
+      if (
+        err instanceof ApiError &&
+        err.code === "E_PRUEFPUNKT_FEHLGESCHLAGEN"
+      ) {
+        setStrict([]);
+        try {
+          const fresh = await client.monatPruefpunkte(props.monat);
+          setStrict(fresh.pruefpunkte);
+        } catch {
+          setStrict([]);
+        }
+      }
     } finally {
       setBusy(false);
     }
@@ -278,7 +301,7 @@ function ExportDialog(props: {
           </Dialog.Title>
           <h2 class="mt-3 font-medium">Prüfpunkte</h2>
           <ul class="mt-1 flex flex-col gap-1 text-sm">
-            <For each={props.data.pruefpunkte}>
+            <For each={checks()}>
               {(item) => (
                 <li>
                   {mark(item.ergebnis)} {item.text}

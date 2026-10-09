@@ -20,6 +20,7 @@ export const png = Buffer.from(
 
 export type Stack = {
   baseURL: string;
+  dataDir: string;
   stop: () => Promise<void>;
 };
 
@@ -115,7 +116,7 @@ export async function startStack(opts: StartOpts): Promise<Stack> {
     if (opts.oidc) {
       await waitOidc(baseURL, appChild, tail);
     }
-    return { baseURL, stop };
+    return { baseURL, dataDir, stop };
   } catch (err) {
     await stop();
     throw err;

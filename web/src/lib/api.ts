@@ -173,6 +173,8 @@ export type Monat = {
     pdf: boolean;
     csv: boolean;
     zip: boolean;
+    aufbewahrung_bis: string;
+    aufbewahrung_abgelaufen: boolean;
   }[];
 };
 export type ExportAntwort = {
@@ -248,6 +250,10 @@ export const client = {
       body: json({ version, aenderungsgrund }),
     }),
   monat: (monat: string) => api<Monat>(`/api/v1/monate/${monat}`),
+  monatPruefpunkte: (monat: string) =>
+    api<{ pruefpunkte: Monat["pruefpunkte"] }>(
+      `/api/v1/monate/${monat}/pruefpunkte`,
+    ),
   exportMonat: (
     monat: string,
     body: {

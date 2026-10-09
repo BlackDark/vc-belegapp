@@ -63,6 +63,13 @@ func TestMonthViewDefersIntegrity(t *testing.T) {
 	if checkpoint(month, "P_BILDER_VOLLSTAENDIG") != "ok" {
 		t.Fatalf("month view hashed or rejected the image: %+v", month.Pruefpunkte)
 	}
+	strict, err := svc.ExportPruefpunkte(ctx, "2026-10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint(Monat{Pruefpunkte: strict}, "P_BILDER_VOLLSTAENDIG") != "fehler" {
+		t.Fatalf("export-time checks %+v", strict)
+	}
 	if _, err := svc.CreateExport(ctx, Actor{Name: "eduard"}, "2026-10", ExportRequest{ErklaerungBestaetigt: true}); codeOf(err) != "E_PRUEFPUNKT_FEHLGESCHLAGEN" {
 		t.Fatalf("export %v", err)
 	}

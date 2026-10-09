@@ -90,6 +90,7 @@ func (a *API) Handler() http.Handler {
 		r.Patch("/belege/{id}", a.patchBeleg)
 		r.Delete("/belege/{id}", a.deleteBeleg)
 		r.Get("/monate/{monat}", a.getMonat)
+		r.Get("/monate/{monat}/pruefpunkte", a.getMonatPruefpunkte)
 		r.Post("/monate/{monat}/vorschau", a.previewMonat)
 		r.Post("/monate/{monat}/exporte", a.createExport)
 		r.Get("/monate/{monat}/exporte", a.listExporte)
