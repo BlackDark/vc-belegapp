@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/BlackDark/vc-belegapp/compare/v1.0.2...v1.1.0) (2026-10-09)
+
+
+### Features
+
+* **web:** redesign the UI with shadcn components and dark mode by default ([#17](https://github.com/BlackDark/vc-belegapp/issues/17)) ([cf71585](https://github.com/BlackDark/vc-belegapp/commit/cf71585e42bb73a35567c2881caca58733d2591c))
+
 ## [1.0.2](https://github.com/BlackDark/vc-belegapp/compare/v1.0.1...v1.0.2) (2026-10-09)
 
 
