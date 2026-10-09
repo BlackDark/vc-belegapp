@@ -104,12 +104,17 @@ func TestClientIP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	trusted := []net.IPNet{*network}
 	req := &http.Request{RemoteAddr: "10.1.1.1:1234", Header: http.Header{"X-Forwarded-For": []string{"203.0.113.5, 10.1.1.1"}}}
-	if got := ClientIP(req, []net.IPNet{*network}); got != "203.0.113.5" {
+	if got := ClientIP(req, trusted); got != "203.0.113.5" {
 		t.Fatal(got)
 	}
+	req.Header.Set("X-Forwarded-For", "198.51.100.9, 203.0.113.5, 10.1.1.1")
+	if got := ClientIP(req, trusted); got != "203.0.113.5" {
+		t.Fatalf("spoofed hop %s", got)
+	}
 	req.RemoteAddr = "192.0.2.1:9"
-	if got := ClientIP(req, []net.IPNet{*network}); got != "192.0.2.1" {
+	if got := ClientIP(req, trusted); got != "192.0.2.1" {
 		t.Fatal(got)
 	}
 }
