@@ -159,7 +159,7 @@ func (s *Service) CreateBeleg(ctx context.Context, actor Actor, in BelegInput) (
 			return err
 		}
 		grund := trimmed(in.Aenderungsgrund)
-		if err := auditChange(ctx, tx, actor, stamp, "erstellen", "beleg", newID, built.Datum[:7], grund, nil, built); err != nil {
+		if err := auditChange(ctx, tx, actor, stamp, "beleg_erstellt", "beleg", newID, built.Datum[:7], grund, nil, built); err != nil {
 			return err
 		}
 		out = built
@@ -253,7 +253,7 @@ func (s *Service) UpdateBeleg(ctx context.Context, actor Actor, belegID string, 
 		if err := s.attachBilder(ctx, q, &built); err != nil {
 			return err
 		}
-		if err := auditChange(ctx, tx, actor, stamp, "aendern", "beleg", belegID, built.Datum[:7], trimmed(patch.Aenderungsgrund), snapshotRow(row, ids), built); err != nil {
+		if err := auditChange(ctx, tx, actor, stamp, "beleg_geaendert", "beleg", belegID, built.Datum[:7], trimmed(patch.Aenderungsgrund), snapshotRow(row, ids), built); err != nil {
 			return err
 		}
 		out = built
@@ -307,7 +307,7 @@ func (s *Service) DeleteBeleg(ctx context.Context, actor Actor, belegID string, 
 		if err != nil {
 			return err
 		}
-		return auditChange(ctx, tx, actor, stamp, "loeschen", "beleg", belegID, row.Datum[:7], reason, snapshotRow(row, ids), map[string]any{"geloescht_am": stamp})
+		return auditChange(ctx, tx, actor, stamp, "beleg_geloescht", "beleg", belegID, row.Datum[:7], reason, snapshotRow(row, ids), map[string]any{"geloescht_am": stamp})
 	})
 }
 

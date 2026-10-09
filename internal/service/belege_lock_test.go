@@ -46,6 +46,22 @@ func TestMoveLeavesLockedMonthChanged(t *testing.T) {
 	if err != nil || september.Status != "offen" {
 		t.Fatalf("september %s %v", september.Status, err)
 	}
+	rows, err := svc.ListProtokoll(ctx, "2026-09", beleg.ID, 0, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saw bool
+	for _, row := range rows {
+		if row.Aktion == "beleg_geaendert" {
+			saw = true
+		}
+		if row.Aktion == "aendern" || row.Aktion == "erstellen" {
+			t.Fatalf("legacy aktion %s", row.Aktion)
+		}
+	}
+	if !saw {
+		t.Fatal("missing beleg_geaendert")
+	}
 }
 
 func TestMoveIntoLockedMonthLeavesSourceOpen(t *testing.T) {
