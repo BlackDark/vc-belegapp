@@ -1,9 +1,20 @@
 import { useNavigate, useSearchParams } from "@solidjs/router";
 import { useQuery, useQueryClient } from "@tanstack/solid-query";
 import { createSignal, Show } from "solid-js";
-import { Button, TextField } from "../components/ui";
+
+import { LabeledField } from "../components/field";
+import { Alert, AlertDescription } from "../components/ui/alert";
+import { Button, buttonVariants } from "../components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+} from "../components/ui/card";
+import { Skeleton } from "../components/ui/skeleton";
 import { ApiError, client } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
+import { cn } from "../lib/utils";
 
 const fehlerText: Record<string, string> = {
   nicht_berechtigt: "Dieses Konto ist nicht berechtigt.",
@@ -36,62 +47,73 @@ export default function Login() {
   };
 
   return (
-    <main class="mx-auto flex min-h-dvh max-w-md flex-col justify-center gap-6 px-6 py-12">
-      <div>
-        <p class="text-sm text-zinc-500">Essenszuschuss</p>
-        <h1 class="text-3xl font-semibold">Belegapp</h1>
-      </div>
-      <Show when={config.isPending}>
-        <p>Lädt …</p>
-      </Show>
-      <Show when={config.isError}>
-        <p class="rounded-xl bg-amber-100 px-3 py-2 text-sm dark:bg-amber-950">
-          Die Anmeldung ist gerade nicht erreichbar.
-        </p>
-      </Show>
-      <Show when={fehlerText[String(params.fehler ?? "")]}>
-        <p class="rounded-xl bg-amber-100 px-3 py-2 text-sm dark:bg-amber-950">
-          {fehlerText[String(params.fehler)]}
-        </p>
-      </Show>
-      <Show when={config.data?.oidc}>
-        <a
-          href="/api/v1/auth/oidc/start"
-          rel="external"
-          class="flex min-h-14 items-center justify-center rounded-xl bg-emerald-800 text-lg font-medium text-white dark:bg-emerald-500 dark:text-zinc-950"
-        >
-          {config.data?.oidc_label || "Mit SSO anmelden"}
-        </a>
-      </Show>
-      <Show when={config.data?.passwort}>
-        <form
-          class="flex flex-col gap-3"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void submit();
-          }}
-        >
-          <input
-            type="text"
-            name="username"
-            value="belegapp"
-            autocomplete="username"
-            class="hidden"
-          />
-          <TextField
-            label="Passwort"
-            type="password"
-            name="password"
-            autocomplete="current-password"
-            value={password()}
-            onChange={setPassword}
-          />
-          <Show when={error()}>
-            <p class="text-sm text-red-700 dark:text-red-300">{error()}</p>
+    <main class="flex min-h-dvh items-center justify-center bg-background px-4 py-12">
+      <Card class="w-full max-w-md rounded-xl">
+        <CardHeader>
+          <CardDescription>Essenszuschuss</CardDescription>
+          <h1 class="text-3xl font-semibold tracking-tight">Belegapp</h1>
+        </CardHeader>
+        <CardContent class="flex flex-col gap-4">
+          <Show when={config.isPending}>
+            <Skeleton height={40} radius={8} />
+            <Skeleton height={40} radius={8} />
           </Show>
-          <Button type="submit">Anmelden</Button>
-        </form>
-      </Show>
+          <Show when={config.isError}>
+            <Alert>
+              <AlertDescription>
+                Die Anmeldung ist gerade nicht erreichbar.
+              </AlertDescription>
+            </Alert>
+          </Show>
+          <Show when={fehlerText[String(params.fehler ?? "")]}>
+            <Alert>
+              <AlertDescription>
+                {fehlerText[String(params.fehler)]}
+              </AlertDescription>
+            </Alert>
+          </Show>
+          <Show when={config.data?.oidc}>
+            <a
+              href="/api/v1/auth/oidc/start"
+              rel="external"
+              class={cn(buttonVariants({ size: "lg" }), "w-full")}
+            >
+              {config.data?.oidc_label || "Mit SSO anmelden"}
+            </a>
+          </Show>
+          <Show when={config.data?.passwort}>
+            <form
+              class="flex flex-col gap-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void submit();
+              }}
+            >
+              <input
+                type="text"
+                name="username"
+                value="belegapp"
+                autocomplete="username"
+                class="hidden"
+              />
+              <LabeledField
+                label="Passwort"
+                type="password"
+                name="password"
+                autocomplete="current-password"
+                value={password()}
+                onChange={setPassword}
+              />
+              <Show when={error()}>
+                <p class="text-sm text-destructive">{error()}</p>
+              </Show>
+              <Button type="submit" size="lg">
+                Anmelden
+              </Button>
+            </form>
+          </Show>
+        </CardContent>
+      </Card>
     </main>
   );
 }

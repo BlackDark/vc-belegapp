@@ -2,7 +2,18 @@ import { useParams } from "@solidjs/router";
 import { useQuery, useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { toast } from "solid-sonner";
-import { Button } from "../components/ui";
+import { Choice } from "../components/choice";
+import { LabeledField } from "../components/field";
+import { Alert, AlertDescription } from "../components/ui/alert";
+import { Button } from "../components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "../components/ui/card";
+import { Checkbox } from "../components/ui/checkbox";
+import { Skeleton } from "../components/ui/skeleton";
 import { amtlich, kistVorschlag, laender, mahlzeitLabel } from "../lib/amtlich";
 import { ApiError, client, type Jahresregel } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
@@ -57,17 +68,26 @@ export default function JahresregelPage() {
 
   return (
     <section class="flex flex-col gap-4">
-      <h1 class="text-2xl font-semibold">Jahresregel {params.jahr}</h1>
+      <div>
+        <h1 class="text-2xl font-semibold tracking-tight">
+          Jahresregel {params.jahr}
+        </h1>
+        <p class="text-sm text-muted-foreground">
+          Zuschuss, Sachbezugswerte und Pauschalierung für dieses Jahr.
+        </p>
+      </div>
       <Show
         when={draft()}
         fallback={
           <Show
             when={existing.isError && suggest.isError}
-            fallback={<p>Lädt …</p>}
+            fallback={<Skeleton height={240} radius={12} />}
           >
-            <p class="rounded-xl bg-amber-100 px-3 py-2 text-sm dark:bg-amber-950">
-              Die Jahresregel konnte nicht geladen werden.
-            </p>
+            <Alert>
+              <AlertDescription>
+                Die Jahresregel konnte nicht geladen werden.
+              </AlertDescription>
+            </Alert>
             <Button
               onClick={() => {
                 void existing.refetch();
@@ -80,29 +100,25 @@ export default function JahresregelPage() {
         }
       >
         {(row) => (
-          <div class="flex flex-col gap-3">
-            <label class="text-sm">
-              Zuschuss (Cent)
-              <input
-                class="mt-1 min-h-12 w-full rounded-xl border px-3 dark:border-zinc-700 dark:bg-zinc-900"
-                inputmode="numeric"
+          <Card class="rounded-xl">
+            <CardHeader>
+              <CardTitle>Werte</CardTitle>
+            </CardHeader>
+            <CardContent class="flex flex-col gap-3">
+              <Cent
+                label="Zuschuss (Cent)"
                 value={row().zuschuss_cent}
-                onInput={(event) =>
-                  update({ zuschuss_cent: Number(event.currentTarget.value) })
-                }
+                onChange={(value) => update({ zuschuss_cent: value })}
               />
-            </label>
-            <fieldset>
-              <legend class="text-sm font-medium">Mahlzeiten</legend>
-              <For each={["fruehstueck", "mittag", "abend"]}>
-                {(meal) => (
-                  <label class="mr-3">
-                    <input
-                      type="checkbox"
+              <fieldset class="flex flex-col gap-2">
+                <legend class="text-sm font-medium">Mahlzeiten</legend>
+                <For each={["fruehstueck", "mittag", "abend"]}>
+                  {(meal) => (
+                    <Checkbox
                       checked={row().mahlzeiten.includes(meal)}
-                      onChange={(event) => {
+                      onChange={(checked) => {
                         const set = new Set(row().mahlzeiten);
-                        if (event.currentTarget.checked) {
+                        if (checked) {
                           set.add(meal);
                         } else {
                           set.delete(meal);
@@ -121,127 +137,104 @@ export default function JahresregelPage() {
                             : (mahlzeiten[0] ?? "mittag"),
                         });
                       }}
-                    />{" "}
-                    {mahlzeitLabel[meal]}
-                  </label>
-                )}
-              </For>
-            </fieldset>
-            <div class="grid grid-cols-3 gap-2">
-              <Cent
-                label="SBW Frühstück"
-                value={row().sbw_fruehstueck_cent}
-                onChange={(value) => update({ sbw_fruehstueck_cent: value })}
-              />
-              <Cent
-                label="SBW Mittag"
-                value={row().sbw_mittag_cent}
-                onChange={(value) => update({ sbw_mittag_cent: value })}
-              />
-              <Cent
-                label="SBW Abend"
-                value={row().sbw_abend_cent}
-                onChange={(value) => update({ sbw_abend_cent: value })}
-              />
-            </div>
-            <Button
-              class="bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
-              onClick={() => {
-                const official = amtlich[jahr()];
-                if (!official) {
-                  toast("Für dieses Jahr liegen keine amtlichen Werte vor.");
-                  return;
-                }
-                update({
-                  sbw_fruehstueck_cent: official.fruehstueck,
-                  sbw_mittag_cent: official.mittag,
-                  sbw_abend_cent: official.abend,
-                });
-              }}
-            >
-              Amtliche Werte übernehmen
-            </Button>
-            <label class="text-sm">
-              <input
-                type="checkbox"
+                    >
+                      {mahlzeitLabel[meal]}
+                    </Checkbox>
+                  )}
+                </For>
+              </fieldset>
+              <div class="grid gap-2 sm:grid-cols-3">
+                <Cent
+                  label="SBW Frühstück"
+                  value={row().sbw_fruehstueck_cent}
+                  onChange={(value) => update({ sbw_fruehstueck_cent: value })}
+                />
+                <Cent
+                  label="SBW Mittag"
+                  value={row().sbw_mittag_cent}
+                  onChange={(value) => update({ sbw_mittag_cent: value })}
+                />
+                <Cent
+                  label="SBW Abend"
+                  value={row().sbw_abend_cent}
+                  onChange={(value) => update({ sbw_abend_cent: value })}
+                />
+              </div>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  const official = amtlich[jahr()];
+                  if (!official) {
+                    toast("Für dieses Jahr liegen keine amtlichen Werte vor.");
+                    return;
+                  }
+                  update({
+                    sbw_fruehstueck_cent: official.fruehstueck,
+                    sbw_mittag_cent: official.mittag,
+                    sbw_abend_cent: official.abend,
+                  });
+                }}
+              >
+                Amtliche Werte übernehmen
+              </Button>
+              <Checkbox
                 checked={row().pauschalierung}
-                onChange={(event) =>
-                  update({ pauschalierung: event.currentTarget.checked })
-                }
-              />{" "}
-              Pauschalierung
-            </label>
-            <label class="text-sm">
-              <input
-                type="checkbox"
+                onChange={(checked) => update({ pauschalierung: checked })}
+              >
+                Pauschalierung
+              </Checkbox>
+              <Checkbox
                 checked={row().gehaltsumwandlung}
-                onChange={(event) =>
-                  update({ gehaltsumwandlung: event.currentTarget.checked })
-                }
-              />{" "}
-              Gehaltsumwandlung
-            </label>
-            <label class="text-sm">
-              Bundesland
-              <select
-                class="mt-1 min-h-12 w-full rounded-xl border px-3 dark:border-zinc-700 dark:bg-zinc-900"
+                onChange={(checked) => update({ gehaltsumwandlung: checked })}
+              >
+                Gehaltsumwandlung
+              </Checkbox>
+              <Choice
+                label="Bundesland"
                 value={row().bundesland}
-                onChange={(event) => {
-                  const bundesland = event.currentTarget.value;
+                options={laender.map((land) => [land, land])}
+                onChange={(bundesland) =>
                   update({
                     bundesland,
                     kist_satz_bp:
                       kistVorschlag[bundesland] ?? row().kist_satz_bp,
-                  });
-                }}
-              >
-                <For each={laender}>
-                  {(land) => <option value={land}>{land}</option>}
-                </For>
-              </select>
-            </label>
-            <Cent
-              label="Kirchensteuer (Basispunkte)"
-              value={row().kist_satz_bp}
-              onChange={(value) => update({ kist_satz_bp: value })}
-            />
-            <label class="text-sm">
-              Eigenanteil
-              <select
-                class="mt-1 min-h-12 w-full rounded-xl border px-3 dark:border-zinc-700 dark:bg-zinc-900"
+                  })
+                }
+              />
+              <Cent
+                label="Kirchensteuer (Basispunkte)"
+                value={row().kist_satz_bp}
+                onChange={(value) => update({ kist_satz_bp: value })}
+              />
+              <Choice
+                label="Eigenanteil"
                 value={row().eigenanteil_variante}
-                onChange={(event) =>
-                  update({ eigenanteil_variante: event.currentTarget.value })
-                }
-              >
-                <option value="standard">
-                  Standard: Eigenanteil mindert den Sachbezug
-                </option>
-                <option value="vorsichtig">
-                  Vorsichtig: Erstattung bis zum Sachbezugswert
-                </option>
-              </select>
-            </label>
-            <Cent
-              label="Monatslimit"
-              value={row().monatslimit}
-              onChange={(value) => update({ monatslimit: value })}
-            />
-            <label class="text-sm">
-              Limit-Modus
-              <select
-                class="mt-1 min-h-12 w-full rounded-xl border px-3 dark:border-zinc-700 dark:bg-zinc-900"
+                options={[
+                  ["standard", "Standard: Eigenanteil mindert den Sachbezug"],
+                  [
+                    "vorsichtig",
+                    "Vorsichtig: Erstattung bis zum Sachbezugswert",
+                  ],
+                ]}
+                onChange={(value) => update({ eigenanteil_variante: value })}
+              />
+              <Cent
+                label="Monatslimit"
+                value={row().monatslimit}
+                onChange={(value) => update({ monatslimit: value })}
+              />
+              <Choice
+                label="Limit-Modus"
                 value={row().limit_modus}
-                onChange={(event) =>
-                  update({ limit_modus: event.currentTarget.value })
-                }
-              >
-                <option value="warnen">Warnen</option>
-                <option value="blockieren">Blockieren</option>
-              </select>
-            </label>
-            <Button onClick={() => void save()}>Speichern</Button>
-          </div>
+                options={[
+                  ["warnen", "Warnen"],
+                  ["blockieren", "Blockieren"],
+                ]}
+                onChange={(value) => update({ limit_modus: value })}
+              />
+              <Button onClick={() => void save()}>Speichern</Button>
+            </CardContent>
+          </Card>
         )}
       </Show>
     </section>
@@ -254,14 +247,11 @@ function Cent(props: {
   onChange: (value: number) => void;
 }) {
   return (
-    <label class="text-sm">
-      {props.label}
-      <input
-        class="mt-1 min-h-12 w-full rounded-xl border px-3 dark:border-zinc-700 dark:bg-zinc-900"
-        inputmode="numeric"
-        value={props.value}
-        onInput={(event) => props.onChange(Number(event.currentTarget.value))}
-      />
-    </label>
+    <LabeledField
+      label={props.label}
+      inputmode="numeric"
+      value={String(props.value)}
+      onChange={(value) => props.onChange(Number(value))}
+    />
   );
 }

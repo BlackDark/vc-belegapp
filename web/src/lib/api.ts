@@ -158,11 +158,19 @@ export type Monat = {
   belege: Beleg[];
   summen: {
     anzahl: number;
+    belegbetrag_cent: number;
+    anerkannt_cent: number;
     erstattung_cent: number;
     eigenanteil_cent: number;
     gv_cent: number;
-    ag_kosten_cent: number;
+    steuerfrei_cent: number;
+    regulaer_cent: number;
+    pauschalsteuer_cent: number;
+    soli_cent: number;
+    kist_cent: number;
     pauschal_gesamt_cent: number;
+    an_pflichtig_cent: number;
+    ag_kosten_cent: number;
   };
   pruefpunkte: { code: string; ergebnis: string; text: string }[];
   warnungen: Warnung[];

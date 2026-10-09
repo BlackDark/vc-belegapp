@@ -45,6 +45,6 @@ test("login, jahresregel, upload, month, duplicate, dark mode", async ({ page })
   await expect(page.getByText("Für dieses Datum existiert bereits ein Beleg.")).toBeVisible();
 
   await page.goto("/einstellungen");
-  await page.getByLabel("Darstellung").selectOption("dunkel");
+  await page.getByRole("tab", { name: "Dunkel" }).click();
   await expect(page.locator("html")).toHaveClass(/dark/);
 });

@@ -1,7 +1,10 @@
 import { Camera, ImagePlus } from "lucide-solid";
 import { toast } from "solid-sonner";
+
 import { ApiError, client } from "../lib/api";
 import { downscale } from "../lib/image";
+import { cn } from "../lib/utils";
+import { buttonVariants } from "./ui/button";
 
 export function CaptureInputs(props: { onFile: (file: File) => void }) {
   const pick = (event: Event) => {
@@ -12,9 +15,14 @@ export function CaptureInputs(props: { onFile: (file: File) => void }) {
   };
   return (
     <div class="grid gap-3">
-      <label class="flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl bg-emerald-800 text-white dark:bg-emerald-500 dark:text-zinc-950">
-        <Camera size={28} />
-        <span class="text-lg font-medium">Kamera</span>
+      <label
+        class={cn(
+          buttonVariants({ size: "lg" }),
+          "h-28 cursor-pointer flex-col",
+        )}
+      >
+        <Camera />
+        <span class="text-base">Kamera</span>
         <input
           class="sr-only"
           aria-label="Kamera"
@@ -24,8 +32,13 @@ export function CaptureInputs(props: { onFile: (file: File) => void }) {
           onChange={pick}
         />
       </label>
-      <label class="flex min-h-16 cursor-pointer items-center justify-center gap-2 rounded-2xl border border-zinc-300 dark:border-zinc-700">
-        <ImagePlus size={20} />
+      <label
+        class={cn(
+          buttonVariants({ variant: "outline", size: "lg" }),
+          "cursor-pointer",
+        )}
+      >
+        <ImagePlus />
         Galerie
         <input
           class="sr-only"

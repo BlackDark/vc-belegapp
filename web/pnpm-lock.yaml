@@ -166,6 +166,9 @@ importers:
 
   .:
     dependencies:
+      '@fontsource-variable/inter':
+        specifier: 5.3.0
+        version: 5.3.0
       '@kobalte/core':
         specifier: 0.13.14
         version: 0.13.14(solid-js@1.9.17)
@@ -178,6 +181,12 @@ importers:
       '@tanstack/solid-query':
         specifier: 5.104.1
         version: 5.104.1(solid-js@1.9.17)
+      class-variance-authority:
+        specifier: 0.7.1
+        version: 0.7.1
+      clsx:
+        specifier: 2.1.1
+        version: 2.1.1
       lucide-solid:
         specifier: 0.544.0
         version: 0.544.0(solid-js@1.9.17)
@@ -187,6 +196,12 @@ importers:
       solid-sonner:
         specifier: 0.2.8
         version: 0.2.8(solid-js@1.9.17)
+      tailwind-merge:
+        specifier: 3.7.0
+        version: 3.7.0
+      tw-animate-css:
+        specifier: 1.4.0
+        version: 1.4.0
       workbox-window:
         specifier: 7.4.0
         version: 7.4.0
@@ -811,6 +826,9 @@ packages:
 
   '@floating-ui/utils@0.2.12':
     resolution: {integrity: sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==}
+
+  '@fontsource-variable/inter@5.3.0':
+    resolution: {integrity: sha512-OupL48va4JNofb97w6NYeF9S7W/kHNKM0Er8Dem5nqi4jeOLrVJDoE8tZEpnMJmtkvNbB1EIPPwHcdkF6b1oUA==}
 
   '@internationalized/number@3.6.8':
     resolution: {integrity: sha512-8UmMFia46DUt+k97zKd9fKWXcWHR+k8ae3eYzILETuT2KbIvLyOfac7zesw+sJdRAAZ7Q9pM1Mk22aXp2LD0Ig==}
@@ -1522,6 +1540,13 @@ packages:
   chai@6.3.0:
     resolution: {integrity: sha512-XWAtwJ6OHO+tj0EKCs0Y2UamnyOxseZWltU4x2U2wh8g4AigdjwvtUjvLP2tqkA/avxHEtzxNaqGq/YGNwckKg==}
     engines: {node: '>=18'}
+
+  class-variance-authority@0.7.1:
+    resolution: {integrity: sha512-Ka+9Trutv7G8M6WT6SeiRWz792K5qEqIGEGzXKhAE6xOWAY6pPH8U+9IY3oCMv6kqTmLsv7Xh/2w2RigkePMsg==}
+
+  clsx@2.1.1:
+    resolution: {integrity: sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA==}
+    engines: {node: '>=6'}
 
   commander@2.20.3:
     resolution: {integrity: sha512-GpVkmM8vF2vQUkj2LvZmD35JxeJOLCwJ9cUkugyk2nuhbv3+mJvpLYYt+0+USMxE+oj+ey/lJEnhZw75x/OMcQ==}
@@ -2411,6 +2436,9 @@ packages:
     resolution: {integrity: sha512-ot0WnXS9fgdkgIcePe6RHNk1WA8+muPa6cSjeR3V8K27q9BB1rTE3R1p7Hv0z1ZyAc8s6Vvv8DIyWf681MAt0w==}
     engines: {node: '>= 0.4'}
 
+  tailwind-merge@3.7.0:
+    resolution: {integrity: sha512-XPPUyAc+cvspz3lHTcR/QgPfW2A0lv/xQNIjX3HGhLR+Nq2lHaLq5MtTesHn8GUr3W3DguT2KT5x3NVgRtYwmA==}
+
   tailwindcss@4.3.3:
     resolution: {integrity: sha512-gOhV3P7ufE62QDGg1zVaTgCR+EtPv92k2nIhVcVKcLmxT1sUBsQGhnZj175j+MqRt4zLF7ic+sCYjfhxMxj7YQ==}
 
@@ -2445,6 +2473,9 @@ packages:
 
   tslib@2.8.1:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
+
+  tw-animate-css@1.4.0:
+    resolution: {integrity: sha512-7bziOlRqH0hJx80h/3mbicLW7o8qLsH5+RaLR2t+OHM3D0JlWGODQKQ4cxbK7WlvmUxpcj6Kgu6EKqjrGFe3QQ==}
 
   type-fest@0.16.0:
     resolution: {integrity: sha512-eaBzG6MxNzEn9kiwvtre90cXaNLkmadMWa1zQMs3XORCXNbsH/OewwbxC5ia9dCxIxnTAsSxXJaa/p5y8DlvJg==}
@@ -3445,6 +3476,8 @@ snapshots:
 
   '@floating-ui/utils@0.2.12': {}
 
+  '@fontsource-variable/inter@5.3.0': {}
+
   '@internationalized/number@3.6.8':
     dependencies:
       '@swc/helpers': 0.5.23
@@ -4039,6 +4072,12 @@ snapshots:
   caniuse-lite@1.0.30001815: {}
 
   chai@6.3.0: {}
+
+  class-variance-authority@0.7.1:
+    dependencies:
+      clsx: 2.1.1
+
+  clsx@2.1.1: {}
 
   commander@2.20.3: {}
 
@@ -4998,6 +5037,8 @@ snapshots:
 
   supports-preserve-symlinks-flag@1.0.0: {}
 
+  tailwind-merge@3.7.0: {}
+
   tailwindcss@4.3.3: {}
 
   tapable@2.3.3: {}
@@ -5028,6 +5069,8 @@ snapshots:
       picomatch: 4.0.7
 
   tslib@2.8.1: {}
+
+  tw-animate-css@1.4.0: {}
 
   type-fest@0.16.0: {}
 

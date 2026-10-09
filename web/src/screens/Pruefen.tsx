@@ -140,32 +140,37 @@ export default function Pruefen() {
 
   return (
     <section class="flex flex-col gap-4">
-      <h1 class="text-2xl font-semibold">
-        {params.id ? "Beleg prüfen" : "Beleg erfassen"}
-      </h1>
+      <div>
+        <h1 class="text-2xl font-semibold tracking-tight">
+          {params.id ? "Beleg prüfen" : "Beleg erfassen"}
+        </h1>
+        <p class="text-sm text-muted-foreground">
+          Betrag, Händler und Erstattung prüfen, dann speichern.
+        </p>
+      </div>
       <Show when={!params.id && bildIds().length < 3}>
         <CaptureInputs onFile={(file) => void addFile(file)} />
       </Show>
       <Show when={bildIds()[0]}>
         <img
           alt="Belegbild"
-          class="max-h-72 w-full rounded-2xl object-contain"
+          class="max-h-72 w-full rounded-xl border bg-muted object-contain"
           src={`/api/v1/belegbilder/${bildIds()[0]}/datei`}
         />
       </Show>
       <Show when={params.id && existing.isPending}>
-        <p>Lädt …</p>
+        <p class="text-sm text-muted-foreground">Lädt …</p>
       </Show>
       <Show when={params.id && existing.isError}>
-        <p class="rounded-xl bg-amber-100 px-3 py-2 text-sm dark:bg-amber-950">
+        <p class="rounded-xl border border-warning/40 bg-warning px-3 py-2 text-sm text-warning-foreground">
           Der Beleg konnte nicht geladen werden.
         </p>
       </Show>
       <Show when={!params.id && profil.isPending}>
-        <p>Lädt …</p>
+        <p class="text-sm text-muted-foreground">Lädt …</p>
       </Show>
       <Show when={!params.id && profil.isError}>
-        <p class="rounded-xl bg-amber-100 px-3 py-2 text-sm dark:bg-amber-950">
+        <p class="rounded-xl border border-warning/40 bg-warning px-3 py-2 text-sm text-warning-foreground">
           Die Einstellungen konnten nicht geladen werden.
         </p>
       </Show>
