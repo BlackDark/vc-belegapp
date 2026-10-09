@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -137,12 +138,14 @@ func Serve(ctx context.Context, opt Options) error {
 		Absolute: opt.Config.SessionAbsoluteTimeout,
 		Secure:   opt.Config.CookieSecure,
 	}
-	go sessions.Run(runCtx)
-	go svc.Sweep(runCtx)
+	var background sync.WaitGroup
+	background.Go(func() { sessions.Run(runCtx) })
+	background.Go(func() { svc.Sweep(runCtx) })
 	svc.StartJobs(runCtx)
 	defer func() {
 		cancel()
 		svc.WaitJobs()
+		background.Wait()
 	}()
 	var oidcClient *auth.OIDC
 	if opt.Config.OIDCIssuerURL != "" {
@@ -160,7 +163,7 @@ func Serve(ctx context.Context, opt Options) error {
 			Secret:       rt.SecretKey,
 			Log:          opt.Log,
 		})
-		go oidcClient.Maintain(runCtx)
+		background.Go(func() { oidcClient.Maintain(runCtx) })
 	}
 	httpAPI := &api.API{
 		Log:          opt.Log,
