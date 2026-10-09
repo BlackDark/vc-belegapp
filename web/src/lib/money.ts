@@ -18,6 +18,11 @@ export function parseEuroToCent(raw: string): number | null {
   return cents;
 }
 
+// Plain German decimal for amount inputs. formatCent adds the euro sign.
+export function formatCentInput(cents: number): string {
+  return (cents / 100).toFixed(2).replace(".", ",");
+}
+
 export function formatCent(cents: number): string {
   return new Intl.NumberFormat("de-DE", {
     style: "currency",

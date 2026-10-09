@@ -219,19 +219,6 @@ func Vorschlag(jahr int, vor *Jahresregel) Jahresregel {
 	return out
 }
 
-// ApplyOfficialSBW copies the shipped Sachbezugswerte onto rule when the year is known.
-func ApplyOfficialSBW(r *Jahresregel) bool {
-	sbw, ok := Amtlich[r.Jahr]
-	if !ok {
-		return false
-	}
-	r.SBWFruehstueckCent = sbw.Fruehstueck
-	r.SBWMittagCent = sbw.Mittag
-	r.SBWAbendCent = sbw.Abend
-	r.SBWStatus = sbw.Status
-	return true
-}
-
 // MahlzeitErlaubt reports whether the meal type is subsidised.
 func MahlzeitErlaubt(r Jahresregel, mahlzeit string) bool {
 	return slices.Contains(r.Mahlzeiten, mahlzeit)

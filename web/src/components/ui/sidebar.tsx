@@ -321,6 +321,7 @@ const SidebarRail: Component<ComponentProps<"button">> = (props) => {
 
   return (
     <button
+      type="button"
       data-sidebar="rail"
       aria-label="Seitenleiste umschalten"
       tabIndex={-1}

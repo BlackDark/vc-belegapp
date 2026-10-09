@@ -25,6 +25,14 @@
       "automerge": true
     },
     {
+      "groupName": "e2e",
+      "matchManagers": ["npm"],
+      "matchFileNames": ["e2e/package.json"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "rangeStrategy": "pin",
+      "automerge": true
+    },
+    {
       "description": "Solid 2 and Kobalte majors stay on manual review",
       "matchPackageNames": ["solid-js", "@kobalte/core"],
       "matchUpdateTypes": ["major"],
@@ -50,9 +58,13 @@
   "customManagers": [
     {
       "customType": "regex",
-      "managerFilePatterns": ["/(^|/)Dockerfile(\\..*)?$/"],
+      "managerFilePatterns": [
+        "/(^|/)Dockerfile(\\..*)?$/",
+        "/(^|/)scripts/install-typst\\.sh$/"
+      ],
       "matchStrings": [
-        "# renovate: datasource=github-releases depName=typst/typst\\nARG TYPST_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+        "# renovate: datasource=github-releases depName=typst/typst\\nARG TYPST_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "# renovate: datasource=github-releases depName=typst/typst\\nversion=(?<currentValue>\\d+\\.\\d+\\.\\d+)"
       ],
       "datasourceTemplate": "github-releases",
       "depNameTemplate": "typst/typst",

@@ -1,7 +1,9 @@
 #!/bin/sh
-# Install pinned Typst 0.15.1. The first argument is the destination directory.
+# Install pinned Typst. The first argument is the destination directory.
+# SHA256 values must change in the same commit as version.
 set -eu
 dest="${1:-/usr/local/bin}"
+# renovate: datasource=github-releases depName=typst/typst
 version=0.15.1
 case "$(uname -m)" in
   x86_64|amd64)

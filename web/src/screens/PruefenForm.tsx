@@ -30,7 +30,7 @@ import {
   type Erkennung,
   type Warnung,
 } from "../lib/api";
-import { formatCent, parseEuroToCent } from "../lib/money";
+import { formatCent, formatCentInput, parseEuroToCent } from "../lib/money";
 import { queryKeys } from "../lib/queryKeys";
 
 export type Draft = {
@@ -58,10 +58,6 @@ const kategorien: Record<string, string> = {
   rabatt: "Rabatt",
   sonstiges: "Sonstiges",
 };
-
-function centInput(cents: number): string {
-  return (cents / 100).toFixed(2).replace(".", ",");
-}
 
 export function PruefenForm(props: {
   initial: Draft;
@@ -128,7 +124,7 @@ export function PruefenForm(props: {
       form.setFieldValue("haendler_ort", result.haendler_ort);
     }
     if (!touched.betrag && result.gesamtbetrag_cent != null) {
-      form.setFieldValue("betrag", centInput(result.gesamtbetrag_cent));
+      form.setFieldValue("betrag", formatCentInput(result.gesamtbetrag_cent));
     }
     if (
       !touched.bezugsort &&
@@ -271,7 +267,7 @@ export function PruefenForm(props: {
     if (cents == null) {
       return;
     }
-    form.setFieldValue("korrigiert", centInput(cents));
+    form.setFieldValue("korrigiert", formatCentInput(cents));
     form.setFieldValue("korrektur_grund", korrekturGrund);
     setKorrekturOffen(true);
     setIgnored(suggestionKey());

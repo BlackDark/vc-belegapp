@@ -229,8 +229,5 @@ func sessionFromRow(row db.Sitzungen) (Session, error) {
 
 var errNoSession = errors.New("auth: no session")
 
-// ErrNoSession is returned for a missing or expired session.
-func ErrNoSession() error { return errNoSession }
-
 // IsNoSession reports a missing session.
 func IsNoSession(err error) bool { return errors.Is(err, errNoSession) }

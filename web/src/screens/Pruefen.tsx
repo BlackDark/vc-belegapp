@@ -6,6 +6,7 @@ import { CaptureInputs } from "../components/CaptureInputs";
 import { ApiError, client, type Erkennung } from "../lib/api";
 import { todayISO } from "../lib/dates";
 import { downscale } from "../lib/image";
+import { formatCentInput } from "../lib/money";
 import { queryKeys } from "../lib/queryKeys";
 import { type Draft, PruefenForm } from "./PruefenForm";
 
@@ -63,13 +64,11 @@ export default function Pruefen() {
         arbeitsort: beleg.arbeitsort,
         haendler_name: beleg.haendler_name,
         haendler_ort: beleg.haendler_ort,
-        betrag: (beleg.belegbetrag_cent / 100).toFixed(2).replace(".", ","),
+        betrag: formatCentInput(beleg.belegbetrag_cent),
         korrigiert:
           beleg.korrigierter_betrag_cent == null
             ? ""
-            : (beleg.korrigierter_betrag_cent / 100)
-                .toFixed(2)
-                .replace(".", ","),
+            : formatCentInput(beleg.korrigierter_betrag_cent),
         korrektur_grund: beleg.korrektur_grund ?? "",
         notiz: beleg.notiz,
       };

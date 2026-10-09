@@ -48,10 +48,10 @@ const statusVariant: Record<string, "secondary" | "outline" | "warning"> = {
 const erklaerungText =
   "Ich versichere, dass jeder aufgeführte Beleg eine Mahlzeit betrifft, die ich an dem angegebenen Tag als Arbeitstag (kein Urlaub, keine Krankheit, keine Auswärtstätigkeit) selbst erworben habe und die zum Verzehr an diesem Tag bestimmt war. Nicht erstattungsfähige Artikel (z. B. Alkohol, Tabak, Pfand, Non-Food, Vorratskäufe) habe ich herausgerechnet. Jeder Beleg wird nur einmal eingereicht.";
 
-function mark(ergebnis: string) {
-  if (ergebnis === "fehler") return "✗";
-  if (ergebnis === "warnung") return "⚠";
-  return "✓";
+function mark(ergebnis: string): { symbol: string; label: string } {
+  if (ergebnis === "fehler") return { symbol: "✗", label: "Fehler" };
+  if (ergebnis === "warnung") return { symbol: "⚠", label: "Warnung" };
+  return { symbol: "✓", label: "Bestanden" };
 }
 
 function monthCaption(value: string) {
@@ -415,11 +415,15 @@ function ExportDialog(props: {
         <h2 class="font-medium">Prüfpunkte</h2>
         <ul class="flex flex-col gap-1 text-sm">
           <For each={checks()}>
-            {(item) => (
-              <li>
-                {mark(item.ergebnis)} {item.text}
-              </li>
-            )}
+            {(item) => {
+              const status = mark(item.ergebnis);
+              return (
+                <li>
+                  <span aria-hidden="true">{status.symbol}</span> {item.text}
+                  <span class="sr-only"> ({status.label})</span>
+                </li>
+              );
+            }}
           </For>
         </ul>
         <Show when={blocking()}>
