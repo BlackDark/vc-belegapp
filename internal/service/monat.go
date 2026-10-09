@@ -147,7 +147,7 @@ func (s *Service) GetMonat(ctx context.Context, monat string) (Monat, error) {
 	if warnungen == nil {
 		warnungen = []validate.Warnung{}
 	}
-	checks, err := s.pruefpunkte(ctx, q, belege, regel, summen)
+	checks, err := s.pruefpunkte(ctx, q, belege, regel, summen, false)
 	if err != nil {
 		return Monat{}, err
 	}
@@ -184,7 +184,10 @@ func (s *Service) listExports(ctx context.Context, q *db.Queries, monat string) 
 	return out, nil
 }
 
-func (s *Service) pruefpunkte(ctx context.Context, q *db.Queries, belege []Beleg, regel *rules.Jahresregel, summen calc.Summen) ([]Pruefpunkt, error) {
+// pruefpunkte builds the month checklist. full is export-time integrity:
+// every image is hashed and the whole audit chain is walked. The month
+// view only stats blobs and checks the latest audit entry.
+func (s *Service) pruefpunkte(ctx context.Context, q *db.Queries, belege []Beleg, regel *rules.Jahresregel, summen calc.Summen, full bool) ([]Pruefpunkt, error) {
 	ok := func(code, ergebnis string) Pruefpunkt {
 		return Pruefpunkt{Code: code, Ergebnis: ergebnis, Text: validate.PruefpunktText(code)}
 	}
@@ -219,7 +222,11 @@ func (s *Service) pruefpunkte(ctx context.Context, q *db.Queries, belege []Beleg
 			bilder = "fehler"
 		}
 		for _, row := range rows {
-			if !s.BlobIntact(ctx, row) {
+			okImage := s.blobPresent(ctx, row)
+			if full {
+				okImage = s.BlobIntact(ctx, row)
+			}
+			if !okImage {
 				bilder = "fehler"
 			}
 		}
@@ -228,7 +235,13 @@ func (s *Service) pruefpunkte(ctx context.Context, q *db.Queries, belege []Beleg
 	if regel != nil && summen.Anzahl > regel.Monatslimit {
 		limit = "warnung"
 	}
-	report, err := audit.Verify(ctx, s.DB.Read)
+	var report audit.Report
+	var err error
+	if full {
+		report, err = audit.Verify(ctx, s.DB.Read)
+	} else {
+		report, err = audit.VerifyTip(ctx, s.DB.Read)
+	}
 	if err != nil {
 		return nil, err
 	}

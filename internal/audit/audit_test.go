@@ -144,6 +144,46 @@ func TestVerifyDetectsTamper(t *testing.T) {
 	}
 }
 
+func TestVerifyTipIgnoresEarlierBreak(t *testing.T) {
+	ctx := context.Background()
+	database := openDB(t)
+	tx, err := database.Write.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := &Entry{
+		Zeitpunkt: "2026-10-08T00:00:00Z", Akteur: "passwort", Aktion: "einstellungen_geaendert",
+		Entitaet: "einstellungen", EntitaetID: "1", RequestID: "r1",
+	}
+	second := &Entry{
+		Zeitpunkt: "2026-10-08T00:01:00Z", Akteur: "passwort", Aktion: "beleg_erstellt",
+		Entitaet: "beleg", EntitaetID: "01", Monat: "2026-10", RequestID: "r2",
+	}
+	if err := Append(ctx, tx, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := Append(ctx, tx, second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TRIGGER aenderungsprotokoll_no_update`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE aenderungsprotokoll SET akteur = 'fremd' WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	tip, err := VerifyTip(ctx, database.Read)
+	if err != nil || !tip.OK || tip.Anzahl != 2 {
+		t.Fatalf("tip %+v %v", tip, err)
+	}
+	full, err := Verify(ctx, database.Read)
+	if err != nil || full.OK || full.ErsterFehlerID != 1 {
+		t.Fatalf("full %+v %v", full, err)
+	}
+}
+
 func openDB(t *testing.T) *db.DB {
 	t.Helper()
 	database, err := db.Open(filepath.Join(t.TempDir(), "belegapp.db"))
