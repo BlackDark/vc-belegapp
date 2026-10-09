@@ -1,4 +1,4 @@
-// Package api is the /api/v1 HTTP surface for milestone M1.
+// Package api is the /api/v1 HTTP surface.
 package api
 
 import (
@@ -89,12 +89,12 @@ func (a *API) Handler() http.Handler {
 		r.Patch("/belege/{id}", a.patchBeleg)
 		r.Delete("/belege/{id}", a.deleteBeleg)
 		r.Get("/monate/{monat}", a.getMonat)
-		r.Post("/monate/{monat}/vorschau", a.notImplemented)
-		r.Post("/monate/{monat}/exporte", a.notImplemented)
-		r.Get("/monate/{monat}/exporte", a.notImplemented)
-		r.Get("/exporte/{id}/pdf", a.notImplemented)
-		r.Get("/exporte/{id}/csv", a.notImplemented)
-		r.Get("/exporte/{id}/zip", a.notImplemented)
+		r.Post("/monate/{monat}/vorschau", a.previewMonat)
+		r.Post("/monate/{monat}/exporte", a.createExport)
+		r.Get("/monate/{monat}/exporte", a.listExporte)
+		r.Get("/exporte/{id}/pdf", a.exportFile("pdf"))
+		r.Get("/exporte/{id}/csv", a.exportFile("csv"))
+		r.Get("/exporte/{id}/zip", a.exportFile("zip"))
 		r.Get("/protokoll", a.protokoll)
 		r.Get("/protokoll/pruefen", a.protokollPruefen)
 		r.Post("/datenexport", a.notImplemented)

@@ -217,6 +217,35 @@ func (e *Entry) document() map[string]any {
 
 type queryer interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+// After returns entries with id greater than afterID, oldest first.
+func After(ctx context.Context, db queryer, afterID int64) ([]Entry, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, zeitpunkt, akteur, aktion, entitaet, entitaet_id, monat,
+		       vorher, nachher, diff, grund, request_id, prev_hash, hash
+		FROM aenderungsprotokoll
+		WHERE id > ?
+		ORDER BY id ASC`, afterID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return scanAll(rows)
+}
+
+// IDByHash returns the entry id for a stored chain hash.
+func IDByHash(ctx context.Context, db queryer, hash string) (int64, bool, error) {
+	var id int64
+	err := db.QueryRowContext(ctx, `SELECT id FROM aenderungsprotokoll WHERE hash = ?`, hash).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return id, true, nil
 }
 
 func scanAll(rows *sql.Rows) ([]Entry, error) {

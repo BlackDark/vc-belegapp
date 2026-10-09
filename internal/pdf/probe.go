@@ -1,5 +1,3 @@
-// Package pdf will render the monthly export. M0 only probes the Typst CLI,
-// which readiness caches from process start.
 package pdf
 
 import (

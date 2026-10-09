@@ -155,8 +155,26 @@ export type Monat = {
     ag_kosten_cent: number;
     pauschal_gesamt_cent: number;
   };
-  pruefpunkte: { code: string; ergebnis: string }[];
+  pruefpunkte: { code: string; ergebnis: string; text: string }[];
   warnungen: Warnung[];
+  exporte: {
+    id: string;
+    version: number;
+    erstellt_am: string;
+    pdf: boolean;
+    csv: boolean;
+    zip: boolean;
+  }[];
+};
+export type ExportAntwort = {
+  id: string;
+  monat: string;
+  version: number;
+  erstellt_am: string;
+  pdf_url: string;
+  csv_url: string | null;
+  zip_url: string | null;
+  pdf_sha256: string;
 };
 export type AuthConfig = {
   passwort: boolean;
@@ -221,6 +239,36 @@ export const client = {
       body: json({ version, aenderungsgrund }),
     }),
   monat: (monat: string) => api<Monat>(`/api/v1/monate/${monat}`),
+  exportMonat: (
+    monat: string,
+    body: {
+      erklaerung_bestaetigt: boolean;
+      warnungen_bestaetigt: boolean;
+      csv: boolean;
+      zip: boolean;
+    },
+  ) =>
+    api<ExportAntwort>(`/api/v1/monate/${monat}/exporte`, {
+      method: "POST",
+      body: json(body),
+    }),
+  async previewMonat(monat: string): Promise<Blob> {
+    const res = await fetch(`/api/v1/monate/${monat}/vorschau`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      let data: ProblemBody | null = null;
+      try {
+        data = text ? (JSON.parse(text) as ProblemBody) : null;
+      } catch {
+        data = null;
+      }
+      throw new ApiError(res.status, data);
+    }
+    return res.blob();
+  },
   info: () => api<SystemInfo>("/api/v1/system/info"),
   sitzungen: () =>
     api<

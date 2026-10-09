@@ -1,2 +1,2 @@
-// Package export will build the monthly PDF, CSV, and ZIP downloads.
+// Package export builds the monthly CSV and ZIP downloads that accompany the PDF.
 package export

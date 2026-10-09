@@ -12,8 +12,8 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# pdf (Typst golden file) starts with M3. e2e covers capture plus recognition
-# against e2e/fakellm (no real API key). Final PDF export stays out until M3.
+# pdf renders the M1 golden file with pinned Typst and checks PDF/A-2b.
+# e2e covers capture, recognition, and the month export against e2e/fakellm.
 
 jobs:
   web:
@@ -90,6 +90,47 @@ jobs:
       - run: go test -race -count=1 -coverprofile=coverage.out ./...
       - run: go tool govulncheck ./...
 
+  pdf:
+    name: pdf
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install Poppler and Java
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils openjdk-21-jre-headless unzip
+      - name: Install Typst
+        run: |
+          ./scripts/install-typst.sh "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install veraPDF
+        run: |
+          ./scripts/install-verapdf.sh "$HOME/verapdf"
+          echo "$HOME/verapdf" >> "$GITHUB_PATH"
+      - name: Golden PDF
+        run: go test -count=1 -timeout 15m ./internal/pdf/ ./internal/export/
+        env:
+          BELEGAPP_REQUIRE_PDF: "1"
+          BELEGAPP_PDF_OUT: ${{ github.workspace }}/pdf-out
+      - name: Validate PDF/A-2b
+        run: |
+          verapdf --flavour 2b --format xml -r pdf-out > pdf-out/verapdf.xml
+          if grep -q 'isCompliant="false"' pdf-out/verapdf.xml; then
+            echo "PDF/A-2b validation failed" >&2
+            exit 1
+          fi
+          if ! grep -q 'isCompliant="true"' pdf-out/verapdf.xml; then
+            echo "veraPDF report has no compliant result" >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: verapdf-report
+          path: pdf-out/verapdf.xml
+          if-no-files-found: warn
+
   docker:
     name: docker
     runs-on: ubuntu-latest
@@ -160,6 +201,10 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - name: Install Typst
+        run: |
+          ./scripts/install-typst.sh "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Build server
         run: CGO_ENABLED=0 go build -trimpath -o bin/belegapp ./cmd/belegapp
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0

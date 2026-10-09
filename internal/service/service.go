@@ -5,12 +5,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/BlackDark/vc-belegapp/internal/db"
 	"github.com/BlackDark/vc-belegapp/internal/erkennung"
 	"github.com/BlackDark/vc-belegapp/internal/holidays"
 	"github.com/BlackDark/vc-belegapp/internal/jobs"
+	"github.com/BlackDark/vc-belegapp/internal/pdf"
 	"github.com/BlackDark/vc-belegapp/internal/storage"
 )
 
@@ -33,6 +35,11 @@ type Service struct {
 	Jobs       *jobs.Queue
 	LLMMaxPX   int
 	LLMTimeout time.Duration
+	PDF        pdf.Renderer
+	AppVersion string
+
+	exportMu  sync.Mutex
+	exporting map[string]struct{}
 }
 
 func (s *Service) now() time.Time {

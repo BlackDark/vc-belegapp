@@ -25,9 +25,10 @@ type TagZelle struct {
 type Pruefpunkt struct {
 	Code     string `json:"code"`
 	Ergebnis string `json:"ergebnis"`
+	Text     string `json:"text"`
 }
 
-// ExportInfo is one stored export version. Downloads stay unavailable until M3.
+// ExportInfo is one stored export version.
 type ExportInfo struct {
 	ID         string `json:"id"`
 	Version    int    `json:"version"`
@@ -184,7 +185,9 @@ func (s *Service) listExports(ctx context.Context, q *db.Queries, monat string) 
 }
 
 func (s *Service) pruefpunkte(ctx context.Context, q *db.Queries, belege []Beleg, regel *rules.Jahresregel, summen calc.Summen) ([]Pruefpunkt, error) {
-	ok := func(code, ergebnis string) Pruefpunkt { return Pruefpunkt{Code: code, Ergebnis: ergebnis} }
+	ok := func(code, ergebnis string) Pruefpunkt {
+		return Pruefpunkt{Code: code, Ergebnis: ergebnis, Text: validate.PruefpunktText(code)}
+	}
 	erstattung := "ok"
 	hoechst := "ok"
 	duplikat := "ok"

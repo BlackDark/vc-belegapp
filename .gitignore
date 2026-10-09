@@ -1,4 +1,5 @@
 /bin/
+/pdf-out/
 /dist/
 /coverage.out
 /coverage.html
