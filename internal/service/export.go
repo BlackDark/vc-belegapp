@@ -29,6 +29,12 @@ type ExportRequest struct {
 	ZIP                  bool `json:"zip"`
 }
 
+// exportBelegRef is one entry of monatsexporte.beleg_ids.
+type exportBelegRef struct {
+	ID      string `json:"id"`
+	Version int    `json:"version"`
+}
+
 // ExportCreated is the 201 response of a final export.
 type ExportCreated struct {
 	ID         string  `json:"id"`
@@ -187,11 +193,11 @@ func (s *Service) CreateExport(ctx context.Context, actor Actor, monat string, r
 		if mErr != nil {
 			return mErr
 		}
-		ids := make([]string, 0, len(view.Belege))
+		refs := make([]exportBelegRef, 0, len(view.Belege))
 		for _, beleg := range view.Belege {
-			ids = append(ids, beleg.ID)
+			refs = append(refs, exportBelegRef{ID: beleg.ID, Version: beleg.Version})
 		}
-		idRaw, mErr := json.Marshal(ids)
+		idRaw, mErr := json.Marshal(refs)
 		if mErr != nil {
 			return mErr
 		}
