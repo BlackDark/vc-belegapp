@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CaptureInputs } from "../components/CaptureInputs";
 import type { Erkennung } from "../lib/api";
-import { PruefenForm } from "./Pruefen";
+import { PruefenForm } from "./PruefenForm";
 
 function field(root: ParentNode, name: string): HTMLInputElement {
   const label = [...root.querySelectorAll("label")].find(
