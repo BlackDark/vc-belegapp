@@ -8,11 +8,11 @@ import (
 	"testing"
 )
 
-// The README configuration table is the operator reference. This fails CI
-// when a BELEGAPP_ variable exists in code and is absent from that table.
-func TestReadmeConfigTable(t *testing.T) {
+// docs/configuration.md is the operator reference. This fails CI when a
+// BELEGAPP_ variable exists in code and is absent from that table.
+func TestConfigurationDocTable(t *testing.T) {
 	known, defaults := envFromCode(t)
-	rows := readmeRows(t)
+	rows := configDocRows(t)
 
 	var missing []string
 	for _, name := range known {
@@ -26,11 +26,11 @@ func TestReadmeConfigTable(t *testing.T) {
 		}
 	}
 	if len(missing) > 0 {
-		t.Errorf("README config table is missing: %s", strings.Join(missing, ", "))
+		t.Errorf("docs/configuration.md config table is missing: %s", strings.Join(missing, ", "))
 	}
 	for name := range rows {
 		if !contains(known, name) {
-			t.Errorf("README config table lists %s, which is not in internal/config", name)
+			t.Errorf("docs/configuration.md config table lists %s, which is not in internal/config", name)
 		}
 	}
 }
@@ -102,9 +102,9 @@ func secretFileBases(t *testing.T) []string {
 	return bases
 }
 
-func readmeRows(t *testing.T) map[string]string {
+func configDocRows(t *testing.T) map[string]string {
 	t.Helper()
-	raw, err := os.ReadFile("../../README.md")
+	raw, err := os.ReadFile("../../docs/configuration.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func readmeRows(t *testing.T) map[string]string {
 	start := strings.Index(text, startMark)
 	end := strings.Index(text, endMark)
 	if start < 0 || end < 0 || end < start {
-		t.Fatal("README is missing config-env markers")
+		t.Fatal("docs/configuration.md is missing config-env markers")
 	}
 	section := text[start+len(startMark) : end]
 	nameRe := regexp.MustCompile(`BELEGAPP_[A-Z0-9_]+`)
@@ -140,7 +140,7 @@ func readmeRows(t *testing.T) map[string]string {
 		}
 	}
 	if len(rows) == 0 {
-		t.Fatal("README config table has no BELEGAPP_ rows")
+		t.Fatal("docs/configuration.md config table has no BELEGAPP_ rows")
 	}
 	return rows
 }

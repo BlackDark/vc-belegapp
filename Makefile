@@ -35,7 +35,7 @@ docker-prebuilt:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/linux/amd64/belegapp ./cmd/belegapp
 	docker build -f Dockerfile.goreleaser -t vc-belegapp:dev dist
 
-# README images. Needs Typst (installed into ./bin when missing), poppler
+# Landing-page images. Needs Typst (installed into ./bin when missing), poppler
 # (pdftoppm), and python3-pil. Playwright downloads Chromium on first run.
 screenshots:
 	@if ! command -v typst >/dev/null 2>&1; then ./scripts/install-typst.sh "$(CURDIR)/bin"; fi
