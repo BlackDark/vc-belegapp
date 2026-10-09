@@ -419,9 +419,8 @@ function ExportDialog(props: {
               const status = mark(item.ergebnis);
               return (
                 <li>
-                  <span aria-hidden="true">{status.symbol}</span>{" "}
-                  <span class="sr-only">{status.label}: </span>
-                  {item.text}
+                  <span aria-hidden="true">{status.symbol}</span> {item.text}
+                  <span class="sr-only"> ({status.label})</span>
                 </li>
               );
             }}
