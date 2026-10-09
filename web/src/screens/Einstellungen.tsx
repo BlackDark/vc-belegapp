@@ -1,3 +1,4 @@
+import { Dialog } from "@kobalte/core/dialog";
 import { A, useNavigate } from "@solidjs/router";
 import { useQuery, useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createSignal, For, Show } from "solid-js";
@@ -6,6 +7,63 @@ import { Button } from "../components/ui";
 import { bezugsorte } from "../lib/amtlich";
 import { ApiError, client, type Einstellungen as Profil } from "../lib/api";
 import { applyTheme, readTheme, type Theme } from "../lib/theme";
+
+type ImportPreview = {
+  import_token: string;
+  gueltig_bis: string;
+  app_version: string;
+  schema_version: number;
+  zeitraum_von: string;
+  zeitraum_bis: string;
+  anzahl_belege: number;
+};
+
+type ImportResult = {
+  ok: boolean;
+  anzahl_belege: number;
+  zeitraum_von: string;
+  zeitraum_bis: string;
+  schema_version: number;
+  app_version: string;
+};
+
+function uploadImport(
+  file: File,
+  onProgress: (percent: number) => void,
+): Promise<ImportPreview> {
+  return new Promise((resolve, reject) => {
+    const data = new FormData();
+    data.set("datei", file);
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/v1/datenimport/pruefen");
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        onProgress(Math.round((event.loaded / event.total) * 100));
+      }
+    };
+    xhr.onload = () => {
+      const body = xhr.responseText
+        ? (JSON.parse(xhr.responseText) as ImportPreview & {
+            detail?: string;
+            code?: string;
+          })
+        : null;
+      if (xhr.status >= 200 && xhr.status < 300 && body) {
+        resolve(body);
+        return;
+      }
+      reject(
+        new ApiError(xhr.status, {
+          detail: body?.detail,
+          code: body?.code,
+        }),
+      );
+    };
+    xhr.onerror = () => reject(new Error("Upload fehlgeschlagen"));
+    xhr.send(data);
+  });
+}
 
 export default function Einstellungen() {
   const navigate = useNavigate();
@@ -34,6 +92,88 @@ export default function Einstellungen() {
   const [arbeit, setArbeit] = createSignal("betrieb");
   const [aktiv, setAktiv] = createSignal(true);
   const [testLaeuft, setTestLaeuft] = createSignal(false);
+  const [exportLaeuft, setExportLaeuft] = createSignal(false);
+  const [exportStatus, setExportStatus] = createSignal("");
+  const [downloadUrl, setDownloadUrl] = createSignal("");
+  const [importStatus, setImportStatus] = createSignal("");
+  const [preview, setPreview] = createSignal<ImportPreview | null>(null);
+  const [wort, setWort] = createSignal("");
+  const [importLaeuft, setImportLaeuft] = createSignal(false);
+  const [importResult, setImportResult] = createSignal<ImportResult | null>(
+    null,
+  );
+
+  const startExport = async () => {
+    setExportLaeuft(true);
+    setDownloadUrl("");
+    setExportStatus("Wird erstellt…");
+    try {
+      const started = await client.datenexport();
+      for (;;) {
+        const job = await client.job(started.job_id);
+        if (job.status === "fertig" && job.ergebnis?.download_url) {
+          setDownloadUrl(job.ergebnis.download_url);
+          setExportStatus("Datenexport ist bereit.");
+          return;
+        }
+        if (job.status === "fehler") {
+          throw new Error("Datenexport fehlgeschlagen");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      }
+    } catch (err) {
+      setExportStatus("");
+      toast.error(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Datenexport fehlgeschlagen",
+      );
+    } finally {
+      setExportLaeuft(false);
+    }
+  };
+
+  const stageImport = async (file: File) => {
+    setImportResult(null);
+    setWort("");
+    setImportStatus("Wird hochgeladen…");
+    try {
+      const next = await uploadImport(file, (percent) => {
+        setImportStatus(`Wird hochgeladen… ${percent} %`);
+      });
+      setPreview(next);
+      setImportStatus("");
+    } catch (err) {
+      setImportStatus("");
+      toast.error(
+        err instanceof ApiError ? err.message : "Datenimport fehlgeschlagen",
+      );
+    }
+  };
+
+  const commitImport = async () => {
+    const current = preview();
+    if (!current) {
+      return;
+    }
+    setImportLaeuft(true);
+    setImportStatus("Wird wiederhergestellt…");
+    try {
+      const result = await client.datenimport(current.import_token, wort());
+      setPreview(null);
+      setImportResult(result);
+      setImportStatus("");
+    } catch (err) {
+      setImportStatus("");
+      toast.error(
+        err instanceof ApiError ? err.message : "Datenimport fehlgeschlagen",
+      );
+    } finally {
+      setImportLaeuft(false);
+    }
+  };
   createEffect(() => {
     const row = profil.data;
     if (!row) {
@@ -250,6 +390,127 @@ export default function Einstellungen() {
         <h2 class="text-lg font-medium">Speicher</h2>
         <p>{info.data?.storage_backend}</p>
       </div>
+      <div class="flex flex-col gap-3">
+        <h2 class="text-lg font-medium">Datenexport</h2>
+        <p class="text-sm text-zinc-600 dark:text-zinc-300">
+          Sicherung der Datenbank, Belege und Bilder. Der Download ist 24
+          Stunden gültig.
+        </p>
+        <Button disabled={exportLaeuft()} onClick={() => void startExport()}>
+          Datenexport erstellen
+        </Button>
+        <Show when={exportStatus()}>
+          <p aria-live="polite" class="text-sm">
+            {exportStatus()}
+          </p>
+        </Show>
+        <Show when={downloadUrl()}>
+          <a
+            class="underline"
+            href={downloadUrl()}
+            download="vc-belegapp-datenexport.zip"
+          >
+            Datenexport herunterladen
+          </a>
+        </Show>
+      </div>
+      <div class="flex flex-col gap-3">
+        <h2 class="text-lg font-medium">Datenimport</h2>
+        <p class="text-sm text-zinc-600 dark:text-zinc-300">
+          Ersetzt den gesamten Bestand. Vorher wird automatisch eine Sicherung
+          angelegt.
+        </p>
+        <label class="text-sm">
+          ZIP-Datei
+          <input
+            type="file"
+            accept=".zip,application/zip"
+            aria-label="Datenimport"
+            class="mt-1 block w-full text-sm"
+            onChange={(event) => {
+              const file = event.currentTarget.files?.item(0);
+              if (file) {
+                void stageImport(file);
+              }
+            }}
+          />
+        </label>
+        <Show when={importStatus()}>
+          <p aria-live="polite" class="text-sm">
+            {importStatus()}
+          </p>
+        </Show>
+        <Show when={importResult()}>
+          <div class="rounded-xl border border-zinc-300 p-3 text-sm dark:border-zinc-700">
+            <p>Datenimport abgeschlossen. Alle Sitzungen wurden beendet.</p>
+            <p class="mt-1">
+              {importResult()?.anzahl_belege} Belege
+              <Show when={importResult()?.zeitraum_von}>
+                {" "}
+                ({importResult()?.zeitraum_von} bis{" "}
+                {importResult()?.zeitraum_bis})
+              </Show>
+            </p>
+            <p>
+              App {importResult()?.app_version}, Schema{" "}
+              {importResult()?.schema_version}
+            </p>
+            <Button class="mt-3" onClick={() => navigate("/login")}>
+              Zur Anmeldung
+            </Button>
+          </div>
+        </Show>
+      </div>
+      <Dialog
+        open={preview() !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPreview(null);
+          }
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay class="fixed inset-0 bg-black/40" />
+          <Dialog.Content class="fixed inset-x-4 top-24 z-20 rounded-2xl bg-white p-4 shadow-xl dark:bg-zinc-900">
+            <Dialog.Title class="text-lg font-semibold">
+              Datenimport
+            </Dialog.Title>
+            <div class="mt-2 text-sm">
+              <p>
+                Zeitraum {preview()?.zeitraum_von || "–"} bis{" "}
+                {preview()?.zeitraum_bis || "–"}
+              </p>
+              <p>Anzahl Belege {preview()?.anzahl_belege}</p>
+              <p>App-Version {preview()?.app_version}</p>
+              <p>Schema-Version {preview()?.schema_version}</p>
+            </div>
+            <label class="mt-3 block text-sm">
+              Zum Ersetzen ERSETZEN eingeben
+              <input
+                aria-label="Bestätigung"
+                value={wort()}
+                onInput={(event) => setWort(event.currentTarget.value)}
+                class="mt-1 min-h-12 w-full rounded-xl border border-zinc-300 px-3 dark:border-zinc-700 dark:bg-zinc-950"
+              />
+            </label>
+            <div class="mt-3 flex gap-2">
+              <Button
+                class="flex-1 bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
+                onClick={() => setPreview(null)}
+              >
+                Abbrechen
+              </Button>
+              <Button
+                class="flex-1"
+                disabled={importLaeuft() || wort() !== "ERSETZEN"}
+                onClick={() => void commitImport()}
+              >
+                Wiederherstellen
+              </Button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog>
       <div>
         <h2 class="text-lg font-medium">Sitzungen</h2>
         <ul class="mt-2 text-sm">

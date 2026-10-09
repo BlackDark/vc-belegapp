@@ -1,8 +1,10 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const port = process.env.E2E_PORT ?? "8080";
+const importPort = process.env.E2E_PORT_IMPORT ?? "8081";
 const llmPort = process.env.E2E_LLM_PORT ?? "18081";
 const baseURL = `http://127.0.0.1:${port}`;
+const importURL = `http://127.0.0.1:${importPort}`;
 const llmURL = `http://127.0.0.1:${llmPort}`;
 // Low-cost PHC (m=8192, t=1, p=1) for the password "belegapp-e2e".
 // hash-password still emits the production parameters.
@@ -73,6 +75,26 @@ export default defineConfig({
         BELEGAPP_LLM_RESPONSE_FORMAT: "json_schema",
         BELEGAPP_LLM_TIMEOUT: "10s",
         BELEGAPP_JOB_WORKERS: "2",
+      },
+    },
+    {
+      command: process.env.BELEGAPP_BIN
+        ? `${process.env.BELEGAPP_BIN} serve`
+        : "go run ./cmd/belegapp serve",
+      cwd: "..",
+      url: `${importURL}/healthz`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+      env: {
+        BELEGAPP_LISTEN_ADDR: `127.0.0.1:${importPort}`,
+        BELEGAPP_DATA_DIR:
+          process.env.BELEGAPP_DATA_DIR_IMPORT ?? "/tmp/belegapp-e2e-import",
+        BELEGAPP_COOKIE_SECURE: "false",
+        BELEGAPP_BASE_URL: importURL,
+        BELEGAPP_TZ: "Europe/Berlin",
+        BELEGAPP_AUTH_PASSWORD_HASH: passwordHash,
+        BELEGAPP_LLM_ENABLED: "false",
+        BELEGAPP_JOB_WORKERS: "1",
       },
     },
   ],

@@ -8,9 +8,36 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  tag:
+    name: tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a v* tag
+        run: |
+          ref="${GITHUB_REF}"
+          case "$ref" in
+            refs/tags/v*) ;;
+            *)
+              echo "::error::release.yml must run on a v* tag (got ${ref}). Start it with: gh workflow run release.yml --ref vX.Y.Z"
+              exit 1
+              ;;
+          esac
+
+  ci:
+    name: ci
+    needs: tag
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
   release:
     name: release
+    needs: ci
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -55,6 +82,23 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image reference in release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          version="${tag#v}"
+          ref="ghcr.io/blackdark/vc-belegapp:${version}"
+          body=$(gh release view "$tag" --json body --jq .body)
+          if printf '%s\n' "$body" | grep -Fq "$ref"; then
+            echo "image reference already present"
+            exit 0
+          fi
+          {
+            printf '%s\n' "$body"
+            printf '\nContainer image: `%s`\n' "$ref"
+          } > /tmp/release-notes.md
+          gh release edit "$tag" --notes-file /tmp/release-notes.md
       - name: Image digest
         id: image
         run: |

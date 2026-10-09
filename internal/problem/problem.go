@@ -73,6 +73,8 @@ func title(status int) string {
 		return "Validierung fehlgeschlagen"
 	case 429:
 		return "Zu viele Versuche"
+	case 503:
+		return "Vorübergehend nicht verfügbar"
 	case 501:
 		return "Nicht implementiert"
 	default:

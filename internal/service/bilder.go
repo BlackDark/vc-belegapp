@@ -185,6 +185,7 @@ func (s *Service) DeleteBild(ctx context.Context, bildID string) error {
 // Sweep removes unassigned images older than the TTL until ctx ends.
 func (s *Service) Sweep(ctx context.Context) {
 	_ = s.sweepOnce(ctx)
+	s.SweepExports(ctx)
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
 	for {
@@ -193,6 +194,7 @@ func (s *Service) Sweep(ctx context.Context) {
 			return
 		case <-ticker.C:
 			_ = s.sweepOnce(ctx)
+			s.SweepExports(ctx)
 		}
 	}
 }

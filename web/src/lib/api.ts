@@ -293,6 +293,26 @@ export const client = {
       dauer_ms: number;
       fehler?: string | null;
     }>("/api/v1/erkennung/test", { method: "POST" }),
+  datenexport: () =>
+    api<{ job_id: string }>("/api/v1/datenexport", { method: "POST" }),
+  job: (id: string) =>
+    api<{
+      status: string;
+      fehler: string | null;
+      ergebnis: { download_url?: string; ablauf_am?: string } | null;
+    }>(`/api/v1/jobs/${id}`),
+  datenimport: (importToken: string, bestaetigung: string) =>
+    api<{
+      ok: boolean;
+      anzahl_belege: number;
+      zeitraum_von: string;
+      zeitraum_bis: string;
+      schema_version: number;
+      app_version: string;
+    }>("/api/v1/datenimport", {
+      method: "POST",
+      body: json({ import_token: importToken, bestaetigung }),
+    }),
   async upload(file: Blob, recognize = true): Promise<Bild> {
     const data = new FormData();
     data.set("datei", file, "beleg.jpg");

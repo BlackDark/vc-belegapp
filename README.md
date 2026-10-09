@@ -1,6 +1,6 @@
 # vc-belegapp
 
-Self-hosted single-user PWA for capturing daily meal-allowance receipts (Belege) and exporting a monthly PDF. This repository contains **M0 foundation**, **M1 capture**, and **M2 Belegerkennung**: sign-in (password and OIDC), receipts with images, year rules, calculation, warnings, the audit log, the mobile UI, and recognition through an OpenAI-compatible chat-completions endpoint. PDF export (M3) is stubbed and returns 501.
+Self-hosted single-user PWA for capturing daily meal-allowance receipts (Belege), exporting a monthly PDF, and backing up the whole instance. Milestones M0–M4: sign-in (password and OIDC), receipts with images, year rules, calculation, warnings, the audit log, recognition through an OpenAI-compatible endpoint, monthly PDF export with Monatssperre, Datenexport/Datenimport, and the release pipeline.
 
 The specification is [docs/SPEC.md](docs/SPEC.md). Architecture decisions: [docs/adr](docs/adr).
 
@@ -21,7 +21,7 @@ mkdir -p data
 BELEGAPP_DATA_DIR="$PWD/data" BELEGAPP_LISTEN_ADDR="127.0.0.1:8080" ./bin/belegapp serve
 ```
 
-`serve` is the default. Other commands: `migrate`, `healthcheck [--url] [--timeout]`, `version`, `hash-password` (argon2id PHC on stdout), `verify-audit` (hash chain, exit 1 on a break). `backup` and `restore` stay for a later milestone.
+`serve` is the default. Other commands: `migrate`, `healthcheck [--url] [--timeout]`, `version`, `hash-password` (argon2id PHC on stdout), `verify-audit` (hash chain, exit 1 on a break), `backup --out <zip>`, `restore <zip> --yes`. The archive layout is [docs/DATENEXPORT.md](docs/DATENEXPORT.md). `restore` replaces the whole dataset and requires `--yes`.
 
 ```bash
 curl -fsS http://127.0.0.1:8080/healthz
@@ -53,9 +53,9 @@ docker inspect -f '{{.Config.User}}' belegapp
 
 The image is based on `gcr.io/distroless/static-debian13:nonroot` (digest pinned), contains `/belegapp` and a static Typst 0.15.1 binary, listens on 8080, and creates `/data` with UID/GID 65532. A new named volume inherits those permissions. A bind mount must be `chown -R 65532:65532` beforehand. The root filesystem can be read-only; writable paths are the data volume and an optional `tmpfs` on `/tmp` (the Typst cache for the probe lives under `/data/cache`).
 
-Compose example: [deploy/docker-compose.yml](deploy/docker-compose.yml). Kubernetes arrives with M4.
+Compose example: [deploy/docker-compose.yml](deploy/docker-compose.yml). Kubernetes (Kustomize): [deploy/k8s](deploy/k8s). `kubectl kustomize deploy/k8s` renders a single-replica Deployment (`Recreate`, UID 65532, read-only root, PVC at `/data`, `emptyDir` at `/tmp`), Service, Ingress (`proxy-body-size: 4g`), and a CronJob that runs `belegapp backup --out /data/backups/belegapp.zip`. The example Secret is a placeholder PHC; replace it before a real deploy. `networkpolicy.yaml` is not part of the default kustomization. A ReadWriteOnce volume often cannot be mounted by the CronJob while the Deployment pod holds it; use a storage class that allows a second mount on the same node, or run the backup from the host against the data directory.
 
-CI builds `linux/amd64` and `linux/arm64` without pushing and scans with Trivy. The push to `ghcr.io/blackdark/vc-belegapp` runs through GoReleaser on a `v*` tag.
+CI builds `linux/amd64` and `linux/arm64` without pushing and scans with Trivy. The push to `ghcr.io/blackdark/vc-belegapp` runs through GoReleaser when `release.yml` runs on a `v*` tag. The image reference for a release is `ghcr.io/blackdark/vc-belegapp:<version>` (no `v` prefix).
 
 ## Configuration
 
@@ -125,14 +125,14 @@ Queries live in `internal/db/queries`, migrations in `internal/db/migrations`. G
 
 | Workflow | Trigger | Contents |
 |---|---|---|
-| `ci.yml` | PR, push to `main` | Jobs `web`, `go`, `docker` (no push, Trivy), `e2e` (Playwright against the fake LLM) |
-| `release-please.yml` | Push to `main` | Release PR, changelog, tag `vX.Y.Z` |
-| `release.yml` | Tag `v*`, manual | GoReleaser v2: archives, SBOM, Cosign, GHCR |
+| `ci.yml` | PR, push to `main`, `workflow_call` | Jobs `web`, `go`, `pdf`, `docker` (no push, Trivy), `e2e` (Playwright against the fake LLM), `release-config` on pull requests (`goreleaser check`, snapshot when release files change) |
+| `release-please.yml` | Push to `main` | Release PR, changelog, tag `vX.Y.Z`, then `gh workflow run release.yml --ref <tag>` |
+| `release.yml` | Tag `v*`, `workflow_dispatch` | Fails unless the ref is a `v*` tag. Runs `ci.yml`, then GoReleaser v2: archives, SBOM, Cosign, GHCR. Appends `ghcr.io/blackdark/vc-belegapp:<version>` to the release notes. |
 | `codeql.yml` | PR, weekly | CodeQL for Go and TypeScript |
 
 GoReleaser signs checksums and the image keyless (Cosign) and attaches provenance attestations to the checksums and the image digest. Renovate runs weekly (`renovate.json`).
 
-A tag that `release-please` creates with `GITHUB_TOKEN` does not start other workflows. To run `release.yml` automatically, store a fine-grained PAT with `contents: write` as the secret `RELEASE_PLEASE_TOKEN`. Without that secret the release workflow can be started by hand.
+`release-please` uses `GITHUB_TOKEN` only. A tag created with that token does not start `on: push: tags` workflows, so `release-please.yml` dispatches `release.yml` on the new tag (`actions: write`). Dispatching `release.yml` from a branch ref fails the `tag` job on purpose.
 
 Suggested ruleset for `main` (PR, linear history, checks `web`/`go`/`docker`, no force-push) and for tags `v*` (no delete, no move): [`.github/rulesets`](.github/rulesets). `pdf` becomes required once the golden test exists. The rulesets are not applied; add a bypass for maintainers and release-please before locking tag creation.
 

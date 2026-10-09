@@ -574,6 +574,85 @@ func (q *Queries) LatestExportAm(ctx context.Context, monat string) (LatestExpor
 	return i, err
 }
 
+const listActiveBelege = `-- name: ListActiveBelege :many
+SELECT id, datum, mahlzeit, bezugsort, arbeitsort, haendler_name, haendler_ort, belegbetrag_cent, korrigierter_betrag_cent, korrektur_grund, notiz, quelle, version, erstellt_am, geaendert_am, geloescht_am, loesch_grund FROM belege
+WHERE geloescht_am IS NULL
+ORDER BY datum ASC, id ASC
+`
+
+func (q *Queries) ListActiveBelege(ctx context.Context) ([]Belege, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveBelege)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Belege
+	for rows.Next() {
+		var i Belege
+		if err := rows.Scan(
+			&i.ID,
+			&i.Datum,
+			&i.Mahlzeit,
+			&i.Bezugsort,
+			&i.Arbeitsort,
+			&i.HaendlerName,
+			&i.HaendlerOrt,
+			&i.BelegbetragCent,
+			&i.KorrigierterBetragCent,
+			&i.KorrekturGrund,
+			&i.Notiz,
+			&i.Quelle,
+			&i.Version,
+			&i.ErstelltAm,
+			&i.GeaendertAm,
+			&i.GeloeschtAm,
+			&i.LoeschGrund,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBelegbildKeys = `-- name: ListBelegbildKeys :many
+SELECT blob_key, thumb_blob_key FROM belegbilder
+`
+
+type ListBelegbildKeysRow struct {
+	BlobKey      string
+	ThumbBlobKey string
+}
+
+func (q *Queries) ListBelegbildKeys(ctx context.Context) ([]ListBelegbildKeysRow, error) {
+	rows, err := q.db.QueryContext(ctx, listBelegbildKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBelegbildKeysRow
+	for rows.Next() {
+		var i ListBelegbildKeysRow
+		if err := rows.Scan(&i.BlobKey, &i.ThumbBlobKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBelegbilderByBeleg = `-- name: ListBelegbilderByBeleg :many
 SELECT id, beleg_id, seite, blob_key, thumb_blob_key, sha256, upload_sha256, mime, bytes, breite, hoehe, erkennung_status, erkennung_ergebnis, erkennung_roh, erkennung_fehler, erkennung_modell, erkennung_dauer_ms, erstellt_am FROM belegbilder WHERE beleg_id = ? ORDER BY seite ASC
 `
@@ -705,6 +784,39 @@ func (q *Queries) ListErkennungen(ctx context.Context, excludeID interface{}) ([
 			&i.BelegbetragCent,
 			&i.ErkennungErgebnis,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listExportBlobKeys = `-- name: ListExportBlobKeys :many
+SELECT pdf_blob_key, csv_blob_key, zip_blob_key FROM monatsexporte
+`
+
+type ListExportBlobKeysRow struct {
+	PdfBlobKey string
+	CsvBlobKey interface{}
+	ZipBlobKey interface{}
+}
+
+func (q *Queries) ListExportBlobKeys(ctx context.Context) ([]ListExportBlobKeysRow, error) {
+	rows, err := q.db.QueryContext(ctx, listExportBlobKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListExportBlobKeysRow
+	for rows.Next() {
+		var i ListExportBlobKeysRow
+		if err := rows.Scan(&i.PdfBlobKey, &i.CsvBlobKey, &i.ZipBlobKey); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

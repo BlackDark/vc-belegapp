@@ -13,6 +13,7 @@ import (
 type DB struct {
 	Write *sql.DB
 	Read  *sql.DB
+	Path  string
 }
 
 // Open creates or opens the SQLite database at path.
@@ -46,7 +47,7 @@ func Open(path string) (*DB, error) {
 		_ = write.Close()
 		return nil, fmt.Errorf("chmod database: %w", err)
 	}
-	return &DB{Write: write, Read: read}, nil
+	return &DB{Write: write, Read: read, Path: path}, nil
 }
 
 // Close closes both pools.
@@ -60,6 +61,20 @@ func (d *DB) Close() error {
 		return errWrite
 	}
 	return errRead
+}
+
+// OpenReadOnly opens path for queries without creating a WAL sidecar.
+func OpenReadOnly(path string) (*sql.DB, error) {
+	sqlDB, err := sql.Open("sqlite", dsn(path, true))
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	if err := sqlDB.Ping(); err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	return sqlDB, nil
 }
 
 func dsn(path string, readOnly bool) string {
