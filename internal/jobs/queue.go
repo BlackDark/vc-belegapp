@@ -22,13 +22,15 @@ type Job struct {
 
 // Queue persists jobs in SQLite and runs them with bounded concurrency.
 type Queue struct {
-	DB       *db.DB
-	Workers  int
-	Poll     time.Duration
-	Now      func() time.Time
-	Backoff  func(attempt int, kind string) time.Duration
-	Log      *slog.Logger
-	Handle   func(ctx context.Context, job Job) (float64, error)
+	DB      *db.DB
+	Workers int
+	Poll    time.Duration
+	Now     func() time.Time
+	Backoff func(attempt int, kind string) time.Duration
+	Log     *slog.Logger
+	// Handle runs one job. result is optional JSON stored when the job succeeds.
+	// An empty result is stored as {"ok":true}.
+	Handle   func(ctx context.Context, job Job) (seconds float64, result string, err error)
 	OnRetry  func(ctx context.Context, job Job, err error)
 	OnFail   func(ctx context.Context, job Job, err error)
 	OnResult func(result string, seconds float64)
@@ -125,9 +127,12 @@ func (q *Queue) execute(ctx context.Context, job Job) {
 		_ = q.finish(ctx, job, "fehler", q.stamp(), nil, "kein Handler")
 		return
 	}
-	seconds, err := q.Handle(ctx, job)
+	seconds, result, err := q.Handle(ctx, job)
 	if err == nil {
-		_ = q.finish(ctx, job, "fertig", q.stamp(), `{"ok":true}`, nil)
+		if result == "" {
+			result = `{"ok":true}`
+		}
+		_ = q.finish(ctx, job, "fertig", q.stamp(), result, nil)
 		if q.OnResult != nil {
 			q.OnResult("fertig", seconds)
 		}

@@ -14,14 +14,18 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      # A tag pushed with GITHUB_TOKEN does not start workflows. Dispatch
+      # release.yml on that tag instead of using a PAT.
+      actions: write
     steps:
-      # A tag created with GITHUB_TOKEN does not start release.yml.
-      # Set the RELEASE_PLEASE_TOKEN secret to a fine-grained PAT (contents: write)
-      # so the v* tag triggers the GoReleaser workflow. Without it, release-please
-      # still opens the release PR and creates the GitHub release, and release.yml
-      # can be started with workflow_dispatch.
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
         with:
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+      - name: Start release workflow
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run release.yml --ref "${{ steps.release.outputs.tag_name }}"

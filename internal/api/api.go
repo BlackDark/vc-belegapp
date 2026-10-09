@@ -44,6 +44,7 @@ type API struct {
 	OIDCLabel    string
 	Trusted      []net.IPNet
 	UploadMax    int64
+	ImportMax    int64
 	Info         Info
 }
 
@@ -97,11 +98,11 @@ func (a *API) Handler() http.Handler {
 		r.Get("/exporte/{id}/zip", a.exportFile("zip"))
 		r.Get("/protokoll", a.protokoll)
 		r.Get("/protokoll/pruefen", a.protokollPruefen)
-		r.Post("/datenexport", a.notImplemented)
+		r.Post("/datenexport", a.startDatenexport)
 		r.Get("/jobs/{id}", a.getJob)
-		r.Get("/datenexport/{job_id}/datei", a.notImplemented)
-		r.Post("/datenimport/pruefen", a.notImplemented)
-		r.Post("/datenimport", a.notImplemented)
+		r.Get("/datenexport/{job_id}/datei", a.downloadDatenexport)
+		r.Post("/datenimport/pruefen", a.pruefenImport)
+		r.Post("/datenimport", a.commitImport)
 		r.Post("/erkennung/test", a.testErkennung)
 		r.Get("/system/info", a.systemInfo)
 	})
@@ -110,6 +111,10 @@ func (a *API) Handler() http.Handler {
 
 func (a *API) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.Svc != nil && a.Svc.ImportLaeuft() && (r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/datenimport")) {
+			a.writeProblem(w, r, problem.New(http.StatusServiceUnavailable, "E_IMPORT_LAEUFT", "Ein Datenimport läuft."))
+			return
+		}
 		cookie, err := r.Cookie(a.Sessions.CookieName())
 		if err != nil || cookie.Value == "" {
 			a.writeProblem(w, r, problem.New(http.StatusUnauthorized, "E_UNANGEMELDET", "Anmeldung erforderlich."))
@@ -296,10 +301,6 @@ func (a *API) erkennungProblem() string {
 		return ""
 	}
 	return a.Svc.ErkennungProblem()
-}
-
-func (a *API) notImplemented(w http.ResponseWriter, r *http.Request) {
-	a.writeProblem(w, r, problem.New(http.StatusNotImplemented, "E_NICHT_IMPLEMENTIERT", "Dieser Schritt folgt in einem späteren Meilenstein."))
 }
 
 func (a *API) tooMany(w http.ResponseWriter, r *http.Request, wait time.Duration) {

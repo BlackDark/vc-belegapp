@@ -139,14 +139,10 @@ func Serve(ctx context.Context, opt Options) error {
 	}
 	go sessions.Run(runCtx)
 	go svc.Sweep(runCtx)
-	jobDone := make(chan struct{})
-	go func() {
-		defer close(jobDone)
-		svc.RunJobs(runCtx)
-	}()
+	svc.StartJobs(runCtx)
 	defer func() {
 		cancel()
-		<-jobDone
+		svc.WaitJobs()
 	}()
 	var oidcClient *auth.OIDC
 	if opt.Config.OIDCIssuerURL != "" {
@@ -176,6 +172,7 @@ func Serve(ctx context.Context, opt Options) error {
 		OIDCLabel:    opt.Config.OIDCButtonLabel,
 		Trusted:      opt.Config.TrustedProxies,
 		UploadMax:    opt.Config.UploadMaxBytes,
+		ImportMax:    opt.Config.ImportMaxBytes,
 		Info: api.Info{
 			Version:               opt.Version.Version,
 			Commit:                opt.Version.Commit,
@@ -336,6 +333,65 @@ func shutdown(servers ...*http.Server) {
 			_ = srv.Shutdown(ctx)
 		}
 	}
+}
+
+// Backup writes a data export to outPath.
+func Backup(ctx context.Context, opt Options, outPath string) error {
+	svc, cleanup, err := offlineService(ctx, opt)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	version := opt.Version.Version
+	if version == "" {
+		version = "dev"
+	}
+	svc.AppVersion = version
+	return svc.BackupToFile(ctx, outPath, service.Actor{Name: "cli", RequestID: "cli"})
+}
+
+// Restore replaces the database and blobs from a data export. The caller confirmed.
+func Restore(ctx context.Context, opt Options, zipPath string) error {
+	svc, cleanup, err := offlineService(ctx, opt)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	_, err = svc.RestoreFile(ctx, zipPath, service.Actor{Name: "cli", RequestID: "cli"})
+	return err
+}
+
+func offlineService(ctx context.Context, opt Options) (*service.Service, func(), error) {
+	if opt.Log == nil {
+		opt.Log = slog.New(slog.DiscardHandler)
+	}
+	if err := prepareDirs(opt.Log, opt.Config); err != nil {
+		return nil, nil, err
+	}
+	if err := Migrate(ctx, opt); err != nil {
+		return nil, nil, err
+	}
+	database, err := openDB(opt.Config)
+	if err != nil {
+		return nil, nil, err
+	}
+	store, err := openStore(opt.Config)
+	if err != nil {
+		_ = database.Close()
+		return nil, nil, err
+	}
+	version := opt.Version.Version
+	if version == "" {
+		version = "dev"
+	}
+	svc := &service.Service{
+		DB:         database,
+		Store:      store,
+		Holidays:   holidays.NewCalendar(),
+		Loc:        opt.Config.Location,
+		AppVersion: version,
+	}
+	return svc, func() { _ = database.Close() }, nil
 }
 
 func ignoreClosed(err error) error {

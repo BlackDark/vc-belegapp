@@ -31,7 +31,7 @@ func openQueueDB(t *testing.T) *db.DB {
 	return database
 }
 
-func testQueue(database *db.DB, handle func(context.Context, Job) (float64, error)) *Queue {
+func testQueue(database *db.DB, handle func(context.Context, Job) (float64, string, error)) *Queue {
 	return &Queue{
 		DB:      database,
 		Workers: 1,
@@ -77,11 +77,11 @@ func waitStatus(t *testing.T, database *db.DB, id, status string) {
 func TestQueueRetriesTransientThenSucceeds(t *testing.T) {
 	database := openQueueDB(t)
 	var calls atomic.Int32
-	q := testQueue(database, func(context.Context, Job) (float64, error) {
+	q := testQueue(database, func(context.Context, Job) (float64, string, error) {
 		if calls.Add(1) < 3 {
-			return 0.1, &kindErr{kind: "transient", text: "später"}
+			return 0.1, "", &kindErr{kind: "transient", text: "später"}
 		}
-		return 0.4, nil
+		return 0.4, "", nil
 	})
 	runQueue(t, q)
 	id, err := q.Enqueue(context.Background(), "erkennung", `{"bild_id":"b"}`)
@@ -97,9 +97,9 @@ func TestQueueRetriesTransientThenSucceeds(t *testing.T) {
 func TestQueueSchemaRetriesOnce(t *testing.T) {
 	database := openQueueDB(t)
 	var calls atomic.Int32
-	q := testQueue(database, func(context.Context, Job) (float64, error) {
+	q := testQueue(database, func(context.Context, Job) (float64, string, error) {
 		calls.Add(1)
-		return 0, &kindErr{kind: "schema", text: "Antwort ungültig"}
+		return 0, "", &kindErr{kind: "schema", text: "Antwort ungültig"}
 	})
 	runQueue(t, q)
 	id, err := q.Enqueue(context.Background(), "erkennung", `{"bild_id":"b"}`)
@@ -115,9 +115,9 @@ func TestQueueSchemaRetriesOnce(t *testing.T) {
 func TestQueueAuthDoesNotRetry(t *testing.T) {
 	database := openQueueDB(t)
 	var calls atomic.Int32
-	q := testQueue(database, func(context.Context, Job) (float64, error) {
+	q := testQueue(database, func(context.Context, Job) (float64, string, error) {
 		calls.Add(1)
-		return 0, &kindErr{kind: "auth", text: "API-Key ungültig"}
+		return 0, "", &kindErr{kind: "auth", text: "API-Key ungültig"}
 	})
 	runQueue(t, q)
 	id, err := q.Enqueue(context.Background(), "erkennung", `{"bild_id":"b"}`)
@@ -132,7 +132,7 @@ func TestQueueAuthDoesNotRetry(t *testing.T) {
 
 func TestQueueResetRequeuesRunning(t *testing.T) {
 	database := openQueueDB(t)
-	q := testQueue(database, func(context.Context, Job) (float64, error) { return 0.2, nil })
+	q := testQueue(database, func(context.Context, Job) (float64, string, error) { return 0.2, "", nil })
 	id, err := q.Enqueue(context.Background(), "erkennung", `{"bild_id":"b"}`)
 	if err != nil {
 		t.Fatal(err)

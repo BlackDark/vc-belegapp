@@ -105,6 +105,17 @@ SELECT * FROM belege
 WHERE geloescht_am IS NULL AND datum >= ? AND datum < ?
 ORDER BY datum ASC;
 
+-- name: ListActiveBelege :many
+SELECT * FROM belege
+WHERE geloescht_am IS NULL
+ORDER BY datum ASC, id ASC;
+
+-- name: ListBelegbildKeys :many
+SELECT blob_key, thumb_blob_key FROM belegbilder;
+
+-- name: ListExportBlobKeys :many
+SELECT pdf_blob_key, csv_blob_key, zip_blob_key FROM monatsexporte;
+
 -- name: InsertBelegbild :exec
 INSERT INTO belegbilder (
     id, beleg_id, seite, blob_key, thumb_blob_key, sha256, upload_sha256,

@@ -84,5 +84,12 @@ docker_signs:
 changelog:
   disable: true
 
+snapshot:
+  version_template: "{{ .Version }}-snapshot"
+
 release:
-  mode: keep-existing
+  # release-please writes the notes. append keeps that text and adds the footer.
+  mode: append
+  footer: |
+
+    Container image: `ghcr.io/blackdark/vc-belegapp:{{ .Version }}`

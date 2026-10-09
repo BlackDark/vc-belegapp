@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/BlackDark/vc-belegapp/internal/db"
@@ -40,6 +41,20 @@ type Service struct {
 
 	exportMu  sync.Mutex
 	exporting map[string]struct{}
+
+	restoreMu sync.Mutex
+	importing atomic.Bool
+	importMu  sync.Mutex
+	imports   map[string]importTicket
+
+	jobParent context.Context
+	jobCancel context.CancelFunc
+	jobWG     sync.WaitGroup
+}
+
+// ImportLaeuft reports whether a data import currently holds the write lock.
+func (s *Service) ImportLaeuft() bool {
+	return s != nil && s.importing.Load()
 }
 
 func (s *Service) now() time.Time {

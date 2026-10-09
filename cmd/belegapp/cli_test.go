@@ -24,8 +24,12 @@ func TestVersionAndUnimplemented(t *testing.T) {
 	}
 	err := run(context.Background(), []string{"backup"}, io.Discard, io.Discard)
 	var exit *exitError
-	if !errors.As(err, &exit) || exit.code != 1 {
+	if !errors.As(err, &exit) || exit.code != 2 {
 		t.Fatalf("backup: %v", err)
+	}
+	err = run(context.Background(), []string{"restore", "missing.zip"}, io.Discard, io.Discard)
+	if !errors.As(err, &exit) || exit.code != 2 {
+		t.Fatalf("restore: %v", err)
 	}
 	err = run(context.Background(), []string{"nope"}, io.Discard, io.Discard)
 	if !errors.As(err, &exit) || exit.code != 2 {

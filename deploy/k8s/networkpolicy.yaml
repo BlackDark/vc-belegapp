@@ -1,0 +1,17 @@
+# Example only. Not part of kustomization.yaml.
+# Add egress to the IdP, LLM, and S3 hosts for the target environment before applying.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: belegapp
+spec:
+  podSelector:
+    matchLabels:
+      app: belegapp
+  policyTypes: [Egress]
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP

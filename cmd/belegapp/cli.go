@@ -32,8 +32,8 @@ const usageText = `Usage: belegapp <command>
   healthcheck     GET /readyz and exit 0 when it returns 200
   version         Print build information
   hash-password   Print an argon2id PHC hash read from stdin
-  backup          Write a data export (later milestone)
-  restore         Restore a data export (later milestone)
+  backup          Write a data export: backup --out <zip>
+  restore         Restore a data export: restore <zip> --yes
   verify-audit    Verify the audit hash chain
 `
 
@@ -57,9 +57,9 @@ func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	case "hash-password":
 		return cmdHashPassword(args[1:], stdout, stderr)
 	case "backup":
-		return notImplemented("backup")
+		return cmdBackup(ctx, args[1:], stderr)
 	case "restore":
-		return notImplemented("restore")
+		return cmdRestore(ctx, args[1:], stderr)
 	case "verify-audit":
 		return cmdVerifyAudit(ctx, args[1:], stdout, stderr)
 	default:
@@ -67,8 +67,54 @@ func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 }
 
-func notImplemented(name string) error {
-	return exitf(1, "%s is not implemented", name)
+func cmdBackup(ctx context.Context, args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	out := fs.String("out", "", "destination zip file")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return nil
+		}
+		return exitErr(2, err)
+	}
+	if *out == "" {
+		return exitf(2, "backup requires --out")
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return exitErr(2, err)
+	}
+	log := logging.New(stderr, cfg.LogLevel, cfg.LogFormat)
+	return app.Backup(ctx, app.Options{
+		Config:  cfg,
+		Log:     log,
+		Version: app.Version{Version: version, Commit: commit, Date: date},
+	}, *out)
+}
+
+func cmdRestore(ctx context.Context, args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	yes := fs.Bool("yes", false, "replace all data")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return nil
+		}
+		return exitErr(2, err)
+	}
+	if !*yes || fs.NArg() != 1 {
+		return exitf(2, "usage: belegapp restore <zip> --yes")
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return exitErr(2, err)
+	}
+	log := logging.New(stderr, cfg.LogLevel, cfg.LogFormat)
+	return app.Restore(ctx, app.Options{
+		Config:  cfg,
+		Log:     log,
+		Version: app.Version{Version: version, Commit: commit, Date: date},
+	}, fs.Arg(0))
 }
 
 func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) error {

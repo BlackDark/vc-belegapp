@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: belegapp
+data:
+  BELEGAPP_BASE_URL: https://belege.example.de
+  BELEGAPP_TZ: Europe/Berlin
+  BELEGAPP_TRUSTED_PROXIES: 10.0.0.0/8
+  BELEGAPP_STORAGE_BACKEND: fs
+  BELEGAPP_COOKIE_SECURE: "true"

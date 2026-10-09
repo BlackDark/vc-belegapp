@@ -7,8 +7,11 @@ import (
 	"strings"
 )
 
-// CSVHeader is the specification header, without the trailing line break.
+// CSVHeader is the monthly export header, without the trailing line break.
 const CSVHeader = "nr;datum;wochentag;mahlzeit;bezugsort;arbeitsort;haendler;ort;belegbetrag;anerkannt;korrektur_grund;erstattung;eigenanteil;geldwerter_vorteil;steuerfrei;regulaer;warnungen;bild_sha256"
+
+// BackupCSVHeader adds beleg_id for the full data export (all years).
+const BackupCSVHeader = CSVHeader + ";beleg_id"
 
 // Row is one receipt in the CSV. Amounts are integer cents.
 type Row struct {
@@ -30,6 +33,7 @@ type Row struct {
 	Regulaer       int
 	Warnungen      string
 	BildSHA256     string
+	BelegID        string
 }
 
 // Sum is the last CSV line.
@@ -82,6 +86,50 @@ func CSV(rows []Row, sum Sum) []byte {
 		Decimal(sum.Steuerfrei),
 		Decimal(sum.Regulaer),
 		"", "",
+	})
+	return buf.Bytes()
+}
+
+// BackupCSV is CSV plus a beleg_id column, covering every year in one file.
+func BackupCSV(rows []Row, sum Sum) []byte {
+	var buf bytes.Buffer
+	buf.Write([]byte{0xEF, 0xBB, 0xBF})
+	buf.WriteString(BackupCSVHeader)
+	buf.WriteString("\r\n")
+	for _, row := range rows {
+		writeLine(&buf, []string{
+			strconv.Itoa(row.Nr),
+			row.Datum,
+			row.Wochentag,
+			row.Mahlzeit,
+			row.Bezugsort,
+			row.Arbeitsort,
+			row.Haendler,
+			row.Ort,
+			Decimal(row.Belegbetrag),
+			Decimal(row.Anerkannt),
+			row.KorrekturGrund,
+			Decimal(row.Erstattung),
+			Decimal(row.Eigenanteil),
+			Decimal(row.GV),
+			Decimal(row.Steuerfrei),
+			Decimal(row.Regulaer),
+			row.Warnungen,
+			row.BildSHA256,
+			row.BelegID,
+		})
+	}
+	writeLine(&buf, []string{
+		"summe", "", "", "", "", "", "", "",
+		Decimal(sum.Belegbetrag),
+		Decimal(sum.Anerkannt),
+		"",
+		Decimal(sum.Erstattung),
+		Decimal(sum.Eigenanteil),
+		Decimal(sum.GV),
+		Decimal(sum.Steuerfrei),
+		Decimal(sum.Regulaer),
+		"", "", "",
 	})
 	return buf.Bytes()
 }

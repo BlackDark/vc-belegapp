@@ -50,16 +50,19 @@ func (s *Service) RunJobs(ctx context.Context) {
 }
 
 // HandleJob runs one claimed job.
-func (s *Service) HandleJob(ctx context.Context, job jobs.Job) (float64, error) {
+func (s *Service) HandleJob(ctx context.Context, job jobs.Job) (float64, string, error) {
 	start := time.Now()
-	var err error
 	switch job.Typ {
 	case "erkennung":
-		err = s.runErkennung(ctx, job.Payload)
+		err := s.runErkennung(ctx, job.Payload)
+		return time.Since(start).Seconds(), "", err
+	case "datenexport":
+		result, err := s.runDatenexport(ctx, job)
+		return time.Since(start).Seconds(), result, err
 	default:
-		err = &erkennung.CallError{Kind: erkennung.KindPermanent, Text: "Unbekannter Job"}
+		err := &erkennung.CallError{Kind: erkennung.KindPermanent, Text: "Unbekannter Job"}
+		return time.Since(start).Seconds(), "", err
 	}
-	return time.Since(start).Seconds(), err
 }
 
 // JobRetry puts the receipt image back to "ausstehend" while the job waits.
