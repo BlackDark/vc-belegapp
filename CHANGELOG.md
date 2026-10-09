@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/BlackDark/vc-belegapp/compare/v1.0.1...v1.0.2) (2026-10-09)
+
+
+### Bug Fixes
+
+* **release:** install release tools outside the checkout ([#15](https://github.com/BlackDark/vc-belegapp/issues/15)) ([2c95c34](https://github.com/BlackDark/vc-belegapp/commit/2c95c3462d02187f60677d6ece4214bfdd907277))
+
 ## [1.0.1](https://github.com/BlackDark/vc-belegapp/compare/v1.0.0...v1.0.1) (2026-10-09)
 
 
