@@ -5,10 +5,22 @@ on:
   push:
     branches: [main]
   workflow_call:
+    inputs:
+      dry-run:
+        description: Run the GoReleaser snapshot dry run
+        type: boolean
+        default: true
+        required: false
   # release-please opens its PR with GITHUB_TOKEN, which does not start
   # pull_request workflows. release-please.yml dispatches this workflow on
   # the release branch; the checks attach to that commit.
   workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Run the GoReleaser snapshot dry run
+        type: boolean
+        default: true
+        required: false
 
 permissions:
   contents: read
@@ -328,59 +340,21 @@ jobs:
           path: e2e/screenshots
           if-no-files-found: error
 
-  release-config:
-    name: release-config
-    if: github.event_name == 'pull_request'
+  # Same tool install and GoReleaser invocation as the tag release, minus
+  # publish/sign/announce. --snapshot already implies those skips and also
+  # skips validate, so the action asserts a clean tree itself. Snapshot
+  # still builds per-platform images locally (--load); it does not push.
+  # release.yml calls this workflow with dry-run: false.
+  release-dry-run:
+    name: release-dry-run
+    if: github.event_name == 'pull_request' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry-run)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+      - uses: ./.github/actions/goreleaser
         with:
-          distribution: goreleaser
-          version: v2.18.2
-          args: check
-      - name: Release config changed
-        id: paths
-        run: |
-          base="${{ github.event.pull_request.base.sha }}"
-          if git diff --name-only "$base" HEAD | grep -Eq '^(\.goreleaser\.yaml|Dockerfile\.goreleaser|\.github/workflows/release\.yml)$'; then
-            echo "snapshot=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "snapshot=false" >> "$GITHUB_OUTPUT"
-          fi
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        if: steps.paths.outputs.snapshot == 'true'
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        if: steps.paths.outputs.snapshot == 'true'
-        with:
-          package_json_file: web/package.json
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        if: steps.paths.outputs.snapshot == 'true'
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
-      - name: Install syft
-        if: steps.paths.outputs.snapshot == 'true'
-        run: |
-          version=1.54.1
-          file="syft_${version}_linux_amd64.tar.gz"
-          curl -fsSL -o "$file" "https://github.com/anchore/syft/releases/download/v${version}/${file}"
-          curl -fsSL -o checksums.txt "https://github.com/anchore/syft/releases/download/v${version}/syft_${version}_checksums.txt"
-          grep "$file" checksums.txt | sha256sum -c -
-          tar -xzf "$file" syft
-          sudo mv syft /usr/local/bin/syft
-      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
-        if: steps.paths.outputs.snapshot == 'true'
-        with:
-          distribution: goreleaser
-          version: v2.18.2
-          args: release --snapshot --clean --skip=docker,sign
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          args: release --snapshot --clean --skip=publish,sign,announce
+          token: ${{ secrets.GITHUB_TOKEN }}

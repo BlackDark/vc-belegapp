@@ -952,19 +952,19 @@ Empfohlen: regelmäßiger `belegapp backup` per CronJob/Host-Cron **oder** Volum
 ### 16.1 Workflows
 | Datei | Trigger | Jobs |
 |---|---|---|
-| `ci.yml` | PR, Push `main`, `workflow_dispatch` | **web**: pnpm install (frozen), `biome ci`, `tsc --noEmit`, `vitest run`, `vite build`, Artefakt `web-dist` · **linux-amd64 / linux-arm64 / darwin** (needs web, je ein Runner): `CGO_ENABLED=0` Cross-Compile · **go** (needs web): `go mod verify`, `sqlc diff` + `sqlc vet`, `golangci-lint run`, `go test -race -coverprofile ./...`, `govulncheck ./...` · **pdf**: Typst, Golden-Test M1, veraPDF PDF/A-2b · **e2e** (needs linux-amd64): Playwright gegen das fertige Binary, Fake-LLM, Mock-OIDC · **docker** (needs linux-amd64 und linux-arm64): `Dockerfile.goreleaser` kopiert die Binaries nach distroless, Buildx ohne QEMU und ohne Push, GHA-Cache, Trivy, Smoke (read-only, UID 65532) |
+| `ci.yml` | PR, Push `main`, `workflow_dispatch` | **web**: pnpm install (frozen), `biome ci`, `tsc --noEmit`, `vitest run`, `vite build`, Artefakt `web-dist` · **linux-amd64 / linux-arm64 / darwin** (needs web, je ein Runner): `CGO_ENABLED=0` Cross-Compile · **go** (needs web): `go mod verify`, `sqlc diff` + `sqlc vet`, `golangci-lint run`, `go test -race -coverprofile ./...`, `govulncheck ./...` · **pdf**: Typst, Golden-Test M1, veraPDF PDF/A-2b · **e2e** (needs linux-amd64): Playwright gegen das fertige Binary, Fake-LLM, Mock-OIDC · **docker** (needs linux-amd64 und linux-arm64): `Dockerfile.goreleaser` kopiert die Binaries nach distroless, Buildx ohne QEMU und ohne Push, GHA-Cache, Trivy, Smoke (read-only, UID 65532) · **release-dry-run** (PR, Push `main`, Dispatch): dieselbe Composite Action wie der Tag-Release, `goreleaser release --snapshot --clean --skip=publish,sign,announce`, Abbruch bei schmutzigem Checkout |
 | `release-please.yml` | Push `main` | release-please (Conventional Commits) erstellt Release-PR, Changelog, Tag `vX.Y.Z`; `workflow_dispatch` von `ci.yml` auf dem Release-Branch und von `release.yml` auf dem Tag |
-| `release.yml` | Tag `v*` | `ci.yml`, Smoke des Copy-Images, dann GoReleaser v2 (`release --clean`) |
+| `release.yml` | Tag `v*` | `ci.yml` (ohne Dry-Run), Smoke des Copy-Images, dann `.github/actions/goreleaser` (`release --clean`) |
 | `codeql.yml` | PR, wöchentlich | CodeQL `go`, `javascript-typescript` |
 
-Actions per Commit-SHA gepinnt; `permissions: contents: read` als Default, Release-Job: `contents: write`, `packages: write`, `id-token: write`, `attestations: write`. Go-Version aus `go.mod` (`toolchain`), Node über `.nvmrc`, pnpm über `packageManager`.
+Actions per Commit-SHA gepinnt; `permissions: contents: read` als Default, Release-Job: `contents: write`, `packages: write`, `id-token: write`, `attestations: write`, `actions: write` (GHA-Cache des Smoke-Images). Go-Version aus `go.mod` (`toolchain`), Node über `.nvmrc`, pnpm über `packageManager`.
 
 ### 16.2 GoReleaser (`.goreleaser.yaml`, v2)
 - `before.hooks`: `pnpm -C web install --frozen-lockfile`, `pnpm -C web build`, `go generate ./...`.
 - `builds`: `CGO_ENABLED=0`, `goos: [linux, darwin]`, `goarch: [amd64, arm64]`, `-trimpath`, `ldflags: -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}`.
-- `archives`: tar.gz mit `LICENSE`, `README.md`, `deploy/`; `checksum`; `sboms` (syft); `signs` (cosign keyless) für Checksums.
-- `dockers_v2`: `images: [ghcr.io/blackdark/vc-belegapp]`, `tags: ["{{.Version}}", "{{.Major}}.{{.Minor}}", "{{.Major}}", "latest"]`, `platforms: [linux/amd64, linux/arm64]`, `dockerfile: Dockerfile.goreleaser`; `docker_signs` (cosign keyless); Provenance-Attestation via `actions/attest-build-provenance`.
-- `changelog.disable: true` (release-please führt Changelog).
+- `archives`: tar.gz mit `LICENSE`, `README.md`, `deploy/`; `checksum`; `sboms` (syft, außerhalb des Checkouts installiert); `signs` (cosign v3 keyless, Bundle `checksums.txt.sigstore.json`).
+- `dockers_v2`: `images: [ghcr.io/blackdark/vc-belegapp]`, `tags: ["{{.Version}}", "{{.Major}}.{{.Minor}}", "{{.Major}}", "latest"]`, `platforms: [linux/amd64, linux/arm64]`, `dockerfile: Dockerfile.goreleaser`; `docker_signs` (cosign keyless, Digest); Provenance-Attestation via `actions/attest-build-provenance`.
+- `changelog.disable: true` und `release.mode: append` (release-please schreibt die Notes; GoReleaser hängt nur den Image-Footer an und ersetzt ein bestehendes Release nicht durch einen Fehler).
 
 ### 16.3 Renovate (`renovate.json`)
 `extends: ["config:best-practices", ":semanticCommits"]`, Zeitplan wöchentlich, `postUpdateOptions: ["gomodTidy"]`, Gruppen: `go`, `web (prod)`, `web (dev)`, `github-actions`, `docker`; Automerge für Patch/Minor von Dev-Dependencies und Actions nach grüner CI; Custom-Regex-Manager für `TYPST_VERSION`/SHA in Dockerfiles; Solid 2.x und Kobalte-Major nicht automatisch (`matchUpdateTypes: major` → manuelles Review).
