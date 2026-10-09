@@ -50,11 +50,13 @@ const demo = [
   },
 ];
 
-async function shot(page: Page, info: TestInfo, name: string, fullPage = true) {
+async function shot(page: Page, info: TestInfo, name: string) {
   const root = process.env.BELEGAPP_SHOT_DIR ?? "screenshots";
   const dir = path.join(root, info.project.name);
   await mkdir(dir, { recursive: true });
-  await page.screenshot({ path: path.join(dir, `${name}.png`), fullPage });
+  // Viewport only. fullPage stitches position:fixed chrome into the middle of a long page.
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: path.join(dir, `${name}.png`) });
 }
 
 async function seedDemo(page: Page) {
@@ -181,21 +183,41 @@ test("all pages", async ({ page }, info) => {
   await page.getByText("Korrigierter Betrag").click();
   await expect(page.getByLabel("Händler")).toHaveValue("Edeka");
   await expect(page.getByText(/Erstattung/)).toBeVisible();
+  const leadingText = await page.evaluate(() => {
+    const node = document.getElementById("root")?.firstChild;
+    return node?.nodeType === Node.TEXT_NODE ? node.textContent : "";
+  });
+  expect(leadingText).toBe("");
   await shot(page, info, "pruefen");
+
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  if (info.project.name === "desktop") {
+    const sidebar = await page.locator("[data-sidebar='sidebar']").boundingBox();
+    expect(sidebar?.y).toBe(0);
+    const header = await page.locator("header").boundingBox();
+    expect(header?.y).toBe(0);
+  }
+  await page.screenshot({
+    path: path.join(
+      process.env.BELEGAPP_SHOT_DIR ?? "screenshots",
+      info.project.name,
+      "pruefen-bottom.png",
+    ),
+  });
 
   await page.goto("/einstellungen/jahre/2026");
   await expect(page.getByLabel("Zuschuss (Cent)")).toHaveValue("767");
-  await shot(page, info, "jahresregel", false);
+  await shot(page, info, "jahresregel");
 
   await page.goto("/einstellungen");
   await expect(page.getByRole("textbox", { name: "Arbeitnehmer" })).toHaveValue("Alex Beispiel");
-  await shot(page, info, "einstellungen", false);
+  await shot(page, info, "einstellungen");
 
   await page.goto("/monat");
   await page.getByLabel("Monat").fill("2026-10");
   await page.getByRole("button", { name: "Exportieren" }).click();
   await expect(page.getByText("Höchstens ein Beleg je Tag")).toBeVisible();
-  await shot(page, info, "monatsexport", false);
+  await shot(page, info, "monatsexport");
 
   if (info.project.name !== "desktop") return;
 

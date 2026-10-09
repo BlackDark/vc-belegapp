@@ -20,4 +20,6 @@ if (!root) {
   throw new Error("root element missing");
 }
 
+// Solid keeps an existing first child and inserts the app after it.
+root.replaceChildren();
 render(() => <App />, root);
