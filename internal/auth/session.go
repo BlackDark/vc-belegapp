@@ -87,7 +87,7 @@ func (s *Sessions) Lookup(ctx context.Context, token string) (Session, error) {
 	if token == "" {
 		return Session{}, errNoSession
 	}
-	row, err := db.New(s.DB.Write).GetSitzung(ctx, hashToken(token))
+	row, err := db.New(s.DB.Read).GetSitzung(ctx, hashToken(token))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Session{}, errNoSession

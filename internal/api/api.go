@@ -186,7 +186,9 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r)
-	_ = a.Sessions.Delete(r.Context(), p.token)
+	if err := a.Sessions.Delete(r.Context(), p.token); err != nil && a.Log != nil {
+		a.Log.Error("logout", "err", err)
+	}
 	a.Sessions.ClearCookie(w)
 	if a.OIDC != nil {
 		if loc, ok := a.OIDC.EndSessionURL(p.idToken); ok {
@@ -312,9 +314,16 @@ func (a *API) tooMany(w http.ResponseWriter, r *http.Request, wait time.Duration
 	a.writeProblem(w, r, problem.New(http.StatusTooManyRequests, "E_RATE_LIMIT", "Zu viele Fehlversuche."))
 }
 
+func requireJSON(r *http.Request) error {
+	if strings.Contains(r.Header.Get("Content-Type"), "application/json") || r.ContentLength == 0 {
+		return nil
+	}
+	return problem.New(http.StatusUnsupportedMediaType, "E_FELD_UNGUELTIG", "Content-Type muss application/json sein.")
+}
+
 func (a *API) readJSON(w http.ResponseWriter, r *http.Request, dst any) error {
-	if !strings.Contains(r.Header.Get("Content-Type"), "application/json") && r.ContentLength != 0 {
-		return problem.New(http.StatusUnsupportedMediaType, "E_FELD_UNGUELTIG", "Content-Type muss application/json sein.")
+	if err := requireJSON(r); err != nil {
+		return err
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	dec := json.NewDecoder(r.Body)
@@ -355,7 +364,7 @@ func (a *API) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		return
 	}
 	if a.Log != nil {
-		a.Log.Error("request failed", "err", err.Error(), "request_id", server.RequestID(r.Context()))
+		a.Log.Error("request failed", "err", err, "request_id", server.RequestID(r.Context()))
 	}
 	a.writeProblem(w, r, problem.New(http.StatusInternalServerError, "E_INTERN", "Die Anfrage konnte nicht verarbeitet werden."))
 }

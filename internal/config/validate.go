@@ -177,8 +177,7 @@ func (c *Config) validateStorage() error {
 }
 
 // OpenAIKeyMissing reports that the default OpenAI endpoint is enabled without a key.
-// M0 logs a warning and still starts, so a container without secrets can serve the SPA.
-// Recognition in a later milestone does not call the API until the key is set.
+// The process still starts and recognition stays manual until a key is set.
 func (c Config) OpenAIKeyMissing() bool {
 	if !c.LLMEnabled || strings.TrimSpace(c.LLMAPIKey) != "" {
 		return false
@@ -209,6 +208,9 @@ func (c *Config) validateLLM() error {
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return fmt.Errorf("BELEGAPP_LLM_BASE_URL must be an absolute http(s) URL")
 	}
+	// Private and loopback hosts stay allowed. The URL is operator config,
+	// and a local OpenAI-compatible server (Ollama) is a supported setup.
+	// Callers do not supply this address.
 	return nil
 }
 
