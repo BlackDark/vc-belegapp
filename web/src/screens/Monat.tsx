@@ -136,6 +136,7 @@ export default function Monat() {
                       <span>Version {exp.version}</span>
                       <a
                         class="underline"
+                        rel="external"
                         href={`/api/v1/exporte/${exp.id}/pdf`}
                       >
                         PDF
@@ -143,6 +144,7 @@ export default function Monat() {
                       <Show when={exp.csv}>
                         <a
                           class="underline"
+                          rel="external"
                           href={`/api/v1/exporte/${exp.id}/csv`}
                         >
                           CSV
@@ -151,6 +153,7 @@ export default function Monat() {
                       <Show when={exp.zip}>
                         <a
                           class="underline"
+                          rel="external"
                           href={`/api/v1/exporte/${exp.id}/zip`}
                         >
                           ZIP

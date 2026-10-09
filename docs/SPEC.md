@@ -937,9 +937,9 @@ Empfohlen: regelmäßiger `belegapp backup` per CronJob/Host-Cron **oder** Volum
 ### 16.1 Workflows
 | Datei | Trigger | Jobs |
 |---|---|---|
-| `ci.yml` | PR, Push `main` | **web**: pnpm install (frozen), `biome ci`, `tsc --noEmit`, `vitest run`, `vite build`, Artefakt `web-dist` · **go** (needs web): `go mod verify`, `sqlc diff` + `sqlc vet`, `golangci-lint run`, `go test -race -coverprofile ./...`, `govulncheck ./...` · **pdf**: Typst installieren, Golden-Test Monat M1 rendern, `pdftotext`-Inhaltsprüfung, optional veraPDF PDF/A-2b · **e2e** (optional, needs go): Binary bauen, Playwright gegen Fake-LLM/Mock-OIDC · **docker**: Buildx `linux/amd64,linux/arm64` ohne Push, Trivy-Scan (fail bei HIGH/CRITICAL mit Fix) |
-| `release-please.yml` | Push `main` | release-please (Conventional Commits) erstellt Release-PR, Changelog, Tag `vX.Y.Z` |
-| `release.yml` | Tag `v*` | web bauen → GoReleaser v2 (`release --clean`) |
+| `ci.yml` | PR, Push `main`, `workflow_dispatch` | **web**: pnpm install (frozen), `biome ci`, `tsc --noEmit`, `vitest run`, `vite build`, Artefakt `web-dist` · **linux-amd64 / linux-arm64 / darwin** (needs web, je ein Runner): `CGO_ENABLED=0` Cross-Compile · **go** (needs web): `go mod verify`, `sqlc diff` + `sqlc vet`, `golangci-lint run`, `go test -race -coverprofile ./...`, `govulncheck ./...` · **pdf**: Typst, Golden-Test M1, veraPDF PDF/A-2b · **e2e** (needs linux-amd64): Playwright gegen das fertige Binary, Fake-LLM, Mock-OIDC · **docker** (needs linux-amd64 und linux-arm64): `Dockerfile.goreleaser` kopiert die Binaries nach distroless, Buildx ohne QEMU und ohne Push, GHA-Cache, Trivy, Smoke (read-only, UID 65532) |
+| `release-please.yml` | Push `main` | release-please (Conventional Commits) erstellt Release-PR, Changelog, Tag `vX.Y.Z`; `workflow_dispatch` von `ci.yml` auf dem Release-Branch und von `release.yml` auf dem Tag |
+| `release.yml` | Tag `v*` | `ci.yml`, Smoke des Copy-Images, dann GoReleaser v2 (`release --clean`) |
 | `codeql.yml` | PR, wöchentlich | CodeQL `go`, `javascript-typescript` |
 
 Actions per Commit-SHA gepinnt; `permissions: contents: read` als Default, Release-Job: `contents: write`, `packages: write`, `id-token: write`, `attestations: write`. Go-Version aus `go.mod` (`toolchain`), Node über `.nvmrc`, pnpm über `packageManager`.
@@ -968,7 +968,7 @@ PR erforderlich (0 Reviews, Single-Maintainer), Status-Checks `web`, `go`, `pdf`
 | Integration API | `httptest` mit Temp-SQLite, fs-Storage, Fake-LLM, Mock-OIDC (`oauth2-proxy/mockoidc`): Login beide Methoden, CSRF-Ablehnung Cross-Origin, Flow A komplett, E_DATUM_BELEGT, Sperre + Änderungsgrund, Exportversion 2 mit Änderungsabschnitt, Datenexport → Datenimport in leere Instanz (Roundtrip identische Summen + Hash-Kette gültig), Backend-Wechsel fs → s3 per Import |
 | PDF | Golden-Test M1: PDF erzeugen, Text enthält Summen/Erklärung, Übersicht ≤ 2 Seiten + 5 Anhangseiten, optional veraPDF |
 | Frontend | Vitest: Betragsparser, Formatierung, Formular-Logik; Komponenten-Tests für Prüfen-Screen |
-| E2E (Playwright, optional in CI) | Mobile-Viewport (iPhone 15, Pixel 8): Login Passwort, Upload Fixture-Bild, Fake-Erkennung füllt Felder, Korrekturvorschlag übernehmen, Speichern, Monatsansicht, Export final, Bearbeiten mit Änderungsgrund, Dark Mode |
+| E2E (Playwright, in CI) | Eigenes Server-Fixture je Test (parallele Worker): Login Passwort und OIDC (Mock), Jahresregel, Upload, Fake-Erkennung, korrigierter Betrag, Monatsansicht, Prüfpunkte, Entwurf und finaler Export inkl. PDF, Sperre mit Änderungsgrund, Datenexport/Import, Logout; Screenshot-Spec Desktop und iPhone 15 |
 | Manuell/Eval | `make eval-erkennung`: 20 anonymisierte echte Belege gegen konfiguriertes Modell, Report Trefferquote Datum/Betrag/Händler (Ziel ≥ 90 % Betrag) |
 
 Coverage-Ziel: `internal/calc` 100 %, Backend gesamt ≥ 70 %.

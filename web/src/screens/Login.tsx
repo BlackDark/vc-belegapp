@@ -48,6 +48,7 @@ export default function Login() {
       <Show when={config.data?.oidc}>
         <a
           href="/api/v1/auth/oidc/start"
+          rel="external"
           class="flex min-h-14 items-center justify-center rounded-xl bg-emerald-800 text-lg font-medium text-white dark:bg-emerald-500 dark:text-zinc-950"
         >
           {config.data?.oidc_label || "Mit SSO anmelden"}

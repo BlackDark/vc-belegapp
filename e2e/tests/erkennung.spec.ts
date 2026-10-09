@@ -1,24 +1,8 @@
-import { expect, test } from "@playwright/test";
+import { expect, login, png, saveYear, test } from "../fixtures";
 
-const password = process.env.E2E_PASSWORD ?? "belegapp-e2e";
-
-const png = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-  "base64",
-);
-
-test("upload, recognition prefill, suggestion, save", async ({ page }, info) => {
-  const day = (info.project.name === "pixel-8" ? 2 : 1) + info.retry * 2;
-  const datum = `2026-10-${String(day).padStart(2, "0")}`;
-
-  await page.goto("/login");
-  await page.getByLabel("Passwort").fill(password);
-  await page.getByRole("button", { name: "Anmelden" }).click();
-  await expect(page.getByRole("heading", { name: "Heute" })).toBeVisible();
-
-  await page.goto("/einstellungen/jahre/2026");
-  await page.getByRole("button", { name: "Speichern" }).click();
-  await expect(page.getByText("Jahresregel gespeichert")).toBeVisible();
+test("recognition, suggestion, corrected amount, save", async ({ page }) => {
+  await login(page);
+  await saveYear(page, 2026);
 
   await page.goto("/erfassen");
   await page.getByLabel("Galerie").setInputFiles({
@@ -36,13 +20,15 @@ test("upload, recognition prefill, suggestion, save", async ({ page }, info) => 
 
   await page.getByRole("button", { name: "Übernehmen" }).click();
   await expect(page.getByLabel("Anerkannter Betrag")).toHaveValue("12,75");
-  await expect(page.getByLabel("Grund")).toHaveValue(
-    "Automatisch: ohne Pfand/Alkohol/Tabak/Non-Food",
-  );
+  await page.getByLabel("Anerkannter Betrag").fill("10,00");
+  await page.getByLabel("Grund").fill("Ohne Getränk");
 
-  await page.getByLabel("Datum").fill(datum);
+  await page.getByLabel("Datum").fill("2026-10-07");
   await page.getByRole("button", { name: "Speichern" }).click();
-  const stamp = `${datum.slice(8, 10)}.${datum.slice(5, 7)}.`;
   await expect(page.getByRole("heading", { name: "Monat" })).toBeVisible();
-  await expect(page.getByRole("link", { name: new RegExp(`${stamp} Edeka`) })).toBeVisible();
+  await page.getByLabel("Monat").fill("2026-10");
+  await page.getByRole("link", { name: /07\.10\. Edeka/ }).click();
+  await page.getByText("Korrigierter Betrag").click();
+  await expect(page.getByLabel("Anerkannter Betrag")).toHaveValue("10,00");
+  await expect(page.getByLabel("Grund")).toHaveValue("Ohne Getränk");
 });

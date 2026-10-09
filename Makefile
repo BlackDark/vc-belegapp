@@ -1,4 +1,4 @@
-.PHONY: web test lint sqlc vuln build docker
+.PHONY: web test lint sqlc vuln build docker docker-prebuilt
 
 web:
 	pnpm -C web install --frozen-lockfile
@@ -28,3 +28,9 @@ build: web
 
 docker:
 	docker build -t vc-belegapp:dev .
+
+# Same layout CI uses: one native binary, then a copy into distroless.
+docker-prebuilt:
+	mkdir -p dist/linux/amd64
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/linux/amd64/belegapp ./cmd/belegapp
+	docker build -f Dockerfile.goreleaser -t vc-belegapp:dev dist

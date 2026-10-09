@@ -34,8 +34,24 @@ Invalid configuration exits with code 2.
 
 ## Docker
 
+`docker build .` is the standalone path. The root `Dockerfile` compiles the web bundle and the Go binary inside the image, so a machine with only Docker can still produce a runnable image.
+
 ```bash
 docker build -t vc-belegapp:dev .
+```
+
+CI and releases do not use that file. They cross-compile on the host (`CGO_ENABLED=0`, no QEMU) and copy `linux/$TARGETARCH/belegapp` with `Dockerfile.goreleaser`. The image build has no Go or Node toolchain. The same file is what you want locally when Go is already installed:
+
+```bash
+make docker-prebuilt
+# equivalent:
+#   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/linux/amd64/belegapp ./cmd/belegapp
+#   docker build -f Dockerfile.goreleaser -t vc-belegapp:dev dist
+```
+
+`web/dist` must exist before `make docker-prebuilt` (the committed bundle, or `pnpm -C web build`). Add `linux/arm64/belegapp` the same way and pass `--platform linux/amd64,linux/arm64` for a multi-arch build. BuildKit sets `TARGETPLATFORM`; QEMU is not required because the Dockerfile never runs a command in the target image.
+
+```bash
 docker volume create belegapp-data
 docker run --rm -d --name belegapp \
   --read-only \
@@ -55,7 +71,7 @@ The image is based on `gcr.io/distroless/static-debian13:nonroot` (digest pinned
 
 Compose example: [deploy/docker-compose.yml](deploy/docker-compose.yml). Kubernetes (Kustomize): [deploy/k8s](deploy/k8s). `kubectl kustomize deploy/k8s` renders a single-replica Deployment (`Recreate`, UID 65532, read-only root, PVC at `/data`, `emptyDir` at `/tmp`), Service, Ingress (`proxy-body-size: 4g`), and a CronJob that runs `belegapp backup --out /data/backups/belegapp.zip`. The example Secret is a placeholder PHC; replace it before a real deploy. `networkpolicy.yaml` is not part of the default kustomization. A ReadWriteOnce volume often cannot be mounted by the CronJob while the Deployment pod holds it; use a storage class that allows a second mount on the same node, or run the backup from the host against the data directory.
 
-CI builds `linux/amd64` and `linux/arm64` without pushing and scans with Trivy. The push to `ghcr.io/blackdark/vc-belegapp` runs through GoReleaser when `release.yml` runs on a `v*` tag. The image reference for a release is `ghcr.io/blackdark/vc-belegapp:<version>` (no `v` prefix).
+CI builds `linux/amd64` and `linux/arm64` without pushing, scans with Trivy, and smokes the amd64 image (`--read-only`, UID 65532, tmpfs `/tmp`, password login, one Beleg). The push to `ghcr.io/blackdark/vc-belegapp` runs through GoReleaser when `release.yml` runs on a `v*` tag, after the same smoke test. The image reference for a release is `ghcr.io/blackdark/vc-belegapp:<version>` (no `v` prefix).
 
 ## Configuration
 
@@ -125,14 +141,16 @@ Queries live in `internal/db/queries`, migrations in `internal/db/migrations`. G
 
 | Workflow | Trigger | Contents |
 |---|---|---|
-| `ci.yml` | PR, push to `main`, `workflow_call` | Jobs `web`, `go`, `pdf`, `docker` (no push, Trivy), `e2e` (Playwright against the fake LLM), `release-config` on pull requests (`goreleaser check`, snapshot when release files change) |
-| `release-please.yml` | Push to `main` | Release PR, changelog, tag `vX.Y.Z`, then `gh workflow run release.yml --ref <tag>` |
-| `release.yml` | Tag `v*`, `workflow_dispatch` | Fails unless the ref is a `v*` tag. Runs `ci.yml`, then GoReleaser v2: archives, SBOM, Cosign, GHCR. Appends `ghcr.io/blackdark/vc-belegapp:<version>` to the release notes. |
+| `ci.yml` | PR, push to `main`, `workflow_call`, `workflow_dispatch` | `web` builds the bundle once. `linux-amd64`, `linux-arm64`, and `darwin` each embed it and cross-compile on their own runner. `go` and `pdf` test. `e2e` runs Playwright against the linux/amd64 binary (it does not wait for `go` or the other arches). `docker` copies the linux binaries into distroless, scans with Trivy, and smokes amd64. `release-config` on pull requests runs `goreleaser check`, and a snapshot when release files change. |
+| `release-please.yml` | Push to `main` | Release PR, changelog, tag `vX.Y.Z`. Dispatches `release.yml` on the tag and `ci.yml` on the release-PR branch. |
+| `release.yml` | Tag `v*`, `workflow_dispatch` | Fails unless the ref is a `v*` tag. Runs `ci.yml`, smokes `Dockerfile.goreleaser` with the CI linux/amd64 binary, then GoReleaser v2: archives, SBOM, Cosign, GHCR. Appends `ghcr.io/blackdark/vc-belegapp:<version>` to the release notes. |
 | `codeql.yml` | PR, weekly | CodeQL for Go and TypeScript |
 
 GoReleaser signs checksums and the image keyless (Cosign) and attaches provenance attestations to the checksums and the image digest. Renovate runs weekly (`renovate.json`).
 
-`release-please` uses `GITHUB_TOKEN` only. A tag created with that token does not start `on: push: tags` workflows, so `release-please.yml` dispatches `release.yml` on the new tag (`actions: write`). Dispatching `release.yml` from a branch ref fails the `tag` job on purpose.
+`release-please` uses `GITHUB_TOKEN` only. A pull request or tag created with that token does not start `pull_request` or `push` workflows. `workflow_dispatch` is the exception GitHub allows, so `release-please.yml` dispatches `ci.yml` on the release branch (`gh workflow run ci.yml --ref <branch>`). Those check runs belong to the branch head commit, and the release PR lists them. The same job dispatches `release.yml` on a new tag. Dispatching `release.yml` from a branch ref fails the `tag` job on purpose. No personal access token is required. The dispatcher is the workflow on `main`, so it applies to release PRs opened after this workflow is on the default branch.
+
+Playwright (`cd e2e && pnpm test`) covers password login, OIDC against `e2e/mockoidc`, Jahresregeln, capture, recognition via `e2e/fakellm`, a corrected amount, the month view, Prüfpunkte, draft and final Monatsexport including the PDF bytes, Sperre with an Änderungsgrund, Datenexport/Datenimport, and logout. `screenshots.spec.ts` records every main page at desktop and iPhone 15 viewports; CI uploads them as `e2e-screenshots`. Each test starts its own server so workers do not share a database.
 
 Suggested ruleset for `main` (PR, linear history, checks `web`/`go`/`docker`, no force-push) and for tags `v*` (no delete, no move): [`.github/rulesets`](.github/rulesets). `pdf` becomes required once the golden test exists. The rulesets are not applied; add a bypass for maintainers and release-please before locking tag creation.
 

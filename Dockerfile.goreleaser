@@ -1,5 +1,10 @@
 # syntax=docker/dockerfile:1
 
+# COPY-only image. The context holds a prebuilt binary at $TARGETPLATFORM/belegapp
+# (linux/amd64 and linux/arm64). There is no Go or Node toolchain here. The Typst
+# stage runs on the build machine and only downloads the target archive.
+# CI, the release smoke test, and GoReleaser all use this file.
+#
 # Context is the GoReleaser dockers_v2 layout: $TARGETPLATFORM/belegapp.
 # TYPST_SHA256_* must be updated together with TYPST_VERSION.
 # renovate: datasource=github-releases depName=typst/typst
