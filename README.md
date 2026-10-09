@@ -338,7 +338,7 @@ Decisions: [docs/adr](docs/adr). Specification: [docs/SPEC.md](docs/SPEC.md). Te
 
 | Workflow | When | What |
 | --- | --- | --- |
-| `ci.yml` | Pull request, push to `main`, dispatch | Web bundle, linux/amd64, linux/arm64, darwin, `go test`, PDF golden + veraPDF, Playwright, multi-arch image, Trivy, read-only smoke. Pull requests also run `goreleaser check`. |
+| `ci.yml` | Pull request, push to `main`, dispatch | Web bundle, linux/amd64, linux/arm64, darwin, `go test`, PDF golden + veraPDF, Playwright, multi-arch image, Trivy, read-only smoke. `release-dry-run` runs the same GoReleaser setup as a tag (`release --snapshot --clean --skip=publish,sign,announce`) and fails if the checkout is dirty. |
 | `release-please.yml` | Push to `main` | Release PR and, on merge, tag `vX.Y.Z`. Dispatches `ci.yml` on the release-PR branch and `release.yml` on the tag. |
 | `release.yml` | Tag `v*` | Re-runs CI, smokes the image, GoReleaser. |
 | `codeql.yml` | Pull request, weekly | CodeQL for Go and TypeScript |
@@ -349,13 +349,14 @@ Decisions: [docs/adr](docs/adr). Specification: [docs/SPEC.md](docs/SPEC.md). Te
 
 Commits follow Conventional Commits. [release-please](https://github.com/googleapis/release-please) opens a release PR (changelog, version bump). Merging it tags `vX.Y.Z`. Do not tag by hand.
 
-`release.yml` then runs GoReleaser v2 (`.goreleaser.yaml`):
+`release.yml` and `release-dry-run` both call [`.github/actions/goreleaser`](.github/actions/goreleaser/action.yml). That action installs Cosign and Syft outside the checkout, refuses a dirty tree, then runs GoReleaser v2 (`.goreleaser.yaml`):
 
 - `linux` and `darwin`, `amd64` and `arm64`, `CGO_ENABLED=0`, archives include `LICENSE`, `README.md`, and `deploy/`
 - checksums (`checksums.txt`), SBOMs (syft)
 - multi-arch image `ghcr.io/blackdark/vc-belegapp` tagged `X.Y.Z`, `X.Y`, `X`, and `latest`
-- Cosign keyless signatures on the checksums and the image
+- Cosign keyless signatures: `checksums.txt.sigstore.json`, and the image by digest
 - GitHub artifact attestations on `checksums.txt` and the image digest
+- release notes come from release-please (`changelog.disable`, `release.mode: append`); the footer adds the image reference
 
 The release notes name `ghcr.io/blackdark/vc-belegapp:<version>` (no `v`).
 
@@ -370,8 +371,7 @@ cosign verify \
 cosign verify-blob \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp '^https://github.com/BlackDark/vc-belegapp/\.github/workflows/release\.yml@refs/tags/v' \
-  --certificate checksums.txt.pem \
-  --signature checksums.txt.sig \
+  --bundle checksums.txt.sigstore.json \
   checksums.txt
 
 gh attestation verify oci://ghcr.io/blackdark/vc-belegapp:1.0.0 --owner BlackDark

@@ -37,18 +37,24 @@ checksum:
   name_template: checksums.txt
   algorithm: sha256
 
+# Cosign v3 (the release installer pins v3.0.6) rejects
+# --output-signature / --output-certificate. Keyless signing uses the
+# Actions OIDC token; there is no cosign.key.
 signs:
   - cmd: cosign
     artifacts: checksum
-    signature: "${artifact}.sig"
-    certificate: "${artifact}.pem"
+    signature: "${artifact}.sigstore.json"
+    output: true
     args:
       - sign-blob
-      - --yes
-      - --output-certificate=${certificate}
-      - --output-signature=${signature}
+      - --bundle=${signature}
       - ${artifact}
+      - --yes
 
+# Host syft (v1.54.1, installed outside the checkout) catalogs each archive.
+# Defaults: cmd syft, args "$artifact --output spdx-json=$document --enrich all".
+# The image SBOM is separate: dockers_v2 sbom defaults to true, so the publish
+# build passes --attest=type=sbom. Snapshot builds do not.
 sboms:
   - artifacts: archive
 
@@ -74,12 +80,14 @@ dockers_v2:
       org.opencontainers.image.revision: "{{.FullCommit}}"
 
 docker_signs:
+  # Sign the index digest. Cosign v3 warns, and may refuse, a tag-only ref.
   - cmd: cosign
     artifacts: all
+    output: true
     args:
       - sign
       - --yes
-      - ${artifact}
+      - ${artifact}@${digest}
 
 changelog:
   disable: true
@@ -88,8 +96,12 @@ snapshot:
   version_template: "{{ .Version }}-snapshot"
 
 release:
-  # release-please writes the notes. append keeps that text and adds the footer.
+  # release-please creates the GitHub release before this runs. append keeps
+  # that body and adds the footer. keep-existing would drop the footer.
+  # GoReleaser updates the release in place; it does not fail with already_exists.
   mode: append
+  # A re-run of the same tag replaces uploaded assets instead of 422 already_exists.
+  replace_existing_artifacts: true
   footer: |
 
     Container image: `ghcr.io/blackdark/vc-belegapp:{{ .Version }}`
