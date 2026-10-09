@@ -32,7 +32,8 @@ jobs:
   ci:
     name: ci
     needs: tag
-    timeout-minutes: 45
+    # A job that calls a reusable workflow cannot set timeout-minutes.
+    # Each job in ci.yml has its own limit.
     permissions:
       contents: read
       actions: write
