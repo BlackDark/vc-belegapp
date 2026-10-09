@@ -15,7 +15,8 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      # A tag pushed with GITHUB_TOKEN does not start workflows. Dispatch
+      # workflow_dispatch needs actions: write. A tag pushed with
+      # GITHUB_TOKEN does not start workflows, so this job dispatches
       # release.yml on that tag instead of using a PAT.
       actions: write
     steps:
@@ -29,28 +30,79 @@ jobs:
         if: steps.release.outputs.release_created == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run release.yml --ref "${{ steps.release.outputs.tag_name }}"
+          # Passed through the environment so the script does not
+          # interpolate the expression (actionlint / shellcheck).
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAG}" ]; then
+            echo "release-please did not output a tag name" >&2
+            exit 1
+          fi
+          # No checkout in this job. Without --repo, gh runs git and
+          # fails with "not a git repository".
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
       # GITHUB_TOKEN cannot open a pull_request workflow run, but it can
       # workflow_dispatch. ci.yml on the release branch then reports checks
-      # for that commit, which the PR lists. Updates to an existing release
-      # PR set prs without prs_created, and those commits need a new run too.
+      # for that commit, which the PR lists. release-please sets `prs` to a
+      # JSON array only when a release PR was opened or updated (an update
+      # can set `prs` without `prs_created`). An empty output skips this step.
       - name: CI for the release pull request
-        if: steps.release.outputs.prs != '' && steps.release.outputs.prs != '[]'
+        if: steps.release.outputs.prs != '' && steps.release.outputs.prs != '[]' && steps.release.outputs.prs != 'null'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRS: ${{ steps.release.outputs.prs }}
         run: |
+          set -euo pipefail
           python3 - <<'PY'
           import json, os, subprocess, sys
-          prs = json.loads(os.environ["PRS"])
-          if isinstance(prs, dict):
-              prs = list(prs.values())
+
+          def load_prs(raw):
+              value = json.loads(raw)
+              # `prs` is a JSON string. Decode once more if that string
+              # is itself JSON (array, object, or one pull request).
+              if isinstance(value, str):
+                  value = json.loads(value)
+              if isinstance(value, dict):
+                  if value.get("headBranchName") or value.get("head_branch_name"):
+                      return [value]
+                  return [item for item in value.values() if isinstance(item, dict)]
+              if isinstance(value, list):
+                  return value
+              sys.exit(
+                  f"release-please prs output is {type(value).__name__}, expected JSON"
+              )
+
+          raw = os.environ.get("PRS", "").strip()
+          if raw in ("", "[]", "null", "{}"):
+              print("no release pull request to dispatch")
+              sys.exit(0)
+          prs = load_prs(raw)
           if not prs:
               sys.exit("release-please reported a PR but the payload was empty")
+          repo = os.environ["GITHUB_REPOSITORY"]
           for pr in prs:
+              if not isinstance(pr, dict):
+                  sys.exit(f"release PR entry is {type(pr).__name__}, expected an object")
               branch = pr.get("headBranchName") or pr.get("head_branch_name")
-              if not branch:
-                  sys.exit(f"release PR has no head branch: {sorted(pr)}")
-              print(f"dispatch ci.yml --ref {branch}")
-              subprocess.check_call(["gh", "workflow", "run", "ci.yml", "--ref", branch])
+              if (
+                  not isinstance(branch, str)
+                  or not branch
+                  or branch.startswith("-")
+                  or any(ch.isspace() for ch in branch)
+              ):
+                  sys.exit(f"release PR has no usable head branch: {sorted(pr)}")
+              print(f"dispatch ci.yml --repo {repo} --ref {branch}")
+              subprocess.check_call(
+                  [
+                      "gh",
+                      "workflow",
+                      "run",
+                      "ci.yml",
+                      "--repo",
+                      repo,
+                      "--ref",
+                      branch,
+                  ]
+              )
           PY

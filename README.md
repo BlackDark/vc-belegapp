@@ -343,7 +343,7 @@ Decisions: [docs/adr](docs/adr). Specification: [docs/SPEC.md](docs/SPEC.md). Te
 | `release.yml` | Tag `v*` | Re-runs CI, smokes the image, GoReleaser. |
 | `codeql.yml` | Pull request, weekly | CodeQL for Go and TypeScript |
 
-`release-please` uses `GITHUB_TOKEN`. A pull request or tag created with that token does not start `pull_request` or `push` workflows, so the workflow dispatches the others itself. Suggested rulesets that are not applied yet: [`.github/rulesets`](.github/rulesets).
+`release-please` uses `GITHUB_TOKEN`. A pull request or tag created with that token does not start `pull_request` or `push` workflows, so the workflow dispatches the others itself with `gh workflow run --repo "$GITHUB_REPOSITORY"`. That job does not check out the repository; without `--repo`, `gh` fails looking for a git directory. Suggested rulesets that are not applied yet: [`.github/rulesets`](.github/rulesets).
 
 ## Release
 
