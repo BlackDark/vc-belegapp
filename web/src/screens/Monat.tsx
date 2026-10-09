@@ -1,13 +1,31 @@
+import { Dialog } from "@kobalte/core/dialog";
 import { A } from "@solidjs/router";
-import { useQuery } from "@tanstack/solid-query";
-import { createSignal, For, Show } from "solid-js";
-import { toast } from "solid-sonner";
-import { client } from "../lib/api";
+import { useQuery, useQueryClient } from "@tanstack/solid-query";
+import { createEffect, createSignal, For, Show } from "solid-js";
+import { Button } from "../components/ui";
+import { ApiError, client, type Monat as MonatData } from "../lib/api";
 import { currentMonth } from "../lib/dates";
 import { formatCent } from "../lib/money";
 
+const statusLabel: Record<string, string> = {
+  offen: "Offen",
+  gesperrt: "Gesperrt",
+  geaendert: "Geändert",
+};
+
+const erklaerungText =
+  "Ich versichere, dass jeder aufgeführte Beleg eine Mahlzeit betrifft, die ich an dem angegebenen Tag als Arbeitstag (kein Urlaub, keine Krankheit, keine Auswärtstätigkeit) selbst erworben habe und die zum Verzehr an diesem Tag bestimmt war. Nicht erstattungsfähige Artikel (z. B. Alkohol, Tabak, Pfand, Non-Food, Vorratskäufe) habe ich herausgerechnet. Jeder Beleg wird nur einmal eingereicht.";
+
+function mark(ergebnis: string) {
+  if (ergebnis === "fehler") return "✗";
+  if (ergebnis === "warnung") return "⚠";
+  return "✓";
+}
+
 export default function Monat() {
   const [monat, setMonat] = createSignal(currentMonth());
+  const [open, setOpen] = createSignal(false);
+  const queryClient = useQueryClient();
   const query = useQuery(() => ({
     queryKey: ["monat", monat()],
     queryFn: () => client.monat(monat()),
@@ -35,11 +53,18 @@ export default function Monat() {
         {(data) => (
           <>
             <p class="w-fit rounded-full bg-zinc-200 px-3 py-1 text-sm dark:bg-zinc-800">
-              Status {data().status}
+              Status {statusLabel[data().status] ?? data().status}
             </p>
+            <Show when={data().status === "gesperrt"}>
+              <p class="rounded-xl bg-zinc-100 px-3 py-2 text-sm dark:bg-zinc-900">
+                Dieser Monat ist gesperrt. Änderungen brauchen einen
+                Änderungsgrund.
+              </p>
+            </Show>
             <Show when={data().status === "geaendert"}>
               <p class="rounded-xl bg-amber-100 px-3 py-2 text-sm dark:bg-amber-950">
-                Nach dem letzten Export geändert.
+                Nach dem letzten Export geändert. Ein neuer Export erzeugt
+                Version {data().letzte_exportversion + 1}.
               </p>
             </Show>
             <article class="rounded-2xl bg-zinc-100 p-4 dark:bg-zinc-900">
@@ -101,16 +126,224 @@ export default function Monat() {
                 )}
               </For>
             </ul>
-            <button
-              type="button"
-              class="min-h-12 rounded-xl border border-zinc-300 dark:border-zinc-700"
-              onClick={() => toast("PDF-Export folgt im nächsten Meilenstein.")}
-            >
-              Vorschau / Export
-            </button>
+            <Button onClick={() => setOpen(true)}>Exportieren</Button>
+            <Show when={data().exporte.length > 0}>
+              <h2 class="text-lg font-semibold">Exportversionen</h2>
+              <ul class="flex flex-col gap-2">
+                <For each={data().exporte}>
+                  {(exp) => (
+                    <li class="flex flex-wrap items-center gap-3 rounded-xl border border-zinc-200 px-3 py-2 dark:border-zinc-800">
+                      <span>Version {exp.version}</span>
+                      <a
+                        class="underline"
+                        href={`/api/v1/exporte/${exp.id}/pdf`}
+                      >
+                        PDF
+                      </a>
+                      <Show when={exp.csv}>
+                        <a
+                          class="underline"
+                          href={`/api/v1/exporte/${exp.id}/csv`}
+                        >
+                          CSV
+                        </a>
+                      </Show>
+                      <Show when={exp.zip}>
+                        <a
+                          class="underline"
+                          href={`/api/v1/exporte/${exp.id}/zip`}
+                        >
+                          ZIP
+                        </a>
+                      </Show>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </Show>
+            <ExportDialog
+              open={open()}
+              monat={monat()}
+              data={data()}
+              onOpenChange={setOpen}
+              onDone={() =>
+                queryClient.invalidateQueries({ queryKey: ["monat", monat()] })
+              }
+            />
           </>
         )}
       </Show>
     </section>
+  );
+}
+
+function ExportDialog(props: {
+  open: boolean;
+  monat: string;
+  data: MonatData;
+  onOpenChange: (open: boolean) => void;
+  onDone: () => Promise<void> | void;
+}) {
+  const [erklaerung, setErklaerung] = createSignal(false);
+  const [warnungen, setWarnungen] = createSignal(false);
+  const [csv, setCsv] = createSignal(false);
+  const [zip, setZip] = createSignal(false);
+  const [seeded, setSeeded] = createSignal(false);
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal("");
+  const settings = useQuery(() => ({
+    queryKey: ["einstellungen"],
+    queryFn: () => client.einstellungen(),
+    enabled: props.open,
+  }));
+  createEffect(() => {
+    const row = settings.data;
+    if (row && props.open && !seeded()) {
+      setCsv(row.export_csv_standard);
+      setZip(row.export_zip_standard);
+      setSeeded(true);
+    }
+    if (!props.open) {
+      setSeeded(false);
+      setErklaerung(false);
+      setWarnungen(false);
+      setError("");
+    }
+  });
+  const blocking = () =>
+    props.data.pruefpunkte.some((item) => item.ergebnis === "fehler");
+  const needWarn = () =>
+    props.data.warnungen.length > 0 ||
+    props.data.pruefpunkte.some((item) => item.ergebnis === "warnung");
+  const finalDisabled = () =>
+    busy() || blocking() || !erklaerung() || (needWarn() && !warnungen());
+
+  async function preview() {
+    setBusy(true);
+    setError("");
+    try {
+      const blob = await client.previewMonat(props.monat);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `nachweis-${props.monat}-entwurf.pdf`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Vorschau fehlgeschlagen",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function finish() {
+    setBusy(true);
+    setError("");
+    try {
+      await client.exportMonat(props.monat, {
+        erklaerung_bestaetigt: true,
+        warnungen_bestaetigt: warnungen(),
+        csv: csv(),
+        zip: zip(),
+      });
+      props.onOpenChange(false);
+      await props.onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Export fehlgeschlagen");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay class="fixed inset-0 bg-black/40" />
+        <Dialog.Content class="fixed inset-x-4 top-8 z-20 max-h-[85vh] overflow-y-auto rounded-2xl bg-white p-4 shadow-xl dark:bg-zinc-900">
+          <Dialog.Title class="text-lg font-semibold">
+            Monatsexport
+          </Dialog.Title>
+          <h2 class="mt-3 font-medium">Prüfpunkte</h2>
+          <ul class="mt-1 flex flex-col gap-1 text-sm">
+            <For each={props.data.pruefpunkte}>
+              {(item) => (
+                <li>
+                  {mark(item.ergebnis)} {item.text}
+                </li>
+              )}
+            </For>
+          </ul>
+          <Show when={blocking()}>
+            <p class="mt-2 text-sm text-red-700 dark:text-red-300">
+              Finaler Export ist blockiert, bis die mit ✗ markierten Prüfpunkte
+              behoben sind.
+            </p>
+          </Show>
+          <Show when={props.data.warnungen.length > 0}>
+            <h2 class="mt-3 font-medium">Warnungen</h2>
+            <ul class="mt-1 flex flex-col gap-1 text-sm">
+              <For each={props.data.warnungen}>
+                {(warn) => <li>{warn.text}</li>}
+              </For>
+            </ul>
+          </Show>
+          <label class="mt-3 flex items-center gap-3">
+            <input
+              type="checkbox"
+              class="size-5"
+              checked={csv()}
+              onChange={(event) => setCsv(event.currentTarget.checked)}
+            />
+            CSV
+          </label>
+          <label class="mt-2 flex items-center gap-3">
+            <input
+              type="checkbox"
+              class="size-5"
+              checked={zip()}
+              onChange={(event) => setZip(event.currentTarget.checked)}
+            />
+            ZIP mit Originalbildern
+          </label>
+          <label class="mt-3 flex items-start gap-3 text-sm">
+            <input
+              type="checkbox"
+              class="mt-1 size-5 shrink-0"
+              checked={erklaerung()}
+              onChange={(event) => setErklaerung(event.currentTarget.checked)}
+            />
+            <span>{erklaerungText}</span>
+          </label>
+          <label class="mt-3 flex items-center gap-3">
+            <input
+              type="checkbox"
+              class="size-5"
+              checked={warnungen()}
+              onChange={(event) => setWarnungen(event.currentTarget.checked)}
+            />
+            Warnungen geprüft
+          </label>
+          <Show when={error()}>
+            <p class="mt-2 text-sm text-red-700 dark:text-red-300">{error()}</p>
+          </Show>
+          <div class="mt-4 flex flex-col gap-2">
+            <Button disabled={busy()} onClick={() => void preview()}>
+              Vorschau
+            </Button>
+            <Button disabled={finalDisabled()} onClick={() => void finish()}>
+              Final exportieren
+            </Button>
+            <Button
+              class="bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
+              onClick={() => props.onOpenChange(false)}
+            >
+              Abbrechen
+            </Button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog>
   );
 }

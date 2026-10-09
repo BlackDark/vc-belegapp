@@ -100,6 +100,15 @@ func Serve(ctx context.Context, opt Options) error {
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	appVersion := opt.Version.Version
+	if appVersion == "" {
+		appVersion = "dev"
+	}
+	renderer := &pdf.CLI{
+		Bin:     opt.Config.TypstBin,
+		Timeout: opt.Config.PDFTimeout,
+		Log:     opt.Log,
+	}
 	svc := &service.Service{
 		DB:         database,
 		Store:      store,
@@ -110,6 +119,8 @@ func Serve(ctx context.Context, opt Options) error {
 		Extractor:  newExtractor(opt.Config),
 		LLMMaxPX:   opt.Config.LLMMaxImagePX,
 		LLMTimeout: opt.Config.LLMTimeout,
+		PDF:        renderer,
+		AppVersion: appVersion,
 	}
 	queue := &jobs.Queue{
 		DB:      database,
@@ -190,6 +201,7 @@ func Serve(ctx context.Context, opt Options) error {
 		queue.OnStats = func(waiting int) {
 			metrics.JobsWartend.Set(float64(waiting))
 		}
+		renderer.Observe = metrics.PDFDauer.Observe
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", server.MetricsHandler(metricsReg))
 		metricsSrv = &http.Server{

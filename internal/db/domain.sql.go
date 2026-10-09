@@ -297,6 +297,35 @@ func (q *Queries) GetMonat(ctx context.Context, monat string) (Monate, error) {
 	return i, err
 }
 
+const getMonatsexport = `-- name: GetMonatsexport :one
+SELECT id, monat, version, erstellt_am, pdf_blob_key, pdf_sha256, csv_blob_key, csv_sha256, zip_blob_key, zip_sha256, regeln_snapshot, einstellungen_snapshot, summen, beleg_ids, erklaerung_bestaetigt_am, warnungen_bestaetigt, protokoll_hash FROM monatsexporte WHERE id = ?
+`
+
+func (q *Queries) GetMonatsexport(ctx context.Context, id string) (Monatsexporte, error) {
+	row := q.db.QueryRowContext(ctx, getMonatsexport, id)
+	var i Monatsexporte
+	err := row.Scan(
+		&i.ID,
+		&i.Monat,
+		&i.Version,
+		&i.ErstelltAm,
+		&i.PdfBlobKey,
+		&i.PdfSha256,
+		&i.CsvBlobKey,
+		&i.CsvSha256,
+		&i.ZipBlobKey,
+		&i.ZipSha256,
+		&i.RegelnSnapshot,
+		&i.EinstellungenSnapshot,
+		&i.Summen,
+		&i.BelegIds,
+		&i.ErklaerungBestaetigtAm,
+		&i.WarnungenBestaetigt,
+		&i.ProtokollHash,
+	)
+	return i, err
+}
+
 const getSitzung = `-- name: GetSitzung :one
 SELECT token_hash, akteur, erstellt_am, zuletzt_aktiv_am, laeuft_ab_am, user_agent, ip, oidc_id_token
 FROM sitzungen
@@ -407,6 +436,67 @@ func (q *Queries) InsertBelegbild(ctx context.Context, arg InsertBelegbildParams
 	return err
 }
 
+const insertMonatsexport = `-- name: InsertMonatsexport :exec
+INSERT INTO monatsexporte (
+    id, monat, version, erstellt_am,
+    pdf_blob_key, pdf_sha256,
+    csv_blob_key, csv_sha256,
+    zip_blob_key, zip_sha256,
+    regeln_snapshot, einstellungen_snapshot, summen, beleg_ids,
+    erklaerung_bestaetigt_am, warnungen_bestaetigt, protokoll_hash
+) VALUES (
+    ?, ?, ?, ?,
+    ?, ?,
+    ?, ?,
+    ?, ?,
+    ?, ?, ?, ?,
+    ?, ?, ?
+)
+`
+
+type InsertMonatsexportParams struct {
+	ID                     string
+	Monat                  string
+	Version                int64
+	ErstelltAm             string
+	PdfBlobKey             string
+	PdfSha256              string
+	CsvBlobKey             interface{}
+	CsvSha256              interface{}
+	ZipBlobKey             interface{}
+	ZipSha256              interface{}
+	RegelnSnapshot         string
+	EinstellungenSnapshot  string
+	Summen                 string
+	BelegIds               string
+	ErklaerungBestaetigtAm string
+	WarnungenBestaetigt    int64
+	ProtokollHash          string
+}
+
+func (q *Queries) InsertMonatsexport(ctx context.Context, arg InsertMonatsexportParams) error {
+	_, err := q.db.ExecContext(ctx, insertMonatsexport,
+		arg.ID,
+		arg.Monat,
+		arg.Version,
+		arg.ErstelltAm,
+		arg.PdfBlobKey,
+		arg.PdfSha256,
+		arg.CsvBlobKey,
+		arg.CsvSha256,
+		arg.ZipBlobKey,
+		arg.ZipSha256,
+		arg.RegelnSnapshot,
+		arg.EinstellungenSnapshot,
+		arg.Summen,
+		arg.BelegIds,
+		arg.ErklaerungBestaetigtAm,
+		arg.WarnungenBestaetigt,
+		arg.ProtokollHash,
+	)
+	return err
+}
+
 const insertSitzung = `-- name: InsertSitzung :exec
 INSERT INTO sitzungen (
     token_hash, akteur, erstellt_am, zuletzt_aktiv_am, laeuft_ab_am, user_agent, ip, oidc_id_token
@@ -436,6 +526,33 @@ func (q *Queries) InsertSitzung(ctx context.Context, arg InsertSitzungParams) er
 		arg.OidcIDToken,
 	)
 	return err
+}
+
+const latestExport = `-- name: LatestExport :one
+SELECT id, version, protokoll_hash, erstellt_am
+FROM monatsexporte
+WHERE monat = ?
+ORDER BY version DESC
+LIMIT 1
+`
+
+type LatestExportRow struct {
+	ID            string
+	Version       int64
+	ProtokollHash string
+	ErstelltAm    string
+}
+
+func (q *Queries) LatestExport(ctx context.Context, monat string) (LatestExportRow, error) {
+	row := q.db.QueryRowContext(ctx, latestExport, monat)
+	var i LatestExportRow
+	err := row.Scan(
+		&i.ID,
+		&i.Version,
+		&i.ProtokollHash,
+		&i.ErstelltAm,
+	)
+	return i, err
 }
 
 const latestExportAm = `-- name: LatestExportAm :one
@@ -778,6 +895,26 @@ func (q *Queries) ListUnassignedBelegbilderBefore(ctx context.Context, erstelltA
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockMonat = `-- name: LockMonat :exec
+INSERT INTO monate (monat, status, gesperrt_am, letzte_exportversion)
+VALUES (?, 'gesperrt', ?, ?)
+ON CONFLICT (monat) DO UPDATE SET
+    status = 'gesperrt',
+    gesperrt_am = COALESCE(monate.gesperrt_am, excluded.gesperrt_am),
+    letzte_exportversion = excluded.letzte_exportversion
+`
+
+type LockMonatParams struct {
+	Monat               string
+	GesperrtAm          interface{}
+	LetzteExportversion int64
+}
+
+func (q *Queries) LockMonat(ctx context.Context, arg LockMonatParams) error {
+	_, err := q.db.ExecContext(ctx, lockMonat, arg.Monat, arg.GesperrtAm, arg.LetzteExportversion)
+	return err
 }
 
 const markGesperrtGeaendert = `-- name: MarkGesperrtGeaendert :exec

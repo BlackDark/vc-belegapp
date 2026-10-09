@@ -183,6 +183,41 @@ WHERE monat = ?
 ORDER BY version DESC
 LIMIT 1;
 
+-- name: LatestExport :one
+SELECT id, version, protokoll_hash, erstellt_am
+FROM monatsexporte
+WHERE monat = ?
+ORDER BY version DESC
+LIMIT 1;
+
+-- name: GetMonatsexport :one
+SELECT * FROM monatsexporte WHERE id = ?;
+
+-- name: InsertMonatsexport :exec
+INSERT INTO monatsexporte (
+    id, monat, version, erstellt_am,
+    pdf_blob_key, pdf_sha256,
+    csv_blob_key, csv_sha256,
+    zip_blob_key, zip_sha256,
+    regeln_snapshot, einstellungen_snapshot, summen, beleg_ids,
+    erklaerung_bestaetigt_am, warnungen_bestaetigt, protokoll_hash
+) VALUES (
+    ?, ?, ?, ?,
+    ?, ?,
+    ?, ?,
+    ?, ?,
+    ?, ?, ?, ?,
+    ?, ?, ?
+);
+
+-- name: LockMonat :exec
+INSERT INTO monate (monat, status, gesperrt_am, letzte_exportversion)
+VALUES (?, 'gesperrt', ?, ?)
+ON CONFLICT (monat) DO UPDATE SET
+    status = 'gesperrt',
+    gesperrt_am = COALESCE(monate.gesperrt_am, excluded.gesperrt_am),
+    letzte_exportversion = excluded.letzte_exportversion;
+
 -- name: InsertSitzung :exec
 INSERT INTO sitzungen (
     token_hash, akteur, erstellt_am, zuletzt_aktiv_am, laeuft_ab_am, user_agent, ip, oidc_id_token

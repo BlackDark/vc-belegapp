@@ -616,7 +616,10 @@ export default function Pruefen() {
               erkennung()?.status === "laeuft")
           }
           onRetry={firstId() ? () => void retry() : undefined}
-          onDone={() => navigate("/monat")}
+          onDone={() => {
+            void queryClient.invalidateQueries({ queryKey: ["monat"] });
+            navigate("/monat");
+          }}
         />
       </Show>
     </section>
