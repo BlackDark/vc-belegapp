@@ -101,10 +101,11 @@ type BelegPatch struct {
 // PreviewBeleg calculates without writing.
 func (s *Service) PreviewBeleg(ctx context.Context, in BelegInput, selfID string) (Preview, error) {
 	q := db.New(s.DB.Read)
-	built, _, _, err := s.prepare(ctx, q, in, selfID, true)
+	built, _, _, err := s.prepare(ctx, q, in, selfID, true, false)
 	if err != nil {
 		return Preview{}, err
 	}
+	built.noteExport(s.stamp())
 	return Preview{Berechnung: built.Berechnung, Warnungen: built.Warnungen, MonatStatus: built.MonatStatus}, nil
 }
 
@@ -112,7 +113,7 @@ func (s *Service) PreviewBeleg(ctx context.Context, in BelegInput, selfID string
 func (s *Service) CreateBeleg(ctx context.Context, actor Actor, in BelegInput) (Beleg, error) {
 	var out Beleg
 	err := s.tx(ctx, func(ctx context.Context, q *db.Queries, tx *sql.Tx) error {
-		built, _, status, err := s.prepare(ctx, q, in, "", true)
+		built, _, status, err := s.prepare(ctx, q, in, "", true, true)
 		if err != nil {
 			return err
 		}
@@ -191,7 +192,7 @@ func (s *Service) UpdateBeleg(ctx context.Context, actor Actor, belegID string, 
 		if err != nil {
 			return err
 		}
-		built, _, status, err := s.prepare(ctx, q, in, belegID, true)
+		built, _, status, err := s.prepare(ctx, q, in, belegID, true, true)
 		if err != nil {
 			return err
 		}
@@ -324,7 +325,9 @@ func (s *Service) GetBeleg(ctx context.Context, belegID string) (Beleg, error) {
 	return s.decorate(ctx, q, row, nil)
 }
 
-func (s *Service) prepare(ctx context.Context, q *db.Queries, in BelegInput, selfID string, checkLimit bool) (Beleg, rules.Jahresregel, string, error) {
+// prepare validates a receipt. checkLimit applies the blocking month limit.
+// enforceReason is false for preview: the change reason is collected on save.
+func (s *Service) prepare(ctx context.Context, q *db.Queries, in BelegInput, selfID string, checkLimit, enforceReason bool) (Beleg, rules.Jahresregel, string, error) {
 	in.HaendlerName = strings.TrimSpace(in.HaendlerName)
 	in.HaendlerOrt = strings.TrimSpace(in.HaendlerOrt)
 	in.Notiz = strings.TrimSpace(in.Notiz)
@@ -377,8 +380,10 @@ func (s *Service) prepare(ctx context.Context, q *db.Queries, in BelegInput, sel
 	if err != nil {
 		return Beleg{}, rules.Jahresregel{}, "", err
 	}
-	if err := requireChangeReason(status, trimmed(in.Aenderungsgrund)); err != nil {
-		return Beleg{}, rules.Jahresregel{}, "", err
+	if enforceReason {
+		if err := requireChangeReason(status, trimmed(in.Aenderungsgrund)); err != nil {
+			return Beleg{}, rules.Jahresregel{}, "", err
+		}
 	}
 	monthRows, err := listMonth(ctx, q, monat)
 	if err != nil {
