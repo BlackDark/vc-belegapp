@@ -381,11 +381,7 @@ func failureText(err error) string {
 	if errors.As(err, &call) && call.Text != "" {
 		return call.Text
 	}
-	text := err.Error()
-	if len(text) > 200 {
-		text = text[:200]
-	}
-	return text
+	return "Erkennung fehlgeschlagen."
 }
 
 func optText(b []byte) any {

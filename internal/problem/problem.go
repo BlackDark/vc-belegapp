@@ -69,12 +69,16 @@ func title(status int) string {
 		return "Konflikt"
 	case 413:
 		return "Datei zu groß"
+	case 415:
+		return "Ungültiger Inhaltstyp"
 	case 422:
 		return "Validierung fehlgeschlagen"
 	case 429:
 		return "Zu viele Versuche"
 	case 503:
 		return "Vorübergehend nicht verfügbar"
+	case 500:
+		return "Interner Fehler"
 	case 501:
 		return "Nicht implementiert"
 	default:

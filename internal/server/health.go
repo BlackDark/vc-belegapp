@@ -3,12 +3,14 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 )
 
 type handlers struct {
 	ready ReadyChecks
+	log   *slog.Logger
 }
 
 func (h *handlers) healthz(w http.ResponseWriter, _ *http.Request) {
@@ -40,13 +42,14 @@ func (h *handlers) readyz(w http.ResponseWriter, r *http.Request) {
 
 	var body readyResponse
 	ok := true
-	body.Checks.Database, ok = runCheck(ok, h.ready.Database(ctx))
-	body.Checks.Migrations, ok = runCheck(ok, h.ready.Migrations(ctx))
-	body.Checks.Storage, ok = runCheck(ok, h.ready.Storage(ctx))
+	body.Checks.Database, ok = h.runCheck(ok, "database", h.ready.Database(ctx))
+	body.Checks.Migrations, ok = h.runCheck(ok, "migrations", h.ready.Migrations(ctx))
+	body.Checks.Storage, ok = h.runCheck(ok, "storage", h.ready.Storage(ctx))
 
 	version, err := h.ready.Typst(ctx)
 	if err != nil {
-		body.Checks.Typst = checkResult{Status: "fail", Detail: err.Error()}
+		h.logCheck("typst", err)
+		body.Checks.Typst = checkResult{Status: "fail"}
 		ok = false
 	} else {
 		body.Checks.Typst = checkResult{Status: "ok", Version: version}
@@ -64,9 +67,16 @@ func (h *handlers) readyz(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-func runCheck(ok bool, err error) (checkResult, bool) {
+func (h *handlers) runCheck(ok bool, name string, err error) (checkResult, bool) {
 	if err != nil {
-		return checkResult{Status: "fail", Detail: err.Error()}, false
+		h.logCheck(name, err)
+		return checkResult{Status: "fail"}, false
 	}
 	return checkResult{Status: "ok"}, ok
+}
+
+func (h *handlers) logCheck(name string, err error) {
+	if h.log != nil {
+		h.log.Error("readiness", "check", name, "err", err)
+	}
 }

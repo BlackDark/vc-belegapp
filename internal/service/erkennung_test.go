@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -367,4 +368,13 @@ func sentJPEG(t *testing.T, body []byte) []byte {
 		t.Fatal(err)
 	}
 	return raw
+}
+
+func TestFailureTextHidesInternalErrors(t *testing.T) {
+	if got := failureText(errors.New("/data/blobs/secret.jpg: no such file")); got != "Erkennung fehlgeschlagen." {
+		t.Fatal(got)
+	}
+	if got := failureText(&erkennung.CallError{Text: "Modell nicht erreichbar"}); got != "Modell nicht erreichbar" {
+		t.Fatal(got)
+	}
 }
