@@ -24,7 +24,15 @@ export default defineConfig({
     {
       name: "desktop",
       testMatch: /screenshots\.spec\.ts/,
-      use: { ...chromium, viewport: { width: 1280, height: 800 } },
+      use: {
+        ...chromium,
+        viewport: { width: 1280, height: 800 },
+        deviceScaleFactor: 1,
+        colorScheme: "light",
+        locale: "de-DE",
+        timezoneId: "Europe/Berlin",
+        animations: "disabled",
+      },
     },
     {
       name: "mobile",
@@ -33,6 +41,11 @@ export default defineConfig({
         ...devices["iPhone 15"],
         browserName: "chromium",
         viewport: { width: 393, height: 852 },
+        deviceScaleFactor: 1,
+        colorScheme: "light",
+        locale: "de-DE",
+        timezoneId: "Europe/Berlin",
+        animations: "disabled",
       },
     },
   ],

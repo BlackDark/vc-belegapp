@@ -1,4 +1,4 @@
-.PHONY: web test lint sqlc vuln build docker docker-prebuilt
+.PHONY: web test lint sqlc vuln build docker docker-prebuilt screenshots
 
 web:
 	pnpm -C web install --frozen-lockfile
@@ -34,3 +34,14 @@ docker-prebuilt:
 	mkdir -p dist/linux/amd64
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/linux/amd64/belegapp ./cmd/belegapp
 	docker build -f Dockerfile.goreleaser -t vc-belegapp:dev dist
+
+# README images. Needs Typst (installed into ./bin when missing), poppler
+# (pdftoppm), and python3-pil. Playwright downloads Chromium on first run.
+screenshots:
+	@if ! command -v typst >/dev/null 2>&1; then ./scripts/install-typst.sh "$(CURDIR)/bin"; fi
+	CGO_ENABLED=0 go build -trimpath -o bin/belegapp ./cmd/belegapp
+	CGO_ENABLED=0 go build -trimpath -o bin/fakellm ./e2e/fakellm
+	pnpm -C e2e install --frozen-lockfile
+	pnpm -C e2e exec playwright install chromium
+	PATH="$(CURDIR)/bin:$$PATH" BELEGAPP_BIN="$(CURDIR)/bin/belegapp" FAKE_LLM_BIN="$(CURDIR)/bin/fakellm" pnpm -C e2e exec playwright test screenshots.spec.ts
+	python3 scripts/optimize-screenshots.py
