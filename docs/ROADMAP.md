@@ -7,7 +7,6 @@ What is planned, what was rejected, and ideas under consideration. Implemented w
 | Item | Benefit | Effort | Risk |
 | --- | --- | --- | --- |
 | Serve the official values (Sachbezugswerte, Kirchensteuer rates) only from the API and drop `web/src/lib/amtlich.ts` | One source of truth with `internal/rules`; no frontend/backend drift when 2027 values land | Medium | Medium |
-| Component tests for Login, the Einstellungen theme switch, the Monat export dialog, and the Jahresregel editor | Catch UI regressions below the e2e level | Medium | Low |
 
 ## Decided against
 
