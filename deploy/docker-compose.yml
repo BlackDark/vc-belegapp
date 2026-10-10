@@ -24,7 +24,9 @@ services:
       BELEGAPP_OIDC_ISSUER_URL: ${BELEGAPP_OIDC_ISSUER_URL:?set BELEGAPP_OIDC_ISSUER_URL}
       BELEGAPP_OIDC_CLIENT_ID: ${BELEGAPP_OIDC_CLIENT_ID:?set BELEGAPP_OIDC_CLIENT_ID}
       BELEGAPP_OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_secret
-      BELEGAPP_OIDC_ALLOWED_EMAILS: ${BELEGAPP_OIDC_ALLOWED_EMAILS:?set BELEGAPP_OIDC_ALLOWED_EMAILS}
+      # Optional when BELEGAPP_OIDC_ALLOWED_SUBJECTS is used instead.
+      # "*" admits every account with a verified email at the issuer.
+      BELEGAPP_OIDC_ALLOWED_EMAILS: ${BELEGAPP_OIDC_ALLOWED_EMAILS:-}
       BELEGAPP_AUTH_PASSWORD_HASH_FILE: /run/secrets/pw_hash
       BELEGAPP_LLM_API_KEY_FILE: /run/secrets/openai_key
     secrets: [oidc_secret, pw_hash, openai_key]

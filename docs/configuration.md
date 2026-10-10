@@ -24,7 +24,7 @@ Every variable uses the prefix `BELEGAPP_`. A secret may be set as `BELEGAPP_<NA
 | `BELEGAPP_OIDC_CLIENT_SECRET`, `BELEGAPP_OIDC_CLIENT_SECRET_FILE` | empty | Empty means a public client (PKCE only) |
 | `BELEGAPP_OIDC_SCOPES` | `openid profile email` | Space-separated scopes |
 | `BELEGAPP_OIDC_ALLOWED_SUBJECTS` | empty | Comma-separated `sub` values |
-| `BELEGAPP_OIDC_ALLOWED_EMAILS` | empty | Comma-separated emails. A match also requires `email_verified` |
+| `BELEGAPP_OIDC_ALLOWED_EMAILS` | empty | Comma-separated emails, or `*` for every verified email at the issuer. A match also requires `email_verified`. At least one of the two allowlists must be set |
 | `BELEGAPP_OIDC_BUTTON_LABEL` | `Mit SSO anmelden` | Label of the OIDC button |
 | `BELEGAPP_OIDC_RP_LOGOUT` | `false` | After local logout, redirect to the provider end-session endpoint when it exists |
 | `BELEGAPP_STORAGE_BACKEND` | `fs` | `fs` or `s3` |

@@ -618,7 +618,7 @@ Antwort `201`: `{id, monat, version, erstellt_am, pdf_url, csv_url, zip_url, pdf
 ### 9.5 OIDC
 - Authorization Code Flow mit PKCE (S256), `coreos/go-oidc/v3` + `golang.org/x/oauth2`. Redirect-URI: `{BELEGAPP_BASE_URL}/api/v1/auth/oidc/callback`.
 - `state`, `nonce`, `code_verifier` in kurzlebigem Cookie `belegapp_oidc` (10 min, HMAC-SHA256 mit `secret_key`, `SameSite=Lax`).
-- Callback prüft: `state`, ID-Token-Signatur, `iss`, `aud`, `exp`, `nonce`. Autorisierung: `sub ∈ BELEGAPP_OIDC_ALLOWED_SUBJECTS` **oder** (`email ∈ BELEGAPP_OIDC_ALLOWED_EMAILS` **und** `email_verified = true`). Mindestens eine Liste muss gesetzt sein (sonst Startfehler). Abgelehnt → `302 /login?fehler=nicht_berechtigt` + Log-Eintrag (warn).
+- Callback prüft: `state`, ID-Token-Signatur, `iss`, `aud`, `exp`, `nonce`. Autorisierung: `sub ∈ BELEGAPP_OIDC_ALLOWED_SUBJECTS` **oder** (`email ∈ BELEGAPP_OIDC_ALLOWED_EMAILS` **und** `email_verified = true`); `*` in der E-Mail-Liste erlaubt jede verifizierte E-Mail des Providers. Mindestens eine Liste muss gesetzt sein (sonst Startfehler). Abgelehnt → `302 /login?fehler=nicht_berechtigt` + Log-Eintrag (warn).
 - Akteur im Protokoll: `oidc:{sub}`. Discovery beim Start mit Retry (5 × exponentiell); schlägt sie fehl, startet die App trotzdem, `/auth/config` meldet `oidc: false` bis zur erfolgreichen Discovery (Retry alle 60 s).
 - Logout: lokal; wenn `BELEGAPP_OIDC_RP_LOGOUT=true` und `end_session_endpoint` vorhanden → Redirect dorthin mit `id_token_hint` und `post_logout_redirect_uri = BASE_URL/login`.
 
@@ -842,7 +842,7 @@ Alle Variablen mit Präfix `BELEGAPP_`; für Geheimnisse zusätzlich `<NAME>_FIL
 | `BELEGAPP_OIDC_CLIENT_SECRET(_FILE)` | `` | leer = Public Client (nur PKCE) |
 | `BELEGAPP_OIDC_SCOPES` | `openid profile email` | |
 | `BELEGAPP_OIDC_ALLOWED_SUBJECTS` | `` | Komma-Liste |
-| `BELEGAPP_OIDC_ALLOWED_EMAILS` | `` | Komma-Liste (nur mit `email_verified`) |
+| `BELEGAPP_OIDC_ALLOWED_EMAILS` | `` | Komma-Liste (nur mit `email_verified`), `*` = alle verifizierten E-Mails |
 | `BELEGAPP_OIDC_BUTTON_LABEL` | `Mit SSO anmelden` | |
 | `BELEGAPP_OIDC_RP_LOGOUT` | `false` | RP-initiated Logout |
 | `BELEGAPP_STORAGE_BACKEND` | `fs` | `fs\|s3` |
@@ -914,7 +914,7 @@ services:
       BELEGAPP_OIDC_ISSUER_URL: ${BELEGAPP_OIDC_ISSUER_URL:?set BELEGAPP_OIDC_ISSUER_URL}
       BELEGAPP_OIDC_CLIENT_ID: ${BELEGAPP_OIDC_CLIENT_ID:?set BELEGAPP_OIDC_CLIENT_ID}
       BELEGAPP_OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_secret
-      BELEGAPP_OIDC_ALLOWED_EMAILS: ${BELEGAPP_OIDC_ALLOWED_EMAILS:?set BELEGAPP_OIDC_ALLOWED_EMAILS}
+      BELEGAPP_OIDC_ALLOWED_EMAILS: ${BELEGAPP_OIDC_ALLOWED_EMAILS:-}
       BELEGAPP_AUTH_PASSWORD_HASH_FILE: /run/secrets/pw_hash
       BELEGAPP_LLM_API_KEY_FILE: /run/secrets/openai_key
     secrets: [oidc_secret, pw_hash, openai_key]

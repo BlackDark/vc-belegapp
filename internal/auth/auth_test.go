@@ -24,6 +24,12 @@ func TestAllowlist(t *testing.T) {
 	if Allow("", "", true, nil, nil) {
 		t.Fatal("empty")
 	}
+	if !Allow("nope", "anyone@elsewhere.example", true, nil, []string{"eduard@example.de", "*"}) {
+		t.Fatal("wildcard")
+	}
+	if Allow("nope", "anyone@elsewhere.example", false, nil, []string{"*"}) {
+		t.Fatal("wildcard must still require email_verified")
+	}
 }
 
 func TestLimiter(t *testing.T) {

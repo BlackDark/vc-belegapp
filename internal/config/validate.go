@@ -149,7 +149,7 @@ func (c *Config) validateOIDC() error {
 		return fmt.Errorf("BELEGAPP_BASE_URL is required when OIDC is enabled")
 	}
 	if len(c.OIDCAllowedSubjects) == 0 && len(c.OIDCAllowedEmails) == 0 {
-		return fmt.Errorf("BELEGAPP_OIDC_ALLOWED_SUBJECTS or BELEGAPP_OIDC_ALLOWED_EMAILS is required when OIDC is enabled")
+		return fmt.Errorf("BELEGAPP_OIDC_ALLOWED_SUBJECTS or BELEGAPP_OIDC_ALLOWED_EMAILS is required when OIDC is enabled (use \"*\" to admit every verified email at the issuer)")
 	}
 	if strings.TrimSpace(c.OIDCScopes) == "" {
 		return fmt.Errorf("BELEGAPP_OIDC_SCOPES is empty")

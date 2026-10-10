@@ -2,6 +2,10 @@ package auth
 
 import "strings"
 
+// AnyEmail is the allowlist entry that admits every verified email. It is
+// still an explicit opt-in: an empty allowlist never authorizes anyone.
+const AnyEmail = "*"
+
 // Allow reports whether sub is listed or email is listed and verified.
 func Allow(sub, email string, verified bool, subjects, emails []string) bool {
 	for _, item := range subjects {
@@ -13,7 +17,7 @@ func Allow(sub, email string, verified bool, subjects, emails []string) bool {
 		return false
 	}
 	for _, item := range emails {
-		if strings.EqualFold(item, email) {
+		if item == AnyEmail || strings.EqualFold(item, email) {
 			return true
 		}
 	}

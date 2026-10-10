@@ -113,7 +113,7 @@ BELEGAPP_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc_secret
 BELEGAPP_OIDC_ALLOWED_EMAILS=eduard@example.de
 ```
 
-An empty client secret is a public client (PKCE only). At least one allowlist is required: comma-separated `sub` values (`BELEGAPP_OIDC_ALLOWED_SUBJECTS`), or comma-separated emails (`BELEGAPP_OIDC_ALLOWED_EMAILS`). An email match also requires `email_verified`. Scopes default to `openid profile email`. The button label defaults to `Mit SSO anmelden`.
+An empty client secret is a public client (PKCE only). At least one allowlist is required: comma-separated `sub` values (`BELEGAPP_OIDC_ALLOWED_SUBJECTS`), or comma-separated emails (`BELEGAPP_OIDC_ALLOWED_EMAILS`). Either one is optional on its own. An email match also requires `email_verified`. Set `BELEGAPP_OIDC_ALLOWED_EMAILS=*` to admit every account with a verified email at the issuer, e.g. when the issuer is a single-tenant directory. The list is never implicitly empty: without one of the two, startup fails. Scopes default to `openid profile email`. The button label defaults to `Mit SSO anmelden`.
 
 Password login can stay on as a fallback. `serve` accepts either method. Incomplete OIDC (issuer set, but no client id or no allowlist) is a startup error.
 

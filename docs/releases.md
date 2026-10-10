@@ -2,6 +2,16 @@
 
 Commits follow Conventional Commits. [release-please](https://github.com/googleapis/release-please) opens a release PR (changelog, version bump). Merging it tags `vX.Y.Z`. Do not tag by hand.
 
+## Releasing
+
+Nothing is released by merging to `main`. `release-please.yml` runs on `workflow_dispatch` only:
+
+1. `gh workflow run release-please.yml` — release-please opens or updates the release PR and dispatches `ci.yml` on that branch.
+2. Merge the release PR to `main` after CI is green.
+3. `gh workflow run release-please.yml` again — the `vX.Y.Z` tag and the GitHub release are created, and `release.yml` is dispatched for that tag.
+
+Step 3 cannot be skipped. The tag is pushed with `GITHUB_TOKEN`, and a push with that token starts no workflow, which is why `release-please.yml` dispatches `release.yml` itself. `release.yml` can also be started by hand for a tag that already exists (`gh workflow run release.yml --ref vX.Y.Z`).
+
 How `release-please` dispatches CI, and why `ci.yml` triggers on every branch push, is in [development.md](development.md#ci).
 
 `release.yml` and `release-dry-run` both call [.github/actions/goreleaser](../.github/actions/goreleaser/action.yml). That action installs Cosign and Syft outside the checkout, refuses a dirty tree, then runs GoReleaser v2 ([.goreleaser.yaml](../.goreleaser.yaml)):

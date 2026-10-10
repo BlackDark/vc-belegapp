@@ -1,8 +1,14 @@
 name: release-please
 
 on:
-  push:
-    branches: [main]
+  # Deliberately not on push to main. Merging to main must not cut a
+  # release. Start this workflow by hand (workflow_dispatch):
+  #   1. dispatch  -> release-please opens or updates the release PR
+  #   2. merge that PR to main
+  #   3. dispatch again -> the tag and the GitHub release are created and
+  #      release.yml is dispatched for that tag
+  # Step 3 is required: a tag pushed with GITHUB_TOKEN starts no workflow.
+  workflow_dispatch:
 
 permissions:
   contents: read
