@@ -1049,3 +1049,5 @@ Coverage-Ziel: `internal/calc` 100 %, Backend gesamt ≥ 70 %.
 - Job rows store `err.Error()` for the operator (`safeText`, truncated). That text is not part of the public problem JSON.
 - LLM and OIDC base URLs are operator configuration. Private hosts stay allowed so a local Ollama endpoint works. There is no switch to block them.
 - An image whose stored bytes do not match `belegbilder.sha256` is left on its old key and the process still starts. The export-time hash check then fails closed.
+- UI (since #17): the theme defaults to `dunkel` (dark), not System as in §13.1. The mobile bottom navigation labels the settings entry „Mehr“; renaming it to „Einstellungen“ is on the [roadmap](ROADMAP.md).
+- Status of planned and possible work: [ROADMAP.md](ROADMAP.md); implemented features: [FEATURES.md](FEATURES.md).

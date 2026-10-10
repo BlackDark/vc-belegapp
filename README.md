@@ -112,6 +112,8 @@ Kubernetes, a standalone binary, a reverse proxy, and OIDC are in [docs/deployme
 
 ## Documentation
 
+Full index: [docs/README.md](docs/README.md).
+
 | Page | What it covers |
 | --- | --- |
 | [Configuration](docs/configuration.md) | Every `BELEGAPP_` variable, including `_FILE` secrets |
@@ -120,6 +122,8 @@ Kubernetes, a standalone binary, a reverse proxy, and OIDC are in [docs/deployme
 | [Backup](docs/backup.md) | Datenexport and restore |
 | [Development](docs/development.md) | Architecture, make targets, end-to-end tests, screenshots |
 | [Releases](docs/releases.md) | release-please, GoReleaser, Cosign verification |
+| [Features](docs/FEATURES.md) | Everything implemented, with PRs and releases |
+| [Roadmap](docs/ROADMAP.md) | Approved backlog, rejected ideas, possible features |
 
 Specification and decisions:
 
