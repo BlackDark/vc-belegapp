@@ -219,13 +219,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils openjdk-21-jre-headless unzip
       - name: Install Typst
         run: |
-          if [ -x "$HOME/.local/bin/typst" ]; then exit 0; fi
-          ./scripts/install-typst.sh "$HOME/.local/bin"
+          if [ ! -x "$HOME/.local/bin/typst" ]; then ./scripts/install-typst.sh "$HOME/.local/bin"; fi
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Install veraPDF
         run: |
-          if [ -x "$HOME/verapdf/verapdf" ]; then exit 0; fi
-          ./scripts/install-verapdf.sh "$HOME/verapdf"
+          if [ ! -x "$HOME/verapdf/verapdf" ]; then ./scripts/install-verapdf.sh "$HOME/verapdf"; fi
           echo "$HOME/verapdf" >> "$GITHUB_PATH"
       - name: Golden PDF
         run: go test -count=1 -timeout 15m ./internal/pdf/ ./internal/export/
