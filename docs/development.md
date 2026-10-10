@@ -2,6 +2,8 @@
 
 Prerequisites: Go 1.27.2 (`go` and `toolchain` in `go.mod`, `CGO_ENABLED=0`), Node 24.21.0, pnpm 12.10.1. PDF tests and screenshots also need Typst 0.15.1. Screenshot optimisation needs `pdftoppm` (poppler) and `python3-pil`.
 
+[.mise.toml](../.mise.toml) pins all of those plus golangci-lint, so `mise install` is enough on a clean machine. CI installs its own actions and pins the same versions inline. `go test ./internal/doccheck` fails when `go.mod` or `.nvmrc` drifts from the mise pins.
+
 ```bash
 make web              # biome, tsc, vitest, vite build
 make test             # go test -race

@@ -1,0 +1,20 @@
+# Toolchain for local development. CI installs its own actions and does not
+# read this file; it pins the same versions inline.
+#
+# Versions are duplicated in go.mod, .nvmrc, web/package.json, and ci.yml.
+# internal/doccheck/tools_test.go fails when go.mod or .nvmrc drifts from here.
+
+[tools]
+go = "1.27.2" # keep in sync with the go directive in go.mod
+node = "24.21.0" # keep in sync with .nvmrc
+pnpm = "12.10.1" # keep in sync with packageManager in web/package.json
+typst = "0.15.1" # keep in sync with scripts/install-typst.sh
+golangci-lint = "2.14.0" # keep in sync with ci.yml
+
+# Workflow, shell, and Markdown linting. Not part of the build; CI does not
+# run them, so a failure here is a local finding.
+actionlint = "1.7.12"
+shellcheck = "0.11.0"
+yamllint = "1.38.0"
+zizmor = "1.30.1"
+markdownlint-cli2 = "0.23.3"
