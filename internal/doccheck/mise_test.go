@@ -48,6 +48,45 @@ func TestMisePinsMatchSources(t *testing.T) {
 	}
 }
 
+func typstVersion(t *testing.T, root, file string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(root, file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if rest, ok := strings.CutPrefix(line, "ARG TYPST_VERSION="); ok {
+			return rest
+		}
+		if rest, ok := strings.CutPrefix(line, "version="); ok {
+			if semver(rest) {
+				return rest
+			}
+		}
+	}
+	t.Fatalf("%s has no Typst version", file)
+	return ""
+}
+
+// The two Dockerfiles cannot share the stage: GoReleaser builds
+// Dockerfile.goreleaser from a temp context that holds only the binary, so the
+// typst stage there cannot COPY scripts/. Both pin the version and both
+// checksums instead, and this test keeps the three pins equal.
+func TestTypstPinsMatch(t *testing.T) {
+	root := repoRoot(t)
+	want := typstVersion(t, root, "scripts/install-typst.sh")
+	for _, file := range []string{"Dockerfile", "Dockerfile.goreleaser"} {
+		if got := typstVersion(t, root, file); got != want {
+			t.Errorf("%s pins Typst %s, scripts/install-typst.sh pins %s", file, got, want)
+		}
+	}
+	pins := misePins(t, filepath.Join(root, ".mise.toml"))
+	if pins["typst"] != want {
+		t.Errorf(".mise.toml pins Typst %s, scripts/install-typst.sh pins %s", pins["typst"], want)
+	}
+}
+
 func misePins(t *testing.T, path string) map[string]string {
 	t.Helper()
 	raw, err := os.ReadFile(path)

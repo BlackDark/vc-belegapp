@@ -801,6 +801,7 @@ Letzte Zeile `summe;…` mit Summen. Für den Datenexport zusätzlich Spalte `be
 - Komponenten: solid-ui (Kobalte/corvu) im Repo unter `web/src/components/ui`; Icons lucide-solid; Toasts solid-sonner; Daten TanStack Query; Formulare TanStack Form.
 - Zahlen/Datum: `Intl.NumberFormat("de-DE", {style:"currency", currency:"EUR"})`, `Intl.DateTimeFormat("de-DE")`; Betragseingabe akzeptiert „7,67“ und „7.67“, `inputmode="decimal"`.
 - Leere Zustände, Ladeskelette, Fehlermeldungen in Klartext (Problem-JSON `felder[].text`).
+- Sidebar ab `md`: `Strg+B` bzw. `Cmd+B` schaltet die Navigation um; der Trigger oben links trägt denselben Hinweis im Tooltip.
 
 ### 13.2 Screens
 | Screen | Inhalt |
@@ -1049,5 +1050,5 @@ Coverage-Ziel: `internal/calc` 100 %, Backend gesamt ≥ 70 %.
 - Job rows store `err.Error()` for the operator (`safeText`, truncated). That text is not part of the public problem JSON.
 - LLM and OIDC base URLs are operator configuration. Private hosts stay allowed so a local Ollama endpoint works. There is no switch to block them.
 - An image whose stored bytes do not match `belegbilder.sha256` is left on its old key and the process still starts. The export-time hash check then fails closed.
-- UI (since #17): the theme defaults to `dunkel` (dark), not System as in §13.1. The mobile bottom navigation labels the settings entry „Mehr“; renaming it to „Einstellungen“ is on the [roadmap](ROADMAP.md).
+- UI (since #17): the theme defaults to `dunkel` (dark), not System as in §13.1.
 - Status of planned and possible work: [ROADMAP.md](ROADMAP.md); implemented features: [FEATURES.md](FEATURES.md).

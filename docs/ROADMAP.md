@@ -8,12 +8,10 @@ What is planned, what was rejected, and ideas under consideration. Implemented w
 | --- | --- | --- | --- |
 | Serve the official values (Sachbezugswerte, Kirchensteuer rates) only from the API and drop `web/src/lib/amtlich.ts` | One source of truth with `internal/rules`; no frontend/backend drift when 2027 values land | Medium | Medium |
 | Component tests for Login, the Einstellungen theme switch, the Monat export dialog, and the Jahresregel editor | Catch UI regressions below the e2e level | Medium | Low |
-| Share the Typst stage between `Dockerfile` and `Dockerfile.goreleaser` | One pinned Typst download instead of two | Small | Low |
-| Rename the mobile nav entry "Mehr" to "Einstellungen" | Matches SPEC §13.1 and what the screen is | Small | Low |
-| Document or remove the sidebar Ctrl/Cmd+B shortcut | No hidden behaviour | Small | Low |
 
 ## Decided against
 
+- **Sharing the Typst Docker stage.** GoReleaser builds `Dockerfile.goreleaser` from a temp context that holds only the binary, so that stage cannot `COPY scripts/install-typst.sh`. Both files keep the pin; `go test ./internal/doccheck` fails when the version in either Dockerfile, `scripts/install-typst.sh`, or `.mise.toml` differs.
 - **Custom thin sidebar.** The native shadcn (solid-ui) sidebar stays; no custom navigation just to shrink the main chunk.
 - **Splitting `internal/service`.** Large effort and high risk for little user benefit.
 - **Skipping unchanged CI jobs.** Path filters could hide real breaks across the embedded web/Go build.

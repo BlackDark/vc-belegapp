@@ -291,6 +291,8 @@ const SidebarTrigger = <T extends ValidComponent = "button">(
       variant="ghost"
       size="icon"
       class={cn("size-7", local.class)}
+      title="Navigation umschalten (Strg+B)"
+      aria-keyshortcuts="Control+B Meta+B"
       onClick={(event: MouseEvent) => {
         local.onClick?.(event);
         toggleSidebar();

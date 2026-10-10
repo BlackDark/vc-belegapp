@@ -156,7 +156,7 @@ export default function Shell(props: ParentProps) {
               />
               <BottomLink
                 href="/einstellungen"
-                label="Mehr"
+                label="Einstellungen"
                 icon={<Settings size={20} />}
                 current={location.pathname.startsWith("/einstellungen")}
               />
