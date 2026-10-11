@@ -58,6 +58,18 @@ const einstellungen = {
 
 type Calls = { url: string; body: unknown }[];
 
+const werte = {
+  sachbezugswerte: [],
+  kirchensteuer: [{ land: "NW", satz_bp: 700 }],
+  bundeslaender: ["NW"],
+  mahlzeiten: [
+    { code: "fruehstueck", label: "Frühstück" },
+    { code: "mittag", label: "Mittag" },
+    { code: "abend", label: "Abend" },
+  ],
+  bezugsorte: [{ code: "supermarkt", label: "Supermarkt" }],
+};
+
 function stubApi(data: unknown, exportStatus = 200) {
   const calls: Calls = [];
   vi.stubGlobal(
@@ -68,6 +80,9 @@ function stubApi(data: unknown, exportStatus = 200) {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
+      if (url === "/api/v1/werte") {
+        return json(werte);
+      }
       if (url === `/api/v1/monate/${monat}`) {
         return json(data);
       }

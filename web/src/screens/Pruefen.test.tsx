@@ -32,17 +32,33 @@ const initial = {
   notiz: "",
 };
 
+const werte = {
+  sachbezugswerte: [],
+  kirchensteuer: [{ land: "NW", satz_bp: 700 }],
+  bundeslaender: ["NW"],
+  mahlzeiten: [
+    { code: "fruehstueck", label: "Frühstück" },
+    { code: "mittag", label: "Mittag" },
+    { code: "abend", label: "Abend" },
+  ],
+  bezugsorte: [{ code: "supermarkt", label: "Supermarkt" }],
+};
+
 afterEach(() => cleanup());
 
 beforeEach(() => {
   vi.stubGlobal(
     "fetch",
-    vi.fn(
-      async () =>
-        new Response(JSON.stringify({ detail: "offline" }), {
-          status: 404,
-          headers: { "Content-Type": "application/json" },
-        }),
+    vi.fn(async (url: string) =>
+      url === "/api/v1/werte"
+        ? new Response(JSON.stringify(werte), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          })
+        : new Response(JSON.stringify({ detail: "offline" }), {
+            status: 404,
+            headers: { "Content-Type": "application/json" },
+          }),
     ),
   );
 });
@@ -106,6 +122,37 @@ describe("Prüfen", () => {
         "Automatisch: ohne Pfand/Alkohol/Tabak/Non-Food",
       );
     });
+  });
+
+  // A failed /werte must not leave the meal toggles without a label.
+  it("falls back to the raw meal codes when the values table fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ detail: "offline" }), { status: 500 }),
+      ),
+    );
+    render(() => (
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <PruefenForm
+          initial={initial}
+          bildIds={["abc"]}
+          onDone={() => undefined}
+        />
+      </QueryClientProvider>
+    ));
+
+    expect(
+      await screen.findByText(
+        "Die Referenzwerte konnten nicht geladen werden. Codes werden stattdessen angezeigt.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "mittag" })).toBeTruthy();
   });
 });
 

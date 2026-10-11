@@ -4,9 +4,7 @@ What is planned, what was rejected, and ideas under consideration. Implemented w
 
 ## Approved backlog (not started)
 
-| Item | Benefit | Effort | Risk |
-| --- | --- | --- | --- |
-| Serve the official values (Sachbezugswerte, Kirchensteuer rates) only from the API and drop `web/src/lib/amtlich.ts` | One source of truth with `internal/rules`; no frontend/backend drift when 2027 values land | Medium | Medium |
+Nothing in the approved backlog. The last item — serving the official values (Sachbezugswerte, Kirchensteuer rates) only from the API and dropping `web/src/lib/amtlich.ts` — landed with `GET /werte`; see [FEATURES.md](FEATURES.md).
 
 ## Decided against
 

@@ -69,6 +69,7 @@ First release: [v1.0.0](https://github.com/BlackDark/vc-belegapp/releases/tag/v1
 - Redesign on **shadcn/solid-ui** (Kobalte, Tailwind 4): collapsible sidebar on desktop, bottom navigation on phones, dashboard on Heute, month table with status badges ([#17](https://github.com/BlackDark/vc-belegapp/pull/17), v1.1.0).
 - **Dark theme by default**, applied before first paint, with a **Hell / Dunkel / System** toggle ([#17](https://github.com/BlackDark/vc-belegapp/pull/17), v1.1.0).
 - Whole-receipt Heute preview ([#13](https://github.com/BlackDark/vc-belegapp/pull/13), v1.0.1); clearer error messages, screen-reader labels on Prüfpunkte, shared amount formatting, theme unit tests ([#22](https://github.com/BlackDark/vc-belegapp/pull/22), unreleased).
+- **Official values from the API only:** `GET /werte` serves the Sachbezugswerte, the simplified Kirchensteuer rates per Bundesland, and the German meal and purchase-place labels straight from `internal/rules`. The app shell loads them once, so the frontend keeps no copy of its own — the meal codes in the Jahresregel editor come from the same table (unreleased).
 
 ## Documentation
 

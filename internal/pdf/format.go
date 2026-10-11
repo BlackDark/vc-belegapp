@@ -3,6 +3,8 @@ package pdf
 import (
 	"fmt"
 	"strings"
+
+	"github.com/BlackDark/vc-belegapp/internal/rules"
 )
 
 // Euro formats integer cents as German currency with a thousands separator.
@@ -52,36 +54,12 @@ func WeekdayShort(weekday int) string {
 
 // Mahlzeit is the German meal label.
 func Mahlzeit(code string) string {
-	switch code {
-	case "fruehstueck":
-		return "Frühstück"
-	case "mittag":
-		return "Mittag"
-	case "abend":
-		return "Abend"
-	default:
-		return code
-	}
+	return rules.LabelOf(rules.Mahlzeiten(), code)
 }
 
 // Bezugsort is the German purchase-place label.
 func Bezugsort(code string) string {
-	switch code {
-	case "supermarkt":
-		return "Supermarkt"
-	case "restaurant":
-		return "Restaurant"
-	case "kantine":
-		return "Kantine"
-	case "baeckerei":
-		return "Bäckerei"
-	case "lieferdienst":
-		return "Lieferdienst"
-	case "sonstiges":
-		return "Sonstiges"
-	default:
-		return code
-	}
+	return rules.LabelOf(rules.Bezugsorte(), code)
 }
 
 // Arbeitsort is the German workplace label.

@@ -79,6 +79,10 @@ func TestFlowManualReceipt(t *testing.T) {
 	if res.Status != 401 {
 		t.Fatalf("anon %d", res.Status)
 	}
+	res = doJSON(t, client, http.MethodGet, ts.URL+"/api/v1/werte", "", nil)
+	if res.Status != 401 {
+		t.Fatalf("werte anon %d", res.Status)
+	}
 	res = doJSON(t, client, http.MethodPost, ts.URL+"/api/v1/auth/login", "", map[string]string{"passwort": "falsch"})
 	if res.Status != 401 {
 		t.Fatalf("login %d", res.Status)
@@ -87,6 +91,9 @@ func TestFlowManualReceipt(t *testing.T) {
 	if res.Status != 204 {
 		t.Fatalf("login ok %d %s", res.Status, res.Raw)
 	}
+
+	res = doJSON(t, client, http.MethodGet, ts.URL+"/api/v1/werte", "", nil)
+	assertWerte(t, res)
 
 	regel := rules.Vorschlag(2026, nil)
 	res = doJSON(t, client, http.MethodPut, ts.URL+"/api/v1/jahresregeln/2026", "", regel)
@@ -199,6 +206,88 @@ func TestFlowManualReceipt(t *testing.T) {
 		t.Fatalf("csrf %d", rec.Code)
 	}
 	_ = ctx
+}
+
+// assertWerte is the value-fidelity guard for GET /werte. Every list is
+// compared element by element against the compiled reference data, so a wrong
+// number, a swapped pair of equal rates (SN and ST are both 500 bp), or a
+// changed order all fail instead of slipping through a sampled index.
+func assertWerte(t *testing.T, res httpResult) {
+	t.Helper()
+	if res.Status != 200 {
+		t.Fatalf("werte %d %s", res.Status, res.Raw)
+	}
+	wantSBW := []map[string]any{
+		{"jahr": float64(2025), "fruehstueck_cent": float64(230), "mittag_cent": float64(440), "abend_cent": float64(440), "status": "amtlich"},
+		{"jahr": float64(2026), "fruehstueck_cent": float64(237), "mittag_cent": float64(457), "abend_cent": float64(457), "status": "amtlich"},
+		{"jahr": float64(2027), "fruehstueck_cent": float64(243), "mittag_cent": float64(470), "abend_cent": float64(470), "status": "entwurf"},
+	}
+	assertListe(t, "sachbezugswerte", res.JSON["sachbezugswerte"], wantSBW)
+	wantKist := []map[string]any{
+		{"land": "BW", "satz_bp": float64(450)},
+		{"land": "BY", "satz_bp": float64(700)},
+		{"land": "BE", "satz_bp": float64(500)},
+		{"land": "BB", "satz_bp": float64(500)},
+		{"land": "HB", "satz_bp": float64(700)},
+		{"land": "HH", "satz_bp": float64(400)},
+		{"land": "HE", "satz_bp": float64(700)},
+		{"land": "MV", "satz_bp": float64(500)},
+		{"land": "NI", "satz_bp": float64(600)},
+		{"land": "NW", "satz_bp": float64(700)},
+		{"land": "RP", "satz_bp": float64(700)},
+		{"land": "SL", "satz_bp": float64(700)},
+		{"land": "SN", "satz_bp": float64(500)},
+		{"land": "ST", "satz_bp": float64(500)},
+		{"land": "SH", "satz_bp": float64(600)},
+		{"land": "TH", "satz_bp": float64(500)},
+	}
+	assertListe(t, "kirchensteuer", res.JSON["kirchensteuer"], wantKist)
+	// The Bundesland list must stay in the same order as the rates above.
+	laender, _ := res.JSON["bundeslaender"].([]any)
+	if len(laender) != len(wantKist) {
+		t.Fatalf("bundeslaender %d Eintraege, erwartet %d: %v", len(laender), len(wantKist), laender)
+	}
+	for i, satz := range wantKist {
+		if laender[i] != satz["land"] {
+			t.Fatalf("bundeslaender[%d] %v, erwartet %v", i, laender[i], satz["land"])
+		}
+	}
+	wantMahlzeiten := []map[string]any{
+		{"code": "fruehstueck", "label": "Frühstück"},
+		{"code": "mittag", "label": "Mittag"},
+		{"code": "abend", "label": "Abend"},
+	}
+	assertListe(t, "mahlzeiten", res.JSON["mahlzeiten"], wantMahlzeiten)
+	wantBezugsorte := []map[string]any{
+		{"code": "supermarkt", "label": "Supermarkt"},
+		{"code": "restaurant", "label": "Restaurant"},
+		{"code": "kantine", "label": "Kantine"},
+		{"code": "baeckerei", "label": "Bäckerei"},
+		{"code": "lieferdienst", "label": "Lieferdienst"},
+		{"code": "sonstiges", "label": "Sonstiges"},
+	}
+	assertListe(t, "bezugsorte", res.JSON["bezugsorte"], wantBezugsorte)
+}
+
+// assertListe walks a decoded JSON array in order and compares every field of
+// every element with the wanted one, reporting the first index that differs.
+func assertListe(t *testing.T, name string, got any, want []map[string]any) {
+	t.Helper()
+	list, _ := got.([]any)
+	if len(list) != len(want) {
+		t.Fatalf("%s %d Eintraege, erwartet %d: %v", name, len(list), len(want), list)
+	}
+	for i, expected := range want {
+		element, ok := list[i].(map[string]any)
+		if !ok {
+			t.Fatalf("%s[%d] %T %v", name, i, list[i], list[i])
+		}
+		for key, value := range expected {
+			if element[key] != value {
+				t.Fatalf("%s[%d] %s=%v, erwartet %v (gesamter Eintrag %v)", name, i, key, element[key], value, element)
+			}
+		}
+	}
 }
 
 type httpResult struct {

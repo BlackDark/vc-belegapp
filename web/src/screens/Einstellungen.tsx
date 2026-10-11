@@ -32,10 +32,10 @@ import {
   SwitchThumb,
 } from "../components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
-import { bezugsorte } from "../lib/amtlich";
 import { ApiError, client, type Einstellungen as Profil } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
 import { applyTheme, currentTheme } from "../lib/theme";
+import { bezugsorteOptions, useWerte } from "../lib/werte";
 
 type ImportPreview = {
   import_token: string;
@@ -122,6 +122,7 @@ export default function Einstellungen() {
     queryKey: queryKeys.sitzungen,
     queryFn: () => client.sitzungen(),
   }));
+  const werte = useWerte();
   const [name, setName] = createSignal("");
   const [personal, setPersonal] = createSignal("");
   const [ag, setAg] = createSignal("");
@@ -305,12 +306,17 @@ export default function Einstellungen() {
                 onChange={setPersonal}
               />
               <LabeledField label="Arbeitgeber" value={ag()} onChange={setAg} />
-              <Choice
-                label="Standard-Bezugsort"
-                value={bezug()}
-                options={bezugsorte}
-                onChange={setBezug}
-              />
+              <Show
+                when={!werte.isPending}
+                fallback={<Skeleton height={40} radius={8} />}
+              >
+                <Choice
+                  label="Standard-Bezugsort"
+                  value={bezug()}
+                  options={bezugsorteOptions(werte.data)}
+                  onChange={setBezug}
+                />
+              </Show>
               <Choice
                 label="Standard-Arbeitsort"
                 value={arbeit()}

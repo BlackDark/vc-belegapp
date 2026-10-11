@@ -93,3 +93,74 @@ func TestKistTableComplete(t *testing.T) {
 		t.Fatalf("tables %d %d", len(KistVorschlagBP), len(Amtlich))
 	}
 }
+
+func TestReferenceListsAreOrdered(t *testing.T) {
+	if got := Bundeslaender(); len(got) != 16 || got[0] != "BW" || got[1] != "BY" || got[15] != "TH" {
+		t.Fatalf("bundeslaender %v", got)
+	}
+	if got := MahlzeitCodes(); len(got) != 3 || got[0] != "fruehstueck" || got[2] != "abend" {
+		t.Fatalf("mahlzeiten %v", got)
+	}
+	sbw := SBWListe()
+	if len(sbw) != 3 || sbw[0].Jahr != 2025 || sbw[2].Jahr != 2027 {
+		t.Fatalf("sbw %+v", sbw)
+	}
+	if sbw[2].Status != StatusEntwurf {
+		t.Fatalf("sbw 2027 %+v", sbw[2])
+	}
+	kist := KistSaetze()
+	if len(kist) != 16 || kist[0].Land != "BW" || kist[0].SatzBP != 450 || kist[3].Land != "BB" {
+		t.Fatalf("kist %+v", kist[:4])
+	}
+	for _, satz := range kist {
+		if KistVorschlagBP[satz.Land] != satz.SatzBP {
+			t.Fatalf("map disagrees for %s", satz.Land)
+		}
+	}
+	bezugsorte := Bezugsorte()
+	if len(bezugsorte) != 6 || bezugsorte[0].Code != "supermarkt" || bezugsorte[5].Code != "sonstiges" {
+		t.Fatalf("bezugsorte %+v", bezugsorte)
+	}
+}
+
+func TestLabelOfFallsBackToCode(t *testing.T) {
+	if got := LabelOf(Mahlzeiten(), "fruehstueck"); got != "Frühstück" {
+		t.Fatalf("label %q", got)
+	}
+	if got := LabelOf(Bezugsorte(), "baeckerei"); got != "Bäckerei" {
+		t.Fatalf("label %q", got)
+	}
+	if got := LabelOf(Mahlzeiten(), "unbekannt"); got != "unbekannt" {
+		t.Fatalf("fallback %q", got)
+	}
+}
+
+// The maps, the ordered lists and the validation tables must never drift apart.
+func TestDerivedTablesMatchTheLists(t *testing.T) {
+	for _, eintrag := range SBWListe() {
+		sbw, ok := SBWFor(eintrag.Jahr)
+		if !ok || sbw.Fruehstueck != eintrag.Fruehstueck || sbw.Mittag != eintrag.Mittag ||
+			sbw.Abend != eintrag.Abend || sbw.Status != eintrag.Status {
+			t.Fatalf("sbw %d %+v", eintrag.Jahr, sbw)
+		}
+	}
+	for _, land := range Bundeslaender() {
+		r := Vorschlag(2026, nil)
+		r.Bundesland = land
+		for _, err := range Validate(r) {
+			if err.Feld == "bundesland" {
+				t.Fatalf("bundesland %s rejected", land)
+			}
+		}
+	}
+	for _, code := range MahlzeitCodes() {
+		r := Vorschlag(2026, nil)
+		r.Mahlzeiten = []string{code}
+		r.StandardMahlzeit = code
+		for _, err := range Validate(r) {
+			if err.Feld == "mahlzeiten" {
+				t.Fatalf("mahlzeit %s rejected", code)
+			}
+		}
+	}
+}

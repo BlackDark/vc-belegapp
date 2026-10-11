@@ -211,6 +211,20 @@ export type SystemInfo = {
   llm_enabled?: boolean;
   typst_version: string;
 };
+export type Sachbezugswert = {
+  jahr: number;
+  fruehstueck_cent: number;
+  mittag_cent: number;
+  abend_cent: number;
+  status: string;
+};
+export type Werte = {
+  sachbezugswerte: Sachbezugswert[];
+  kirchensteuer: { land: string; satz_bp: number }[];
+  bundeslaender: string[];
+  mahlzeiten: { code: string; label: string }[];
+  bezugsorte: { code: string; label: string }[];
+};
 
 const json = (body: unknown) => JSON.stringify(body);
 
@@ -293,6 +307,7 @@ export const client = {
     return res.blob();
   },
   info: () => api<SystemInfo>("/api/v1/system/info"),
+  werte: () => api<Werte>("/api/v1/werte"),
   sitzungen: () =>
     api<
       {

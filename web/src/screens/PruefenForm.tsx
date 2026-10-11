@@ -21,8 +21,9 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "../components/ui/collapsible";
+import { Skeleton } from "../components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
-import { bezugsorte, mahlzeitLabel } from "../lib/amtlich";
+import { ValuesAlert } from "../components/values-alert";
 import {
   ApiError,
   type Beleg,
@@ -32,6 +33,7 @@ import {
 } from "../lib/api";
 import { formatCent, formatCentInput, parseEuroToCent } from "../lib/money";
 import { queryKeys } from "../lib/queryKeys";
+import { bezugsorteOptions, mahlzeitLabelOf, useWerte } from "../lib/werte";
 
 export type Draft = {
   datum: string;
@@ -90,6 +92,8 @@ export function PruefenForm(props: {
     queryFn: () => client.regel(jahr()),
     retry: false,
   }));
+  const werte = useWerte();
+  const bezugsorte = () => bezugsorteOptions(werte.data);
 
   const form = createForm(() => ({
     defaultValues: props.initial,
@@ -106,6 +110,11 @@ export function PruefenForm(props: {
   createEffect(() => {
     const result = props.erkennung?.ergebnis;
     if (props.beleg || props.erkennung?.status !== "fertig" || !result) {
+      return;
+    }
+    // The recognised purchase place is only applied once the reference table
+    // has arrived, so the effect waits for it instead of dropping the hint.
+    if (werte.isPending) {
       return;
     }
     const key = JSON.stringify(result);
@@ -129,7 +138,7 @@ export function PruefenForm(props: {
     if (
       !touched.bezugsort &&
       result.bezugsort_vorschlag &&
-      bezugsorte.some((item) => item[0] === result.bezugsort_vorschlag)
+      bezugsorte().some((item) => item[0] === result.bezugsort_vorschlag)
     ) {
       form.setFieldValue("bezugsort", result.bezugsort_vorschlag);
     }
@@ -336,35 +345,46 @@ export function PruefenForm(props: {
           form.setFieldValue("datum", value);
         }}
       />
-      <fieldset>
-        <legend class="mb-1 text-sm font-medium">Mahlzeitart</legend>
-        <form.Field name="mahlzeit">
-          {(field) => (
-            <ToggleGroup
-              value={field().state.value}
-              onChange={(value) => value && field().handleChange(value)}
-              class="grid grid-cols-3 gap-2"
-            >
-              <For each={meals()}>
-                {(meal) => (
-                  <ToggleGroupItem value={meal} class="min-h-11">
-                    {mahlzeitLabel[meal] ?? meal}
-                  </ToggleGroupItem>
-                )}
-              </For>
-            </ToggleGroup>
-          )}
-        </form.Field>
-      </fieldset>
-      <Choice
-        label="Bezugsort"
-        value={values().bezugsort}
-        options={bezugsorte}
-        onChange={(value) => {
-          setDirty((prev) => ({ ...prev, bezugsort: true }));
-          form.setFieldValue("bezugsort", value);
-        }}
-      />
+      <ValuesAlert error={werte.isError} />
+      <Show
+        when={!werte.isPending}
+        fallback={
+          <div class="flex flex-col gap-1">
+            <Skeleton height={20} width={96} radius={8} />
+            <Skeleton height={44} radius={8} />
+          </div>
+        }
+      >
+        <fieldset>
+          <legend class="mb-1 text-sm font-medium">Mahlzeitart</legend>
+          <form.Field name="mahlzeit">
+            {(field) => (
+              <ToggleGroup
+                value={field().state.value}
+                onChange={(value) => value && field().handleChange(value)}
+                class="grid grid-cols-3 gap-2"
+              >
+                <For each={meals()}>
+                  {(meal) => (
+                    <ToggleGroupItem value={meal} class="min-h-11">
+                      {mahlzeitLabelOf(werte.data, meal) ?? meal}
+                    </ToggleGroupItem>
+                  )}
+                </For>
+              </ToggleGroup>
+            )}
+          </form.Field>
+        </fieldset>
+        <Choice
+          label="Bezugsort"
+          value={values().bezugsort}
+          options={bezugsorte()}
+          onChange={(value) => {
+            setDirty((prev) => ({ ...prev, bezugsort: true }));
+            form.setFieldValue("bezugsort", value);
+          }}
+        />
+      </Show>
       <form.Field name="arbeitsort">
         {(field) => (
           <fieldset>

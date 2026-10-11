@@ -27,11 +27,24 @@ const info = {
   typst_version: "typst 0.15.1",
 };
 
+const werte = {
+  sachbezugswerte: [],
+  kirchensteuer: [{ land: "NW", satz_bp: 700 }],
+  bundeslaender: ["NW"],
+  mahlzeiten: [
+    { code: "fruehstueck", label: "Frühstück" },
+    { code: "mittag", label: "Mittag" },
+    { code: "abend", label: "Abend" },
+  ],
+  bezugsorte: [{ code: "supermarkt", label: "Supermarkt" }],
+};
+
 const responses: Record<string, unknown> = {
   "/api/v1/einstellungen": profil,
   "/api/v1/jahresregeln": [{ jahr: 2026 }],
   "/api/v1/system/info": info,
   "/api/v1/auth/sitzungen": [],
+  "/api/v1/werte": werte,
 };
 
 afterEach(() => {

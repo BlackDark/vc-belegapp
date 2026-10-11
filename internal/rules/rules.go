@@ -56,23 +56,35 @@ const (
 	DefaultAufschlag  = 310
 )
 
-var mahlzeitOrder = []string{"fruehstueck", "mittag", "abend"}
+var mahlzeitOrder = MahlzeitCodes()
 
-var bundeslaender = []string{"BW", "BY", "BE", "BB", "HB", "HH", "HE", "MV", "NI", "NW", "RP", "SL", "SN", "ST", "SH", "TH"}
+var bundeslaender = Bundeslaender()
 
-// Amtlich holds the Sachbezugswerte shipped with the binary.
-var Amtlich = map[int]SBW{
-	2025: {Fruehstueck: 230, Mittag: 440, Abend: 440, Status: StatusAmtlich},
-	2026: {Fruehstueck: 237, Mittag: 457, Abend: 457, Status: StatusAmtlich},
-	2027: {Fruehstueck: 243, Mittag: 470, Abend: 470, Status: StatusEntwurf},
-}
+// Amtlich holds the Sachbezugswerte shipped with the binary, keyed by year.
+var Amtlich = amtlichMap()
 
 // KistVorschlagBP is the simplified church-tax rate in basis points (2026 table).
-var KistVorschlagBP = map[string]int{
-	"BW": 450, "BY": 700, "BE": 500, "BB": 500,
-	"HB": 700, "HH": 400, "HE": 700, "MV": 500,
-	"NI": 600, "NW": 700, "RP": 700, "SL": 700,
-	"SN": 500, "ST": 500, "SH": 600, "TH": 500,
+var KistVorschlagBP = kistMap()
+
+func amtlichMap() map[int]SBW {
+	out := make(map[int]SBW, len(amtlichListe))
+	for _, eintrag := range amtlichListe {
+		out[eintrag.Jahr] = SBW{
+			Fruehstueck: eintrag.Fruehstueck,
+			Mittag:      eintrag.Mittag,
+			Abend:       eintrag.Abend,
+			Status:      eintrag.Status,
+		}
+	}
+	return out
+}
+
+func kistMap() map[string]int {
+	out := make(map[string]int, len(kistListe))
+	for _, satz := range kistListe {
+		out[satz.Land] = satz.SatzBP
+	}
+	return out
 }
 
 // FieldError is one constraint violation.

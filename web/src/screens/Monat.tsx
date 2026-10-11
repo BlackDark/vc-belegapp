@@ -27,11 +27,11 @@ import {
   TableHeader,
   TableRow,
 } from "../components/ui/table";
-import { mahlzeitLabel } from "../lib/amtlich";
 import { ApiError, client, type Monat as MonatData } from "../lib/api";
 import { currentMonth, todayISO } from "../lib/dates";
 import { formatCent } from "../lib/money";
 import { queryKeys } from "../lib/queryKeys";
+import { mahlzeitLabelOf, useWerte } from "../lib/werte";
 
 const statusLabel: Record<string, string> = {
   offen: "Offen",
@@ -63,6 +63,7 @@ export default function Monat() {
   const [monat, setMonat] = createSignal(currentMonth());
   const [open, setOpen] = createSignal(false);
   const queryClient = useQueryClient();
+  const werte = useWerte();
   const query = useQuery(() => ({
     queryKey: queryKeys.monat(monat()),
     queryFn: () => client.monat(monat()),
@@ -209,10 +210,16 @@ export default function Monat() {
                               </A>
                             </TableCell>
                             <TableCell>
-                              <Badge variant="secondary">
-                                {mahlzeitLabel[beleg.mahlzeit] ??
-                                  beleg.mahlzeit}
-                              </Badge>
+                              <Show
+                                when={mahlzeitLabelOf(
+                                  werte.data,
+                                  beleg.mahlzeit,
+                                )}
+                              >
+                                {(label) => (
+                                  <Badge variant="secondary">{label()}</Badge>
+                                )}
+                              </Show>
                             </TableCell>
                             <TableCell>
                               <Badge variant="outline">

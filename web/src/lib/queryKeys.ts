@@ -10,5 +10,6 @@ export const queryKeys = {
   beleg: (id: string) => ["beleg", id] as const,
   bild: (id: string) => ["bild", id] as const,
   info: ["info"] as const,
+  werte: ["werte"] as const,
   sitzungen: ["sitzungen"] as const,
 };

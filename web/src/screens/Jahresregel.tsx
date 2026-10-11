@@ -14,14 +14,23 @@ import {
 } from "../components/ui/card";
 import { Checkbox } from "../components/ui/checkbox";
 import { Skeleton } from "../components/ui/skeleton";
-import { amtlich, kistVorschlag, laender, mahlzeitLabel } from "../lib/amtlich";
+import { ValuesAlert } from "../components/values-alert";
 import { ApiError, client, type Jahresregel } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
+import {
+  bundeslaenderOf,
+  kistSatzFor,
+  mahlzeitLabelOf,
+  mealCodesOf,
+  sbwFor,
+  useWerte,
+} from "../lib/werte";
 
 export default function JahresregelPage() {
   const params = useParams();
   const jahr = () => Number(params.jahr);
   const queryClient = useQueryClient();
+  const werte = useWerte();
   const existing = useQuery(() => ({
     queryKey: queryKeys.regel(jahr()),
     queryFn: () => client.regel(jahr()),
@@ -33,12 +42,21 @@ export default function JahresregelPage() {
     enabled: existing.isError,
   }));
   const [draft, setDraft] = createSignal<Jahresregel | null>(null);
+  // The meal list is server data too: it comes from GET /werte and falls back
+  // to the meals the rule was seeded with. The seed is captured once so that
+  // unchecking a meal cannot shrink the list away while the table is missing.
+  const [seedMeals, setSeedMeals] = createSignal<string[]>([]);
   createEffect(() => {
     const row = existing.data ?? suggest.data;
     if (row && !draft()) {
       setDraft(row);
+      setSeedMeals(row.mahlzeiten);
     }
   });
+  const meals = () => {
+    const codes = mealCodesOf(werte.data);
+    return codes.length > 0 ? codes : seedMeals();
+  };
 
   const update = (patch: Partial<Jahresregel>) => {
     const current = draft();
@@ -105,44 +123,48 @@ export default function JahresregelPage() {
               <CardTitle>Werte</CardTitle>
             </CardHeader>
             <CardContent class="flex flex-col gap-3">
+              <ValuesAlert error={werte.isError} />
               <Cent
                 label="Zuschuss (Cent)"
                 value={row().zuschuss_cent}
                 onChange={(value) => update({ zuschuss_cent: value })}
               />
-              <fieldset class="flex flex-col gap-2">
-                <legend class="text-sm font-medium">Mahlzeiten</legend>
-                <For each={["fruehstueck", "mittag", "abend"]}>
-                  {(meal) => (
-                    <Checkbox
-                      checked={row().mahlzeiten.includes(meal)}
-                      onChange={(checked) => {
-                        const set = new Set(row().mahlzeiten);
-                        if (checked) {
-                          set.add(meal);
-                        } else {
-                          set.delete(meal);
-                        }
-                        const mahlzeiten = [
-                          "fruehstueck",
-                          "mittag",
-                          "abend",
-                        ].filter((item) => set.has(item));
-                        update({
-                          mahlzeiten,
-                          standard_mahlzeit: mahlzeiten.includes(
-                            row().standard_mahlzeit,
-                          )
-                            ? row().standard_mahlzeit
-                            : (mahlzeiten[0] ?? "mittag"),
-                        });
-                      }}
-                    >
-                      {mahlzeitLabel[meal]}
-                    </Checkbox>
-                  )}
-                </For>
-              </fieldset>
+              <Show
+                when={!werte.isPending}
+                fallback={<Skeleton height={96} radius={8} />}
+              >
+                <fieldset class="flex flex-col gap-2">
+                  <legend class="text-sm font-medium">Mahlzeiten</legend>
+                  <For each={meals()}>
+                    {(meal) => (
+                      <Checkbox
+                        checked={row().mahlzeiten.includes(meal)}
+                        onChange={(checked) => {
+                          const set = new Set(row().mahlzeiten);
+                          if (checked) {
+                            set.add(meal);
+                          } else {
+                            set.delete(meal);
+                          }
+                          const mahlzeiten = meals().filter((item) =>
+                            set.has(item),
+                          );
+                          update({
+                            mahlzeiten,
+                            standard_mahlzeit: mahlzeiten.includes(
+                              row().standard_mahlzeit,
+                            )
+                              ? row().standard_mahlzeit
+                              : (mahlzeiten[0] ?? "mittag"),
+                          });
+                        }}
+                      >
+                        {mahlzeitLabelOf(werte.data, meal) ?? meal}
+                      </Checkbox>
+                    )}
+                  </For>
+                </fieldset>
+              </Show>
               <div class="grid gap-2 sm:grid-cols-3">
                 <Cent
                   label="SBW Frühstück"
@@ -162,16 +184,26 @@ export default function JahresregelPage() {
               </div>
               <Button
                 variant="outline"
+                disabled={werte.isPending || werte.isError}
                 onClick={() => {
-                  const official = amtlich[jahr()];
+                  // A failed request and a year without official values are
+                  // different facts and must not share one message: the first
+                  // is an error, the second is a plain "nothing to copy".
+                  if (werte.isError) {
+                    toast.error(
+                      "Die amtlichen Werte konnten nicht geladen werden.",
+                    );
+                    return;
+                  }
+                  const official = sbwFor(werte.data, jahr());
                   if (!official) {
                     toast("Für dieses Jahr liegen keine amtlichen Werte vor.");
                     return;
                   }
                   update({
-                    sbw_fruehstueck_cent: official.fruehstueck,
-                    sbw_mittag_cent: official.mittag,
-                    sbw_abend_cent: official.abend,
+                    sbw_fruehstueck_cent: official.fruehstueck_cent,
+                    sbw_mittag_cent: official.mittag_cent,
+                    sbw_abend_cent: official.abend_cent,
                   });
                 }}
               >
@@ -189,18 +221,29 @@ export default function JahresregelPage() {
               >
                 Gehaltsumwandlung
               </Checkbox>
-              <Choice
-                label="Bundesland"
-                value={row().bundesland}
-                options={laender.map((land) => [land, land])}
-                onChange={(bundesland) =>
-                  update({
-                    bundesland,
-                    kist_satz_bp:
-                      kistVorschlag[bundesland] ?? row().kist_satz_bp,
-                  })
-                }
-              />
+              <Show
+                when={!werte.isPending}
+                fallback={<Skeleton height={40} radius={8} />}
+              >
+                <Choice
+                  label="Bundesland"
+                  value={row().bundesland}
+                  options={bundeslaenderOf(werte.data).map((land) => [
+                    land,
+                    land,
+                  ])}
+                  onChange={(bundesland) =>
+                    update({
+                      bundesland,
+                      kist_satz_bp: kistSatzFor(
+                        werte.data,
+                        bundesland,
+                        row().kist_satz_bp,
+                      ),
+                    })
+                  }
+                />
+              </Show>
               <Cent
                 label="Kirchensteuer (Basispunkte)"
                 value={row().kist_satz_bp}

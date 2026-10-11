@@ -540,6 +540,7 @@ Die Monatsansicht prüft `P_BILDER_VOLLSTAENDIG` per Stat (Blob vorhanden, Grö�
 | POST | `/datenimport/pruefen` | multipart `datei` → Manifest-Zusammenfassung + `import_token` (gültig 30 min) |
 | POST | `/datenimport` | `{import_token, bestaetigung: "ERSETZEN"}` → `200`, alle Sitzungen beendet |
 | POST | `/erkennung/test` | Testaufruf mit eingebautem Beispielbild → `{ok, modell, dauer_ms, fehler?}` |
+| GET | `/werte` | amtliche Referenzwerte aus `internal/rules`: `{sachbezugswerte: [{jahr, fruehstueck_cent, mittag_cent, abend_cent, status}], kirchensteuer: [{land, satz_bp}], bundeslaender: [code], mahlzeiten: [{code, label}], bezugsorte: [{code, label}]}` (Listen in fester Reihenfolge) |
 | GET | `/system/info` | `{version, commit, build_datum, storage_backend, erkennung_konfiguriert, oidc, typst_version}` |
 
 ### 8.3 Ressourcen (Beispiele)

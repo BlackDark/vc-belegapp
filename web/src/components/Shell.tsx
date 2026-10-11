@@ -13,6 +13,7 @@ import { type JSX, type ParentProps, Show, Suspense } from "solid-js";
 import { ApiError, client } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
 import { applyTheme, currentTheme } from "../lib/theme";
+import { useWerte } from "../lib/werte";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -47,6 +48,9 @@ export default function Shell(props: ParentProps) {
     queryFn: () => client.me(),
     retry: false,
   }));
+  // Loads the reference tables once for every screen, so labels and dropdowns
+  // are warm before a screen needs them.
+  useWerte();
 
   return (
     <Show

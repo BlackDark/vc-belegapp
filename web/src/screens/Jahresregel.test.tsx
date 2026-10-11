@@ -7,6 +7,7 @@ import {
   waitFor,
 } from "@solidjs/testing-library";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
+import { Toaster } from "solid-sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Jahresregel from "./Jahresregel";
 
@@ -37,8 +38,47 @@ function regel(jahr: number, overrides: Record<string, unknown> = {}) {
 
 type Calls = { url: string; method: string; body: unknown }[];
 
-// A missing entry makes that URL answer with a 500 so the query goes to error.
+// A missing entry makes that URL answer with a 500 so the query goes to error;
+// an explicit undefined entry does the same for a URL that has a default.
 type Responses = Record<string, unknown>;
+
+const werte = {
+  sachbezugswerte: [
+    {
+      jahr: 2025,
+      fruehstueck_cent: 230,
+      mittag_cent: 440,
+      abend_cent: 440,
+      status: "amtlich",
+    },
+    {
+      jahr: 2026,
+      fruehstueck_cent: 237,
+      mittag_cent: 457,
+      abend_cent: 457,
+      status: "amtlich",
+    },
+    {
+      jahr: 2027,
+      fruehstueck_cent: 243,
+      mittag_cent: 470,
+      abend_cent: 470,
+      status: "entwurf",
+    },
+  ],
+  kirchensteuer: [
+    { land: "BW", satz_bp: 450 },
+    { land: "BE", satz_bp: 500 },
+    { land: "NW", satz_bp: 700 },
+  ],
+  bundeslaender: ["BW", "BE", "NW"],
+  mahlzeiten: [
+    { code: "fruehstueck", label: "Frühstück" },
+    { code: "mittag", label: "Mittag" },
+    { code: "abend", label: "Abend" },
+  ],
+  bezugsorte: [{ code: "supermarkt", label: "Supermarkt" }],
+};
 
 function stubApi(responses: Responses) {
   const calls: Calls = [];
@@ -48,7 +88,14 @@ function stubApi(responses: Responses) {
       const method = init?.method ?? "GET";
       const body = init?.body ? JSON.parse(String(init.body)) : null;
       calls.push({ url, method, body });
-      const payload = responses[url];
+      // An explicit undefined entry answers with a 500, so a test can fail a
+      // single URL, /werte included.
+      const payload =
+        url in responses
+          ? responses[url]
+          : url === "/api/v1/werte"
+            ? werte
+            : undefined;
       if (payload === undefined) {
         return new Response(JSON.stringify({ detail: "nope" }), {
           status: 500,
@@ -76,6 +123,7 @@ function renderJahresregel(jahr: number) {
       <MemoryRouter history={history}>
         <Route path="/jahresregeln/:jahr" component={Jahresregel} />
       </MemoryRouter>
+      <Toaster />
     </QueryClientProvider>
   ));
 }
@@ -186,6 +234,60 @@ describe("Jahresregel editor", () => {
     });
     expect(number("SBW Mittag").value).toBe("470");
     expect(number("SBW Abend").value).toBe("470");
+  });
+
+  it("says the year has no official values only when the table loaded", async () => {
+    stubApi({ "/api/v1/jahresregeln/2029": regel(2029) });
+    renderJahresregel(2029);
+    await waitForEditor();
+
+    const uebernehmen = screen.getByRole("button", {
+      name: "Amtliche Werte übernehmen",
+    }) as HTMLButtonElement;
+    expect(uebernehmen.disabled).toBe(false);
+    fireEvent.click(uebernehmen);
+    expect(
+      await screen.findByText(
+        "Für dieses Jahr liegen keine amtlichen Werte vor.",
+      ),
+    ).toBeTruthy();
+  });
+
+  // A failed /werte is not a year without values: the button must stay disabled
+  // so the screen never claims 2026 has no official values.
+  it("disables the official-values button when the values table failed", async () => {
+    stubApi({
+      "/api/v1/jahresregeln/2026": regel(2026),
+      "/api/v1/werte": undefined,
+    });
+    renderJahresregel(2026);
+    await waitForEditor();
+
+    await waitFor(() => {
+      const button = screen.getByRole("button", {
+        name: "Amtliche Werte übernehmen",
+      }) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+    });
+    expect(
+      await screen.findByText(
+        "Die Referenzwerte konnten nicht geladen werden. Codes werden stattdessen angezeigt.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("labels the meals with their raw codes when the values table failed", async () => {
+    stubApi({
+      "/api/v1/jahresregeln/2026": regel(2026),
+      "/api/v1/werte": undefined,
+    });
+    renderJahresregel(2026);
+    await waitForEditor();
+
+    // Every checkbox still carries a label, so the fieldset is never blank.
+    expect(checkbox("fruehstueck").checked).toBe(true);
+    expect(checkbox("mittag").checked).toBe(true);
+    expect(checkbox("abend").checked).toBe(true);
   });
 
   it("moves the standard meal to the first remaining meal when it is unchecked", async () => {
