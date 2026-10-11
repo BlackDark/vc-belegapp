@@ -43,7 +43,7 @@ Versionen am 08.10.2026 geprüft über npm-Registry, proxy.golang.org und GitHub
 - **API**: JSON-REST unter `/api/v1`, das SPA unter `/`, Fallback auf `index.html`. Optional: OpenAPI mit **huma v2** (v2.39.1) und daraus TS-Typen über `openapi-typescript` (7.13.0). Das ist nett, aber kein Muss.
 - **Hintergrundjobs** (OCR, PDF): eine Tabelle `jobs` in SQLite und ein Worker als Goroutine. Kein Redis.
 - **Domänenmodell (Entwurf)**: `year_rules` (Jahr, SBW je Mahlzeitart, Tageszuschuss, Monatslimit, Pauschalierung, Variante exakt/konservativ, KiSt-Satz), `days` (Datum, Mahlzeitart, Status Arbeitstag/Homeoffice/Urlaub/Krank/Dienstreise), `receipts` (Tag, Blob-Key, SHA-256, Händler, Betrag, korrigierter Betrag und Grund, OCR-Rohdaten, Quelle ki/manuell), `exports` (Monat, Hash, gesperrt), `audit_log`.
-- **Berechnung** als reine Go-Funktionen mit Tabellentests. Die Formeln stehen in `steuer.md` Abschnitt 3.3/3.4. Beträge immer als **Integer-Cent**, nie als Float.
+- **Berechnung** als reine Go-Funktionen mit Tabellentests. Die Formeln stehen in `tax.md` Abschnitt 3.3/3.4. Beträge immer als **Integer-Cent**, nie als Float.
 - **Backup/Export**: Ein „Alles exportieren“ erzeugt ein ZIP mit SQLite-Snapshot (`VACUUM INTO`), allen Bildern, CSV und PDFs. Optional **Litestream** (v0.5.17) als Sidecar für laufende Replikation nach S3.
 
 ## 3. Frontend im Detail

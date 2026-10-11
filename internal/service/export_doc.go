@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/BlackDark/vc-belegapp/internal/db"
-	"github.com/BlackDark/vc-belegapp/internal/erkennung"
 	"github.com/BlackDark/vc-belegapp/internal/export"
 	"github.com/BlackDark/vc-belegapp/internal/imaging"
 	"github.com/BlackDark/vc-belegapp/internal/pdf"
+	"github.com/BlackDark/vc-belegapp/internal/recognition"
 	"github.com/BlackDark/vc-belegapp/internal/rules"
 	"github.com/BlackDark/vc-belegapp/internal/validate"
 )
@@ -269,7 +269,7 @@ func erkanntText(raw any) string {
 	if text == "" {
 		return "–"
 	}
-	var result erkennung.Ergebnis
+	var result recognition.Ergebnis
 	if err := json.Unmarshal([]byte(text), &result); err != nil {
 		return "–"
 	}

@@ -15,20 +15,20 @@ First release: [v1.0.0](https://github.com/BlackDark/vc-belegapp/releases/tag/v1
 
 First release: [v1.0.0](https://github.com/BlackDark/vc-belegapp/releases/tag/v1.0.0). PR [#2](https://github.com/BlackDark/vc-belegapp/pull/2), hardened in [#8](https://github.com/BlackDark/vc-belegapp/pull/8).
 
-- **Auth:** password (argon2id PHC from env/secret) and OIDC (authorization code + PKCE, allowlist by `sub` or verified e-mail); server-side sessions in SQLite, `__Host-` cookie, CSRF via `http.CrossOriginProtection` ([ADR 0003](adr/0003-auth-passwort-und-oidc.md)).
-- **Storage:** `BlobStore` on the filesystem or S3 (minio-go), contract-tested against both ([ADR 0004](adr/0004-storage-fs-und-s3.md)). Content-addressed keys and image deduplication came in [#10](https://github.com/BlackDark/vc-belegapp/pull/10); unreferenced-image reclaim in [#9](https://github.com/BlackDark/vc-belegapp/pull/9).
+- **Auth:** password (argon2id PHC from env/secret) and OIDC (authorization code + PKCE, allowlist by `sub` or verified e-mail); server-side sessions in SQLite, `__Host-` cookie, CSRF via `http.CrossOriginProtection` ([ADR 0003](adr/0003-auth-password-and-oidc.md)).
+- **Storage:** `BlobStore` on the filesystem or S3 (minio-go), contract-tested against both ([ADR 0004](adr/0004-storage-fs-and-s3.md)). Content-addressed keys and image deduplication came in [#10](https://github.com/BlackDark/vc-belegapp/pull/10); unreferenced-image reclaim in [#9](https://github.com/BlackDark/vc-belegapp/pull/9).
 - **Belege:** one Beleg per Belegtag, up to three images, server-side JPEG normalisation with EXIF stripped, Belegbetrag plus optional korrigierter Betrag with reason, soft delete, versions.
 - **Jahresregeln:** per-year employer rules (Tageszuschuss, Mahlzeitarten, Pauschalierung, Gehaltsumwandlung, Bundesland, Eigenanteil-Variante, Monatslimit, eigene Feiertage) with suggestions.
 - **Sachbezug:** official Sachbezugswerte shipped in the binary (`internal/rules`) and applied per Mahlzeit.
 - **Pauschalsteuer, Soli, KiSt:** 25 % Pauschalsteuer, Solidaritätszuschlag, and Kirchensteuer (simplified-procedure rates by Bundesland) in integer cents, checked against the SPEC §6.5 test vectors. See [calculation](calculation.md).
 - Warnings (weekend, holiday, month cap, duplicates, subsidy above the ceiling), holiday calendar per Bundesland, month view.
-- Append-only Änderungsprotokoll with a SHA-256 hash chain ([ADR 0005](adr/0005-monatssperre-aenderungsprotokoll.md)); `belegapp verify-audit`.
+- Append-only Änderungsprotokoll with a SHA-256 hash chain ([ADR 0005](adr/0005-month-lock-audit-log.md)); `belegapp verify-audit`.
 
 ## M2 Belegerkennung
 
 First release: [v1.0.0](https://github.com/BlackDark/vc-belegapp/releases/tag/v1.0.0). PR [#3](https://github.com/BlackDark/vc-belegapp/pull/3).
 
-- Background recognition via a SQLite job queue with retries against any OpenAI-compatible `/chat/completions` endpoint (OpenAI, Gemini OpenAI endpoint, Ollama, vLLM, LM Studio), JSON schema with `json_object` fallback ([ADR 0006](adr/0006-belegerkennung-openai-kompatibel.md)).
+- Background recognition via a SQLite job queue with retries against any OpenAI-compatible `/chat/completions` endpoint (OpenAI, Gemini OpenAI endpoint, Ollama, vLLM, LM Studio), JSON schema with `json_object` fallback ([ADR 0006](adr/0006-receipt-recognition-openai-compatible.md)).
 - Pre-fills date, merchant, place, amount, and Bezugsort; suggests corrections; never blocks manual capture. "Verbindung testen" in Einstellungen.
 
 ## M3 Monatsexport
@@ -45,7 +45,7 @@ First release: [v1.0.0](https://github.com/BlackDark/vc-belegapp/releases/tag/v1
 
 First release: [v1.0.0](https://github.com/BlackDark/vc-belegapp/releases/tag/v1.0.0). PR [#6](https://github.com/BlackDark/vc-belegapp/pull/6).
 
-- Versioned zip (manifest, SQLite snapshot, referenced blobs, `csv/belege.csv`); import replaces the whole instance after manifest, checksum, schema, and audit-chain checks, taking a safety backup first. Format: [DATENEXPORT.md](DATENEXPORT.md).
+- Versioned zip (manifest, SQLite snapshot, referenced blobs, `csv/belege.csv`); import replaces the whole instance after manifest, checksum, schema, and audit-chain checks, taking a safety backup first. Format: [data-export.md](data-export.md).
 - UI in Einstellungen plus the CLI `belegapp backup` and `belegapp restore`; storage backend switch via import. See [backup](backup.md).
 
 ## CI/CD and release

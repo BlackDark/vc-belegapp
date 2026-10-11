@@ -64,7 +64,7 @@ flowchart LR
 | `internal/calc` | Day and month formulas |
 | `internal/pdf` | Typst templates |
 | `internal/export` | Monatsexport and Datenexport |
-| `internal/erkennung` | Receipt recognition |
+| `internal/recognition` | Receipt recognition |
 | `internal/storage` | Filesystem and S3 |
 | `web/` | SolidJS app, embedded from `web/dist` |
 | `deploy/` | Compose and Kustomize |
@@ -73,10 +73,10 @@ Decisions: [adr](adr). Specification: [SPEC.md](SPEC.md). Terms: [GLOSSARY.md](G
 
 - [0001](adr/0001-go-single-binary-sqlite.md) — one Go binary, SQLite, embedded SolidJS.
 - [0002](adr/0002-typst-pdf.md) — Monatsexport via the Typst CLI, PDF/A-2b.
-- [0003](adr/0003-auth-passwort-und-oidc.md) — password and OIDC together.
-- [0004](adr/0004-storage-fs-und-s3.md) — blobs on disk or S3, content-addressed.
-- [0005](adr/0005-monatssperre-aenderungsprotokoll.md) — month lock and hash-chained audit log.
-- [0006](adr/0006-belegerkennung-openai-kompatibel.md) — recognition over OpenAI-compatible chat completions.
+- [0003](adr/0003-auth-password-and-oidc.md) — password and OIDC together.
+- [0004](adr/0004-storage-fs-and-s3.md) — blobs on disk or S3, content-addressed.
+- [0005](adr/0005-month-lock-audit-log.md) — month lock and hash-chained audit log.
+- [0006](adr/0006-receipt-recognition-openai-compatible.md) — recognition over OpenAI-compatible chat completions.
 
 ## CI
 

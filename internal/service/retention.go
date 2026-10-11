@@ -3,7 +3,7 @@ package service
 import "time"
 
 // DefaultExportRetentionYears is the app recommendation in
-// docs/research/steuer.md §2.6: keep Monatsexport data at least ten years.
+// docs/research/tax.md §2.6: keep Monatsexport data at least ten years.
 // The Lohnkonto minimum in § 41 Abs. 1 EStG is six calendar years; set
 // BELEGAPP_EXPORT_RETENTION_YEARS=6 for that clock. The app does not delete
 // when the window ends (SPEC §5.2).

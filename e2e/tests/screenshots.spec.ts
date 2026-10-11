@@ -4,7 +4,7 @@ import { type Page, type TestInfo } from "@playwright/test";
 import { expect, login, saveYear, test } from "../fixtures";
 
 // October 2026 fixture from docs/SPEC.md §6.5 (vector M1). Names are fictional.
-// Receipt pixels are drawn in the browser; nothing here is a real Kassenzettel.
+// Receipt pixels are drawn in the browser; nothing here is a real receipt.
 const demo = [
   {
     datum: "2026-10-05",
@@ -141,8 +141,16 @@ async function seedDemo(page: Page) {
 
 test("all pages", async ({ page }, info) => {
   test.setTimeout(240_000);
-  const theme = process.env.BELEGAPP_SHOT_THEME === "hell" ? "hell" : "dunkel";
-  await page.emulateMedia({ colorScheme: theme === "hell" ? "light" : "dark" });
+  // Accept the legacy German values too, so a developer whose shell still
+  // exports the pre-rename BELEGAPP_SHOT_THEME gets the theme they asked for.
+  const themes = new Map<string, "light" | "dark">([
+    ["light", "light"],
+    ["hell", "light"],
+    ["dark", "dark"],
+    ["dunkel", "dark"],
+  ]);
+  const theme = themes.get(process.env.BELEGAPP_SHOT_THEME ?? "") ?? "dark";
+  await page.emulateMedia({ colorScheme: theme });
   await page.addInitScript((value) => {
     localStorage.setItem("belegapp-theme", value);
   }, theme);

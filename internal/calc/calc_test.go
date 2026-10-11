@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-type tagVektor struct {
+type tagVector struct {
 	ID        string   `json:"id"`
 	A         int      `json:"a"`
 	B         int      `json:"b"`
@@ -35,7 +35,7 @@ type direktTag struct {
 	R int `json:"r"`
 }
 
-type monatVektor struct {
+type monthVector struct {
 	ID             string      `json:"id"`
 	Tage           []string    `json:"tage"`
 	Wiederhole     string      `json:"wiederhole"`
@@ -61,26 +61,26 @@ type monatVektor struct {
 	LimitWarnung   int         `json:"limit_warnung_ab"`
 }
 
-type vektoren struct {
-	Tage   []tagVektor   `json:"tage"`
-	Monate []monatVektor `json:"monate"`
+type vectors struct {
+	Tage   []tagVector   `json:"tage"`
+	Monate []monthVector `json:"monate"`
 }
 
-func loadVektoren(t *testing.T) vektoren {
+func loadVectors(t *testing.T) vectors {
 	t.Helper()
-	raw, err := os.ReadFile("testdata/vektoren.json")
+	raw, err := os.ReadFile("testdata/vectors.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var v vektoren
+	var v vectors
 	if err := json.Unmarshal(raw, &v); err != nil {
 		t.Fatal(err)
 	}
 	return v
 }
 
-func TestTagesvektoren(t *testing.T) {
-	v := loadVektoren(t)
+func TestDailyVectors(t *testing.T) {
+	v := loadVectors(t)
 	if len(v.Tage) != 20 {
 		t.Fatalf("tage %d", len(v.Tage))
 	}
@@ -110,9 +110,9 @@ func TestTagesvektoren(t *testing.T) {
 	}
 }
 
-func TestMonatsvektoren(t *testing.T) {
-	v := loadVektoren(t)
-	byID := map[string]tagVektor{}
+func TestMonthlyVectors(t *testing.T) {
+	v := loadVectors(t)
+	byID := map[string]tagVector{}
 	for _, tag := range v.Tage {
 		byID[tag.ID] = tag
 	}
@@ -184,7 +184,7 @@ func TestMonatsvektoren(t *testing.T) {
 	}
 }
 
-func TestInvarianten(t *testing.T) {
+func TestInvariants(t *testing.T) {
 	rng := rand.New(rand.NewSource(20261008))
 	varianten := []string{"standard", "vorsichtig"}
 	for range 10000 {
@@ -219,7 +219,7 @@ func TestInvarianten(t *testing.T) {
 	}
 }
 
-func TestRundungHalbAuf(t *testing.T) {
+func TestRoundingHalfUp(t *testing.T) {
 	if divRoundHalfUp(2500, 10000) != 0 {
 		t.Fatal("0.25")
 	}
@@ -237,7 +237,7 @@ func TestRundungHalbAuf(t *testing.T) {
 	}
 }
 
-func inputOf(vec tagVektor) TagesInput {
+func inputOf(vec tagVector) TagesInput {
 	return TagesInput{
 		AnerkanntCent:   vec.A,
 		BelegbetragCent: vec.B,

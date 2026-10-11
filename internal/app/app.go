@@ -20,10 +20,10 @@ import (
 	"github.com/BlackDark/vc-belegapp/internal/auth"
 	"github.com/BlackDark/vc-belegapp/internal/config"
 	"github.com/BlackDark/vc-belegapp/internal/db"
-	"github.com/BlackDark/vc-belegapp/internal/erkennung"
 	"github.com/BlackDark/vc-belegapp/internal/holidays"
 	"github.com/BlackDark/vc-belegapp/internal/jobs"
 	"github.com/BlackDark/vc-belegapp/internal/pdf"
+	"github.com/BlackDark/vc-belegapp/internal/recognition"
 	"github.com/BlackDark/vc-belegapp/internal/server"
 	"github.com/BlackDark/vc-belegapp/internal/service"
 	"github.com/BlackDark/vc-belegapp/internal/storage"
@@ -272,11 +272,11 @@ func Serve(ctx context.Context, opt Options) error {
 	}
 }
 
-func newExtractor(cfg config.Config) erkennung.ReceiptExtractor {
+func newExtractor(cfg config.Config) recognition.ReceiptExtractor {
 	if !cfg.LLMEnabled || cfg.OpenAIKeyMissing() {
-		return erkennung.Disabled{}
+		return recognition.Disabled{}
 	}
-	return erkennung.NewOpenAI(erkennung.OpenAIOptions{
+	return recognition.NewOpenAI(recognition.OpenAIOptions{
 		BaseURL:         cfg.LLMBaseURL,
 		APIKey:          cfg.LLMAPIKey,
 		Model:           cfg.LLMModel,

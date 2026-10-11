@@ -12,8 +12,8 @@ import { type JSX, type ParentProps, Show, Suspense } from "solid-js";
 
 import { ApiError, client } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
+import { useWerte } from "../lib/referenceData";
 import { applyTheme, currentTheme } from "../lib/theme";
-import { useWerte } from "../lib/werte";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -216,7 +216,7 @@ function ThemeMenu() {
   const current = () => currentTheme();
   const icon = () => {
     const theme = current();
-    if (theme === "hell") return <Sun />;
+    if (theme === "light") return <Sun />;
     if (theme === "system") return <Monitor />;
     return <Moon />;
   };
@@ -234,13 +234,13 @@ function ThemeMenu() {
         <DropdownMenuRadioGroup
           value={current()}
           onChange={(value) => {
-            if (value === "hell" || value === "dunkel" || value === "system") {
+            if (value === "light" || value === "dark" || value === "system") {
               applyTheme(value);
             }
           }}
         >
-          <DropdownMenuRadioItem value="hell">Hell</DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="dunkel">Dunkel</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="light">Hell</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="dark">Dunkel</DropdownMenuRadioItem>
           <DropdownMenuRadioItem value="system">System</DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>

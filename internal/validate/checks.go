@@ -1,6 +1,6 @@
 package validate
 
-// PruefpunktText is the short German line printed for a Prüfpunkt code.
+// PruefpunktText is the short German line printed for a Pruefpunkt code.
 func PruefpunktText(code string) string {
 	switch code {
 	case "P_EIN_BELEG_PRO_TAG":

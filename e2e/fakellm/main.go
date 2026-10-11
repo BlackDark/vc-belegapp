@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/BlackDark/vc-belegapp/internal/erkennung"
+	"github.com/BlackDark/vc-belegapp/internal/recognition"
 )
 
 func main() {
@@ -19,7 +19,7 @@ func main() {
 	}
 	delay, _ := time.ParseDuration(os.Getenv("FAKE_LLM_DELAY"))
 	datum := time.Now().In(mustBerlin()).AddDate(0, 0, -1).Format("2006-01-02")
-	body, err := json.Marshal(erkennung.ExampleErgebnis(datum))
+	body, err := json.Marshal(recognition.ExampleErgebnis(datum))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func main() {
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(erkennung.CompletionBody(string(body)))
+		_, _ = w.Write(recognition.CompletionBody(string(body)))
 	})
 	server := &http.Server{
 		Addr:              addr,

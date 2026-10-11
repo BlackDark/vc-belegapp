@@ -1,6 +1,6 @@
 import { expect, login, png, saveYear, test } from "../fixtures";
 
-test("preview, prüfpunkte, final PDF, lock, change with grund", async ({ page }) => {
+test("preview, review points, final PDF, lock, change with reason", async ({ page }) => {
   test.setTimeout(180_000);
   const day = "2025-09-15";
   const month = "2025-09";

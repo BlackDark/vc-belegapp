@@ -170,7 +170,7 @@ func TestCSVTotalsLineIsPinned(t *testing.T) {
 	}
 }
 
-func TestCSVRowFromBeleg(t *testing.T) {
+func TestCSVRowFromReceipt(t *testing.T) {
 	grund := "Pfand/Drogerie"
 	view := Beleg{
 		ID:              "beleg-1",
@@ -228,7 +228,7 @@ func TestCSVRowFromBeleg(t *testing.T) {
 
 // A receipt without a correction, without a warning and without a picture must
 // render empty strings, never "nil" or a stray separator.
-func TestCSVRowFromBareBeleg(t *testing.T) {
+func TestCSVRowFromBareReceipt(t *testing.T) {
 	row := csvRowFromBeleg(Beleg{ID: "beleg-2", Datum: "2026-10-06"})
 	if row.KorrekturGrund != "" || row.Warnungen != "" || row.BildSHA256 != "" {
 		t.Fatalf("bare row %+v", row)
@@ -266,7 +266,7 @@ func TestAddToSum(t *testing.T) {
 // response view can drift apart: a corrected amount, a meal type the year rule
 // no longer subsidises, the subsidy cap, a canteen receipt, a weekend, and
 // receipts with one, two and three images.
-func TestAddToSumEqualsMonatSummen(t *testing.T) {
+func TestAddToSumEqualsMonthlyTotals(t *testing.T) {
 	ctx := context.Background()
 	svc := newTestService(t, nil)
 	actor := Actor{Name: "eduard", RequestID: "req-sum"}

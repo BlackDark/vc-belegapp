@@ -1,10 +1,17 @@
 (() => {
+  // Mirrors web/src/lib/theme.ts, including the legacy German values that
+  // releases before the English rename may still have in localStorage.
   var stored = localStorage.getItem("belegapp-theme");
-  if (stored !== "hell" && stored !== "dunkel" && stored !== "system") {
-    stored = "dunkel";
+  if (stored === "hell") {
+    stored = "light";
+  } else if (stored === "dunkel") {
+    stored = "dark";
+  }
+  if (stored !== "light" && stored !== "dark" && stored !== "system") {
+    stored = "dark";
   }
   var dark =
-    stored === "dunkel" ||
+    stored === "dark" ||
     (stored === "system" &&
       window.matchMedia("(prefers-color-scheme: dark)").matches);
   document.documentElement.classList.toggle("dark", dark);

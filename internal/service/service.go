@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/BlackDark/vc-belegapp/internal/db"
-	"github.com/BlackDark/vc-belegapp/internal/erkennung"
 	"github.com/BlackDark/vc-belegapp/internal/holidays"
 	"github.com/BlackDark/vc-belegapp/internal/jobs"
 	"github.com/BlackDark/vc-belegapp/internal/pdf"
+	"github.com/BlackDark/vc-belegapp/internal/recognition"
 	"github.com/BlackDark/vc-belegapp/internal/storage"
 )
 
@@ -33,7 +33,7 @@ type Service struct {
 	UploadMax      int64
 	ImageTTL       time.Duration
 	RetentionYears int
-	Extractor      erkennung.ReceiptExtractor
+	Extractor      recognition.ReceiptExtractor
 	Jobs           *jobs.Queue
 	LLMMaxPX       int
 	LLMTimeout     time.Duration

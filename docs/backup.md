@@ -1,6 +1,6 @@
 # Backup and restore
 
-A Datenexport is a zip of the whole instance (SQLite snapshot, referenced blobs, CSV). It is separate from the Monatsexport. Import replaces the dataset; it does not merge. The server writes a safety copy first. Layout, rejection codes, and retention of unassigned images: [DATENEXPORT.md](DATENEXPORT.md).
+A Datenexport is a zip of the whole instance (SQLite snapshot, referenced blobs, CSV). It is separate from the Monatsexport. Import replaces the dataset; it does not merge. The server writes a safety copy first. Layout, rejection codes, and retention of unassigned images: [data-export.md](data-export.md).
 
 In the app: Einstellungen → Datenexport, then Datenimport. The confirmation word is `ERSETZEN`. Every session ends after a successful import.
 

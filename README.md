@@ -129,15 +129,15 @@ Specification and decisions:
 
 - [docs/SPEC.md](docs/SPEC.md) — product specification
 - [docs/GLOSSARY.md](docs/GLOSSARY.md) — German terms
-- [docs/DATENEXPORT.md](docs/DATENEXPORT.md) — zip layout and rejection codes
+- [docs/data-export.md](docs/data-export.md) — zip layout and rejection codes
 - [0001](docs/adr/0001-go-single-binary-sqlite.md) — one Go binary, SQLite, embedded SolidJS
 - [0002](docs/adr/0002-typst-pdf.md) — Monatsexport via the Typst CLI, PDF/A-2b
-- [0003](docs/adr/0003-auth-passwort-und-oidc.md) — password and OIDC together
-- [0004](docs/adr/0004-storage-fs-und-s3.md) — blobs on disk or S3, content-addressed
-- [0005](docs/adr/0005-monatssperre-aenderungsprotokoll.md) — month lock and hash-chained audit log
-- [0006](docs/adr/0006-belegerkennung-openai-kompatibel.md) — recognition over OpenAI-compatible chat completions
+- [0003](docs/adr/0003-auth-password-and-oidc.md) — password and OIDC together
+- [0004](docs/adr/0004-storage-fs-and-s3.md) — blobs on disk or S3, content-addressed
+- [0005](docs/adr/0005-month-lock-audit-log.md) — month lock and hash-chained audit log
+- [0006](docs/adr/0006-receipt-recognition-openai-compatible.md) — recognition over OpenAI-compatible chat completions
 
-Background: [docs/NOTES.md](docs/NOTES.md), [docs/research/steuer.md](docs/research/steuer.md), [docs/research/stack.md](docs/research/stack.md).
+Background: [docs/NOTES.md](docs/NOTES.md), [docs/research/tax.md](docs/research/tax.md), [docs/research/stack.md](docs/research/stack.md).
 
 ## License
 

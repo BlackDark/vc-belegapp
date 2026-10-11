@@ -20,7 +20,7 @@ func (stubPDF) Render(context.Context, pdf.Document, []pdf.Image) ([]byte, error
 	return []byte("%PDF-1.7\n%stub\n"), nil
 }
 
-func TestMonatExport(t *testing.T) {
+func TestMonthExport(t *testing.T) {
 	database := dbtest.Open(t)
 	store := storage.NewFS(t.TempDir())
 	loc := dbtest.Loc(t)

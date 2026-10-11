@@ -105,7 +105,7 @@ func (a *API) Handler() http.Handler {
 		r.Post("/datenimport/pruefen", a.pruefenImport)
 		r.Post("/datenimport", a.commitImport)
 		r.Post("/erkennung/test", a.testErkennung)
-		r.Get("/werte", a.werte)
+		r.Get("/werte", a.referenceData)
 		r.Get("/system/info", a.systemInfo)
 	})
 	return r

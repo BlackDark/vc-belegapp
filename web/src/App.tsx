@@ -5,12 +5,12 @@ import Shell from "./components/Shell";
 import { Toaster } from "./components/ui/sonner";
 import Login from "./screens/Login";
 
-const Heute = lazy(() => import("./screens/Heute"));
-const Erfassen = lazy(() => import("./screens/Erfassen"));
-const Pruefen = lazy(() => import("./screens/Pruefen"));
-const Monat = lazy(() => import("./screens/Monat"));
-const Einstellungen = lazy(() => import("./screens/Einstellungen"));
-const JahresregelPage = lazy(() => import("./screens/Jahresregel"));
+const Today = lazy(() => import("./screens/Today"));
+const Capture = lazy(() => import("./screens/Capture"));
+const Review = lazy(() => import("./screens/Review"));
+const Month = lazy(() => import("./screens/Month"));
+const Settings = lazy(() => import("./screens/Settings"));
+const AnnualRulePage = lazy(() => import("./screens/AnnualRule"));
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, staleTime: 5_000 } },
@@ -22,16 +22,13 @@ export default function App() {
       <Router>
         <Route path="/login" component={Login} />
         <Route path="/" component={Shell}>
-          <Route path="/" component={Heute} />
-          <Route path="/erfassen" component={Erfassen} />
-          <Route path="/belege/neu" component={Pruefen} />
-          <Route path="/belege/:id" component={Pruefen} />
-          <Route path="/monat" component={Monat} />
-          <Route path="/einstellungen" component={Einstellungen} />
-          <Route
-            path="/einstellungen/jahre/:jahr"
-            component={JahresregelPage}
-          />
+          <Route path="/" component={Today} />
+          <Route path="/erfassen" component={Capture} />
+          <Route path="/belege/neu" component={Review} />
+          <Route path="/belege/:id" component={Review} />
+          <Route path="/monat" component={Month} />
+          <Route path="/einstellungen" component={Settings} />
+          <Route path="/einstellungen/jahre/:jahr" component={AnnualRulePage} />
         </Route>
       </Router>
       <AppToaster />

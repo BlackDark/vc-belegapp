@@ -79,7 +79,7 @@ describe("Login", () => {
     expect(screen.queryByLabelText("Passwort")).toBeNull();
   });
 
-  it("translates the fehler parameter from the OIDC callback", async () => {
+  it("maps the fehler query param from the OIDC callback to a message", async () => {
     stubFetch(
       { passwort: true, oidc: true, oidc_label: "Mit SSO" },
       () => new Response(null, { status: 204 }),
@@ -90,7 +90,7 @@ describe("Login", () => {
     ).toBeTruthy();
   });
 
-  it("ignores an unknown fehler parameter", async () => {
+  it("ignores an unknown fehler query param", async () => {
     stubFetch(
       { passwort: true, oidc: false, oidc_label: "" },
       () => new Response(null, { status: 204 }),

@@ -124,7 +124,7 @@ func (q *Queue) loop(ctx context.Context, poll time.Duration) {
 
 func (q *Queue) execute(ctx context.Context, job Job) {
 	if q.Handle == nil {
-		q.finishLogged(ctx, job, "fehler", q.stamp(), nil, "kein Handler")
+		q.finishLogged(ctx, job, "fehler", q.stamp(), nil, "no handler")
 		return
 	}
 	seconds, result, err := q.Handle(ctx, job)
@@ -137,7 +137,7 @@ func (q *Queue) execute(ctx context.Context, job Job) {
 			q.OnResult("fertig", seconds)
 		}
 		if q.Log != nil {
-			q.Log.Info("job fertig", "id", job.ID, "typ", job.Typ, "dauer_s", seconds)
+			q.Log.Info("job done", "id", job.ID, "typ", job.Typ, "dauer_s", seconds)
 		}
 		q.stats(ctx)
 		return
@@ -158,7 +158,7 @@ func (q *Queue) execute(ctx context.Context, job Job) {
 			q.OnRetry(ctx, job, err)
 		}
 		if q.Log != nil {
-			q.Log.Warn("job wiederholt", "id", job.ID, "typ", job.Typ, "attempt", job.Versuche, "err", safeText(err))
+			q.Log.Warn("job retrying", "id", job.ID, "typ", job.Typ, "attempt", job.Versuche, "err", safeText(err))
 		}
 		q.stats(ctx)
 		return
@@ -171,7 +171,7 @@ func (q *Queue) execute(ctx context.Context, job Job) {
 		q.OnResult("fehler", seconds)
 	}
 	if q.Log != nil {
-		q.Log.Warn("job fehler", "id", job.ID, "typ", job.Typ, "attempt", job.Versuche, "err", safeText(err))
+		q.Log.Warn("job failed", "id", job.ID, "typ", job.Typ, "attempt", job.Versuche, "err", safeText(err))
 	}
 	q.stats(ctx)
 }

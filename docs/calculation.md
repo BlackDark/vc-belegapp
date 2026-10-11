@@ -29,4 +29,4 @@ employer cost = ΣE + LSt + Soli + KiSt
 
 With Pauschalierung off, those three taxes are 0 and `ΣG + ΣR` is left as individually taxable wages.
 
-October 2026, lunch, North Rhine-Westphalia, subsidy 7,67 €, the five receipts in the [README](../README.md) screenshot grid: Erstattung 33,01 €, geldwerter Vorteil 16,78 €, Lohnsteuer 4,20 €, Soli 0,23 €, Kirchensteuer 0,29 €, employer cost 37,73 €. Vectors and the other variant live in [SPEC.md](SPEC.md) §6. Terms: [GLOSSARY.md](GLOSSARY.md). Background notes: [research/steuer.md](research/steuer.md).
+October 2026, lunch, North Rhine-Westphalia, subsidy 7,67 €, the five receipts in the [README](../README.md) screenshot grid: Erstattung 33,01 €, geldwerter Vorteil 16,78 €, Lohnsteuer 4,20 €, Soli 0,23 €, Kirchensteuer 0,29 €, employer cost 37,73 €. Vectors and the other variant live in [SPEC.md](SPEC.md) §6. Terms: [GLOSSARY.md](GLOSSARY.md). Background notes: [research/tax.md](research/tax.md).

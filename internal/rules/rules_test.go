@@ -15,7 +15,7 @@ func TestValidateOK(t *testing.T) {
 	}
 }
 
-func TestVorschlagFromPreviousYear(t *testing.T) {
+func TestSuggestionFromPreviousYear(t *testing.T) {
 	prev := Vorschlag(2026, nil)
 	prev.ZuschussCent = 500
 	prev.Bundesland = "BW"
@@ -48,7 +48,7 @@ func TestVorschlagFromPreviousYear(t *testing.T) {
 	}
 }
 
-func TestVorschlagUnknownYear(t *testing.T) {
+func TestSuggestionUnknownYear(t *testing.T) {
 	prev := Vorschlag(2026, nil)
 	next := Vorschlag(2030, &prev)
 	if next.SBWStatus != StatusUnbekannt || next.SBWMittagCent != prev.SBWMittagCent {
@@ -73,7 +73,7 @@ func TestValidateRejects(t *testing.T) {
 	}
 }
 
-func TestMahlzeitenJSON(t *testing.T) {
+func TestMealsJSON(t *testing.T) {
 	raw, err := EncodeMahlzeiten([]string{"mittag"})
 	if err != nil {
 		t.Fatal(err)

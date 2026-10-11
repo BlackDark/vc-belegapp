@@ -278,7 +278,7 @@ func TestExportKeptAfterRetention(t *testing.T) {
 	}
 }
 
-func TestDeleteBildKeepsSharedBlob(t *testing.T) {
+func TestDeleteImageKeepsSharedBlob(t *testing.T) {
 	ctx := context.Background()
 	svc := openService(t, nil)
 	bild, err := svc.SaveBild(ctx, colorPNG(t, 1, 1, 1), false)

@@ -89,7 +89,7 @@ type SummenBlock struct {
 	OhnePauschal   string `json:"ohne_pauschal"`
 }
 
-// Check is one Prüfpunkt line.
+// Check is one Pruefpunkt line.
 type Check struct {
 	Symbol string `json:"symbol"`
 	Text   string `json:"text"`

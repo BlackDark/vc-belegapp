@@ -16,7 +16,7 @@ import (
 const (
 	// FormatName identifies a data-export archive.
 	FormatName = "vc-belegapp-datenexport"
-	// FormatVersion is the archive layout documented in docs/DATENEXPORT.md.
+	// FormatVersion is the archive layout documented in docs/data-export.md.
 	FormatVersion = 1
 
 	pathDB       = "db/belegapp.sqlite"

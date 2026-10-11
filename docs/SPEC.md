@@ -4,10 +4,10 @@
 |---|---|
 | Repo | `git@github.com:BlackDark/vc-belegapp.git` (Image: `ghcr.io/blackdark/vc-belegapp`) |
 | Stand | 2026-10-08, Interview abgeschlossen |
-| Quellen | `NOTES.md`, `GLOSSARY.md`, `docs/adr/0001–0006`, `research/steuer.md`, `research/stack.md` |
+| Quellen | `NOTES.md`, `GLOSSARY.md`, `docs/adr/0001–0006`, `research/tax.md`, `research/stack.md` |
 | Sprache | UI und Dokumente auf Deutsch; Code, Bezeichner und Commits auf Englisch, fachliche Begriffe im Code als deutsche Domänenwörter (z. B. `Beleg`, `Erstattung`) |
 
-Fachbegriffe sind in `GLOSSARY.md` definiert und werden hier **genau so** verwendet. Steuerliche Herleitung: `research/steuer.md`. Die App ist eine Dokumentations- und Vorberechnungshilfe; die verbindliche Lohnabrechnung macht der Arbeitgeber.
+Fachbegriffe sind in `GLOSSARY.md` definiert und werden hier **genau so** verwendet. Steuerliche Herleitung: `research/tax.md`. Die App ist eine Dokumentations- und Vorberechnungshilfe; die verbindliche Lohnabrechnung macht der Arbeitgeber.
 
 ---
 
@@ -76,7 +76,7 @@ internal/calc            Berechnungsregeln (reine Funktionen)
 internal/rules           Jahresregeln, Validierung, amtliche Voreinstellungen
 internal/holidays        Feiertagskalender (Wrapper um rickar/cal/v2/de + Eigene Feiertage)
 internal/storage         BlobStore-Interface, fs, s3
-internal/erkennung       ReceiptExtractor-Interface, openaicompat, fake
+internal/recognition      ReceiptExtractor-Interface, openaicompat, fake
 internal/imaging         Decode, Orientierung, Resize, JPEG-Encode, Thumbnail
 internal/pdf             PDFRenderer-Interface, typstcli, Templates + Fonts (embed)
 internal/export          Monatsexport (PDF/CSV/ZIP), Datenexport/-import
@@ -261,7 +261,7 @@ Zeile wird bei Bedarf angelegt (fehlend = `offen`).
 | warnungen_bestaetigt | INTEGER NOT NULL | |
 | protokoll_hash | TEXT NOT NULL | Hash des letzten Änderungsprotokoll-Eintrags zum Exportzeitpunkt |
 
-Monatsexporte und ihre Blobs werden nie automatisch gelöscht. `BELEGAPP_EXPORT_RETENTION_YEARS` (Default 10) setzt nur die Aufbewahrungsuhr: `aufbewahrung_bis` ist das Ende des Kalenderjahres `Jahr(erstellt_am) + N` in `BELEGAPP_TZ` (ein Export aus 2026 mit N=6 endet am 31.12.2032, analog § 41 Abs. 1 EStG; der App-Default folgt der Empfehlung „mindestens 10 Jahre“ in `docs/research/steuer.md`). `aufbewahrung_abgelaufen` steht in der Monatsansicht und an den Exportversionen, löst aber keine Löschung aus.
+Monatsexporte und ihre Blobs werden nie automatisch gelöscht. `BELEGAPP_EXPORT_RETENTION_YEARS` (Default 10) setzt nur die Aufbewahrungsuhr: `aufbewahrung_bis` ist das Ende des Kalenderjahres `Jahr(erstellt_am) + N` in `BELEGAPP_TZ` (ein Export aus 2026 mit N=6 endet am 31.12.2032, analog § 41 Abs. 1 EStG; der App-Default folgt der Empfehlung „mindestens 10 Jahre“ in `docs/research/tax.md`). `aufbewahrung_abgelaufen` steht in der Monatsansicht und an den Exportversionen, löst aber keine Löschung aus.
 
 **`aenderungsprotokoll`** (append-only)
 | Spalte | Typ | Inhalt |
@@ -322,7 +322,7 @@ Neue Jahresregel: Vorschlag = Vorjahresregel (alle Arbeitgeber-Felder) + SBW aus
 | NI | 600 | NW | 700 | RP | 700 | SL | 700 |
 | SN | 500 | ST | 500 | SH | 600 | TH | 500 |
 
-Nur Vorschlag beim Wählen des Bundeslands; der gespeicherte Wert ist `kist_satz_bp` (Nachweisverfahren: 0 oder 800/900 manuell). ⚠️ Gegen Ländererlasse verifizieren (research/steuer.md 3.5).
+Nur Vorschlag beim Wählen des Bundeslands; der gespeicherte Wert ist `kist_satz_bp` (Nachweisverfahren: 0 oder 800/900 manuell). ⚠️ Gegen Ländererlasse verifizieren (research/tax.md 3.5).
 
 ---
 
@@ -376,7 +376,7 @@ Alle Zahlen sind indikativ; PDF und UI tragen den Hinweis „Vorberechnung – m
   "an_pflichtig_cent": 0, "ag_kosten_cent": 3773 }
 ```
 
-### 6.5 Testvektoren (verbindlich, `internal/calc/testdata/vektoren.json`)
+### 6.5 Testvektoren (verbindlich, `internal/calc/testdata/vectors.json`)
 Tagesvektoren (Werte in Cent; Spalten: A, Z, S, Variante → E, U, G, F, R):
 
 | ID | A | Z | S | Variante | E | U | G | F | R | Bemerkung |
@@ -685,7 +685,7 @@ Implementierungen: `openaicompat` (Standard), `fake` (Tests/Dev, liefert Fixture
 }
 ```
 
-### 10.4 Prompt (versioniert, `internal/erkennung/prompt_v1.txt`)
+### 10.4 Prompt (versioniert, `internal/recognition/prompt_v1.txt`)
 > Du liest deutsche Kassenbelege. Antworte ausschließlich im vorgegebenen JSON-Schema. Beträge in Cent als Ganzzahl. `gesamtbetrag_cent` ist der zu zahlende Endbetrag (SUMME/ZU ZAHLEN). Datum im Format YYYY-MM-DD. Ordne jede Position einer Kategorie zu: Speisen und Lebensmittel → lebensmittel; alkoholfreie Getränke → getraenk_alkoholfrei; Bier, Wein, Spirituosen → alkohol; Tabakwaren → tabak; Pfand und Pfandrückgabe → pfand; Drogerie-, Haushalts- und andere Nicht-Lebensmittel → nonfood; Rabatte → rabatt. Unleserliche Felder setzt du auf null. Ist das Bild kein Kassenbeleg, setze ist_kassenbeleg=false. konfidenz ist deine Gesamtsicherheit von 0 bis 1.
 
 ### 10.5 Nachverarbeitung
@@ -815,7 +815,7 @@ Letzte Zeile `summe;…` mit Summen. Für den Datenexport zusätzlich Spalte `be
 | Einstellungen | Profil; Monatsexport-Standards `export_csv_standard` / `export_zip_standard`; Jahresregeln (Liste; Editor mit Abschnitten Zuschuss, Sachbezugswerte (Button „amtliche Werte übernehmen“), Steuer (Pauschalierung, Gehaltsumwandlung, Bundesland → Kirchensteuer-Vorschlag, Satz), Berechnung (Eigenanteil-Variante mit Erklärung), Monatslimit + Modus, Eigene Feiertage); Belegerkennung (an/aus, Modell, Basis-URL read-only, „Verbindung testen“); Speicher (Backend read-only); Sitzungen; Datenexport/-import; Änderungsprotokoll (Liste, „Kette prüfen“); Darstellung; Über |
 
 ### 13.3 PWA
-- `vite-plugin-pwa`: `registerType: "prompt"` (Toast „Neue Version – neu laden“), Manifest `name: "Belegapp"`, `short_name: "Belege"`, `lang: "de"`, `display: "standalone"`, `start_url: "/"`, Theme-Farben hell/dunkel, Icons 192/512 + maskable (generiert mit `@vite-pwa/assets-generator`), iOS-`apple-touch-icon`.
+- `vite-plugin-pwa`: `registerType: "prompt"` (Toast „Neue Version – neu laden“), Manifest `name: "Belegapp"`, `short_name: "Belege"`, `lang: "de"`, `display: "standalone"`, `start_url: "/"`, Theme-Farben `light`/`dark`, Icons 192/512 + maskable (generiert mit `@vite-pwa/assets-generator`), iOS-`apple-touch-icon`.
 - Workbox: Precache App-Shell; `/api/*` `NetworkOnly`; Navigations-Fallback `index.html`.
 - Kein Web Share Target in v1 (siehe Offene Punkte).
 
@@ -979,7 +979,7 @@ PR erforderlich (0 Reviews, Single-Maintainer), Status-Checks `web`, `go`, `pdf`
 ## 17. Tests
 | Ebene | Inhalt |
 |---|---|
-| Unit `calc` | alle Testvektoren 6.5 (aus `testdata/vektoren.json`), Property-Tests der Invarianten (`testing/quick` o. ä., ≥ 10 000 Fälle), Rundung |
+| Unit `calc` | alle Testvektoren 6.5 (aus `testdata/vectors.json`), Property-Tests der Invarianten (`testing/quick` o. ä., ≥ 10 000 Fälle), Rundung |
 | Unit sonstige | Jahresregel-Validierung, Vorschlagslogik 5.3, Feiertage 16 Länder 2026 + eigene Feiertage, Warnungen/Prüfpunkte, Korrekturvorschlag, Erkennungs-Nachverarbeitung, argon2id, Session-Timeouts, OIDC-Allowlist, Key-Validierung Storage, Hash-Kette |
 | Contract | BlobStore (fs + gofakes3), ReceiptExtractor (Fake-HTTP-Server: Erfolg, 429→Erfolg, 400 `response_format`→Fallback, ungültiges JSON, 401, Timeout) |
 | Integration API | `httptest` mit Temp-SQLite, fs-Storage, Fake-LLM, Mock-OIDC (`oauth2-proxy/mockoidc`): Login beide Methoden, CSRF-Ablehnung Cross-Origin, Flow A komplett, E_DATUM_BELEGT, Sperre + Änderungsgrund, Exportversion 2 mit Änderungsabschnitt, Datenexport → Datenimport in leere Instanz (Roundtrip identische Summen + Hash-Kette gültig), Backend-Wechsel fs → s3 per Import |
@@ -1045,11 +1045,11 @@ Coverage-Ziel: `internal/calc` 100 %, Backend gesamt ≥ 70 %.
 
 ### 19.4 Intentional deviations
 
-- Monatsexport blobs are never deleted automatically. `BELEGAPP_EXPORT_RETENTION_YEARS` (default 10, the app recommendation in `docs/research/steuer.md` §2.6; 6 matches the Lohnkonto window in § 41 Abs. 1 EStG) only sets `aufbewahrung_bis` / `aufbewahrung_abgelaufen`. Reclaim after the window is not implemented.
+- Monatsexport blobs are never deleted automatically. `BELEGAPP_EXPORT_RETENTION_YEARS` (default 10, the app recommendation in `docs/research/tax.md` §2.6; 6 matches the Lohnkonto window in § 41 Abs. 1 EStG) only sets `aufbewahrung_bis` / `aufbewahrung_abgelaufen`. Reclaim after the window is not implemented.
 - Datenexport `format_version` stays 1. Per-id keys (`bilder/{id}.jpg`, `bilder/{id}.thumb.jpg`) and content-addressed keys are both valid archive members. Import and process start copy legacy keys onto `bilder/{sha[0:2]}/{sha256}.jpg` and `thumbs/{sha[0:2]}/{sha256}.jpg`.
 - The month screen still uses the cheap image and audit checks. Export, PDF preview, and `GET /monate/{monat}/pruefpunkte` hash images and walk the full chain. The export dialog reloads that result when final export returns `E_PRUEFPUNKT_FEHLGESCHLAGEN`.
 - Job rows store `err.Error()` for the operator (`safeText`, truncated). That text is not part of the public problem JSON.
 - LLM and OIDC base URLs are operator configuration. Private hosts stay allowed so a local Ollama endpoint works. There is no switch to block them.
 - An image whose stored bytes do not match `belegbilder.sha256` is left on its old key and the process still starts. The export-time hash check then fails closed.
-- UI (since #17): the theme defaults to `dunkel` (dark), not System as in §13.1.
+- UI (since #17): the theme defaults to `dark`, not System as in §13.1.
 - Status of planned and possible work: [ROADMAP.md](ROADMAP.md); implemented features: [FEATURES.md](FEATURES.md).
