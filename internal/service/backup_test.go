@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
@@ -19,9 +18,7 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 
 	"github.com/BlackDark/vc-belegapp/internal/audit"
-	"github.com/BlackDark/vc-belegapp/internal/db"
 	"github.com/BlackDark/vc-belegapp/internal/export"
-	"github.com/BlackDark/vc-belegapp/internal/holidays"
 	"github.com/BlackDark/vc-belegapp/internal/storage"
 )
 
@@ -140,30 +137,12 @@ func roundTrip(t *testing.T, destStore func() storage.BlobStore) {
 	}
 }
 
+// serviceWithStore is the fixture of the suites that bring their own blob store.
 func serviceWithStore(t *testing.T, store storage.BlobStore) *Service {
 	t.Helper()
-	dir := t.TempDir()
-	database, err := db.Open(filepath.Join(dir, "belegapp.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = database.Close() })
-	ctx := context.Background()
-	if err := db.Migrate(ctx, database.Write); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.EnsureSystem(ctx, database.Write, nil); err != nil {
-		t.Fatal(err)
-	}
-	loc, err := time.LoadLocation("Europe/Berlin")
-	if err != nil {
-		t.Fatal(err)
-	}
-	fixed := time.Date(2026, 10, 8, 15, 0, 0, 0, loc)
-	return &Service{
-		DB: database, Store: store, Holidays: holidays.NewCalendar(), Loc: loc,
-		Now: func() time.Time { return fixed }, UploadMax: 1 << 20, ImageTTL: time.Hour, AppVersion: "test",
-	}
+	svc := newTestService(t, store)
+	svc.AppVersion = "test"
+	return svc
 }
 
 func rewriteSchema(t *testing.T, raw []byte, version int64) []byte {

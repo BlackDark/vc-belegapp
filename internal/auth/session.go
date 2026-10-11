@@ -123,11 +123,6 @@ func (s *Sessions) DeleteOthers(ctx context.Context, token string) error {
 	return db.New(s.DB.Write).DeleteOtherSitzungen(ctx, hashToken(token))
 }
 
-// DeleteAll removes every session.
-func (s *Sessions) DeleteAll(ctx context.Context) error {
-	return db.New(s.DB.Write).DeleteAllSitzungen(ctx)
-}
-
 // List returns every session. The raw token is not included.
 func (s *Sessions) List(ctx context.Context) ([]Session, error) {
 	rows, err := db.New(s.DB.Read).ListSitzungen(ctx)

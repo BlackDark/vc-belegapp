@@ -1,6 +1,9 @@
 package service
 
-import "github.com/BlackDark/vc-belegapp/internal/problem"
+import (
+	"github.com/BlackDark/vc-belegapp/internal/problem"
+	"github.com/BlackDark/vc-belegapp/internal/rules"
+)
 
 type fieldList struct {
 	list []problem.Field
@@ -17,19 +20,8 @@ func (f *fieldList) err() error {
 	return problem.Fields(f.list[0].Code, f.list[0].Text, f.list)
 }
 
-func validBezugsort(v string) bool {
-	switch v {
-	case "supermarkt", "restaurant", "kantine", "baeckerei", "lieferdienst", "sonstiges":
-		return true
-	default:
-		return false
-	}
-}
+func validBezugsort(v string) bool { return rules.Bezugsorte.Valid(v) }
 
-func validArbeitsort(v string) bool {
-	return v == "betrieb" || v == "homeoffice"
-}
+func validArbeitsort(v string) bool { return rules.Arbeitsorte.Valid(v) }
 
-func validMahlzeit(v string) bool {
-	return v == "fruehstueck" || v == "mittag" || v == "abend"
-}
+func validMahlzeit(v string) bool { return rules.Mahlzeiten.Valid(v) }

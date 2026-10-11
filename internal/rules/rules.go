@@ -56,10 +56,6 @@ const (
 	DefaultAufschlag  = 310
 )
 
-var mahlzeitOrder = MahlzeitCodes()
-
-var bundeslaender = Bundeslaender()
-
 // Amtlich holds the Sachbezugswerte shipped with the binary, keyed by year.
 var Amtlich = amtlichMap()
 
@@ -111,7 +107,7 @@ func Validate(r Jahresregel) []FieldError {
 	}
 	seen := map[string]bool{}
 	for _, m := range r.Mahlzeiten {
-		if !slices.Contains(mahlzeitOrder, m) || seen[m] {
+		if !Mahlzeiten.Valid(m) || seen[m] {
 			add("mahlzeiten", "Unbekannte oder doppelte Mahlzeitart.")
 			break
 		}
@@ -129,7 +125,7 @@ func Validate(r Jahresregel) []FieldError {
 	if r.PauschsteuersatzBP < 0 || r.SoliSatzBP < 0 {
 		add("pauschsteuersatz_bp", "Steuersätze dürfen nicht negativ sein.")
 	}
-	if !slices.Contains(bundeslaender, r.Bundesland) {
+	if !LandValid(r.Bundesland) {
 		add("bundesland", "Unbekanntes Bundesland.")
 	}
 	if r.KistSatzBP < 0 || r.KistSatzBP > 900 {

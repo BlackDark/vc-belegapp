@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -20,44 +19,19 @@ import (
 
 	"github.com/BlackDark/vc-belegapp/internal/db"
 	"github.com/BlackDark/vc-belegapp/internal/erkennung"
-	"github.com/BlackDark/vc-belegapp/internal/holidays"
 	"github.com/BlackDark/vc-belegapp/internal/imaging"
 	"github.com/BlackDark/vc-belegapp/internal/jobs"
 	"github.com/BlackDark/vc-belegapp/internal/rules"
-	"github.com/BlackDark/vc-belegapp/internal/storage"
 )
 
+// openService is the fixture of the recognition suite.
 func openService(t *testing.T, extractor erkennung.ReceiptExtractor) *Service {
 	t.Helper()
-	database, err := db.Open(filepath.Join(t.TempDir(), "belegapp.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = database.Close() })
-	ctx := context.Background()
-	if err := db.Migrate(ctx, database.Write); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.EnsureSystem(ctx, database.Write, nil); err != nil {
-		t.Fatal(err)
-	}
-	loc, err := time.LoadLocation("Europe/Berlin")
-	if err != nil {
-		t.Fatal(err)
-	}
-	fixed := time.Date(2026, 10, 8, 15, 0, 0, 0, loc)
-	return &Service{
-		DB:         database,
-		Store:      storage.NewFS(t.TempDir()),
-		Holidays:   holidays.NewCalendar(),
-		Loc:        loc,
-		Now:        func() time.Time { return fixed },
-		UploadMax:  1 << 20,
-		ImageTTL:   time.Hour,
-		Extractor:  extractor,
-		LLMMaxPX:   1600,
-		LLMTimeout: time.Second,
-	}
+	svc := newTestService(t, nil)
+	svc.Extractor = extractor
+	svc.LLMMaxPX = 1600
+	svc.LLMTimeout = time.Second
+	return svc
 }
 
 func startJobs(t *testing.T, svc *Service) {

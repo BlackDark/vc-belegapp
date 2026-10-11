@@ -260,14 +260,7 @@ func (s *Service) Feiertage(ctx context.Context, jahr int, land string) ([]holid
 	return holidays.Merge(base, extra, jahr), nil
 }
 
-func validLand(land string) bool {
-	switch land {
-	case "BW", "BY", "BE", "BB", "HB", "HH", "HE", "MV", "NI", "NW", "RP", "SL", "SN", "ST", "SH", "TH":
-		return true
-	default:
-		return false
-	}
-}
+func validLand(land string) bool { return rules.LandValid(land) }
 
 func auditChange(ctx context.Context, tx *sql.Tx, actor Actor, stamp, aktion, entitaet, entitaetID, monat, grund string, vorher, nachher any) error {
 	var before json.RawMessage

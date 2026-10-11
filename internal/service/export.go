@@ -56,8 +56,8 @@ type ExportDownload struct {
 
 // PreviewMonat renders a draft PDF. It does not lock the month or store a version.
 func (s *Service) PreviewMonat(ctx context.Context, actor Actor, monat string) ([]byte, error) {
-	if _, err := time.Parse("2006-01", monat); err != nil {
-		return nil, problem.New(422, "E_FELD_UNGUELTIG", "Der Monat muss im Format JJJJ-MM sein.")
+	if _, err := parseMonat(monat); err != nil {
+		return nil, errMonatFormat()
 	}
 	view, einst, err := s.loadExport(ctx, monat)
 	if err != nil {
@@ -73,8 +73,8 @@ func (s *Service) PreviewMonat(ctx context.Context, actor Actor, monat string) (
 
 // CreateExport renders the final PDF, stores the version, and locks the month.
 func (s *Service) CreateExport(ctx context.Context, actor Actor, monat string, req ExportRequest) (out ExportCreated, err error) {
-	if _, err = time.Parse("2006-01", monat); err != nil {
-		return ExportCreated{}, problem.New(422, "E_FELD_UNGUELTIG", "Der Monat muss im Format JJJJ-MM sein.")
+	if _, err = parseMonat(monat); err != nil {
+		return ExportCreated{}, errMonatFormat()
 	}
 	if err = s.holdExport(monat); err != nil {
 		return ExportCreated{}, err
@@ -233,8 +233,8 @@ func (s *Service) CreateExport(ctx context.Context, actor Actor, monat string, r
 
 // ListExports returns the stored versions of one month.
 func (s *Service) ListExports(ctx context.Context, monat string) ([]ExportInfo, error) {
-	if _, err := time.Parse("2006-01", monat); err != nil {
-		return nil, problem.New(422, "E_FELD_UNGUELTIG", "Der Monat muss im Format JJJJ-MM sein.")
+	if _, err := parseMonat(monat); err != nil {
+		return nil, errMonatFormat()
 	}
 	return s.listExports(ctx, db.New(s.DB.Read), monat)
 }
@@ -297,7 +297,7 @@ func (s *Service) loadExport(ctx context.Context, monat string) (Monat, Einstell
 		return Monat{}, Einstellungen{}, err
 	}
 	if view.Jahresregel == nil {
-		return Monat{}, Einstellungen{}, problem.New(422, "E_JAHRESREGEL_FEHLT", "Für dieses Jahr ist keine Jahresregel hinterlegt.")
+		return Monat{}, Einstellungen{}, errNoRule()
 	}
 	einst, err := s.GetEinstellungen(ctx)
 	if err != nil {

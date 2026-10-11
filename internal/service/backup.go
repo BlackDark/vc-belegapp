@@ -293,46 +293,10 @@ func (s *Service) backupParts(ctx context.Context, sqlDB *sql.DB) (export.Header
 		if viewErr != nil {
 			return export.Header{}, nil, nil, viewErr
 		}
-		shas := make([]string, 0, len(view.Bilder))
-		for _, bild := range view.Bilder {
-			shas = append(shas, bild.SHA256)
-		}
-		codes := make([]string, 0, len(view.Warnungen))
-		for _, warn := range view.Warnungen {
-			codes = append(codes, warn.Code)
-		}
-		grund := ""
-		if view.KorrekturGrund != nil {
-			grund = *view.KorrekturGrund
-		}
-		csvRows = append(csvRows, export.Row{
-			Nr:             i + 1,
-			BelegID:        view.ID,
-			Datum:          view.Datum,
-			Wochentag:      weekdayOf(view.Datum),
-			Mahlzeit:       view.Mahlzeit,
-			Bezugsort:      view.Bezugsort,
-			Arbeitsort:     view.Arbeitsort,
-			Haendler:       view.HaendlerName,
-			Ort:            view.HaendlerOrt,
-			Belegbetrag:    view.BelegbetragCent,
-			Anerkannt:      view.Berechnung.AnerkanntCent,
-			KorrekturGrund: grund,
-			Erstattung:     view.Berechnung.ErstattungCent,
-			Eigenanteil:    view.Berechnung.EigenanteilCent,
-			GV:             view.Berechnung.GVCent,
-			Steuerfrei:     view.Berechnung.SteuerfreiCent,
-			Regulaer:       view.Berechnung.RegulaerCent,
-			Warnungen:      strings.Join(codes, ","),
-			BildSHA256:     strings.Join(shas, ","),
-		})
-		sum.Belegbetrag += view.BelegbetragCent
-		sum.Anerkannt += view.Berechnung.AnerkanntCent
-		sum.Erstattung += view.Berechnung.ErstattungCent
-		sum.Eigenanteil += view.Berechnung.EigenanteilCent
-		sum.GV += view.Berechnung.GVCent
-		sum.Steuerfrei += view.Berechnung.SteuerfreiCent
-		sum.Regulaer += view.Berechnung.RegulaerCent
+		csvRow := csvRowFromBeleg(view)
+		csvRow.Nr = i + 1
+		csvRows = append(csvRows, csvRow)
+		addToSum(&sum, view)
 	}
 	keys, err := blobKeys(ctx, q)
 	if err != nil {

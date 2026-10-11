@@ -6,6 +6,8 @@ import (
 	"errors"
 	"math"
 	"strings"
+
+	"github.com/BlackDark/vc-belegapp/internal/rules"
 )
 
 var (
@@ -22,10 +24,6 @@ var (
 	kategorien   = map[string]bool{
 		"lebensmittel": true, "getraenk_alkoholfrei": true, "alkohol": true, "tabak": true,
 		"pfand": true, "nonfood": true, "rabatt": true, "sonstiges": true,
-	}
-	bezugsorte = map[string]bool{
-		"supermarkt": true, "restaurant": true, "kantine": true, "baeckerei": true,
-		"lieferdienst": true, "sonstiges": true,
 	}
 )
 
@@ -80,7 +78,7 @@ func Parse(raw string) (Ergebnis, error) {
 	if out.BezugsortVorschlag, err = parseStringPtr(obj["bezugsort_vorschlag"]); err != nil {
 		return Ergebnis{}, err
 	}
-	if out.BezugsortVorschlag != nil && !bezugsorte[*out.BezugsortVorschlag] {
+	if out.BezugsortVorschlag != nil && !rules.Bezugsorte.Valid(*out.BezugsortVorschlag) {
 		return Ergebnis{}, errors.New("bezugsort ungültig")
 	}
 	if out.Konfidenz, err = parseFloat(obj["konfidenz"]); err != nil {

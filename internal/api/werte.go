@@ -21,7 +21,7 @@ func (a *API) werte(w http.ResponseWriter, _ *http.Request) {
 		Sachbezugswerte: rules.SBWListe(),
 		Kirchensteuer:   rules.KistSaetze(),
 		Bundeslaender:   rules.Bundeslaender(),
-		Mahlzeiten:      rules.Mahlzeiten(),
-		Bezugsorte:      rules.Bezugsorte(),
+		Mahlzeiten:      rules.Mahlzeiten.Entries(),
+		Bezugsorte:      rules.Bezugsorte.Entries(),
 	})
 }

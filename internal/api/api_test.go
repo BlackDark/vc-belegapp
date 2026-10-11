@@ -10,66 +10,28 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
-	"net/http/cookiejar"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"encoding/base64"
 	"fmt"
-	"github.com/BlackDark/vc-belegapp/internal/auth"
 	"github.com/BlackDark/vc-belegapp/internal/db"
-	"github.com/BlackDark/vc-belegapp/internal/holidays"
+	"github.com/BlackDark/vc-belegapp/internal/db/dbtest"
 	"github.com/BlackDark/vc-belegapp/internal/rules"
-	"github.com/BlackDark/vc-belegapp/internal/server"
-	"github.com/BlackDark/vc-belegapp/internal/service"
 	"github.com/BlackDark/vc-belegapp/internal/storage"
 	"golang.org/x/crypto/argon2"
-	"testing/fstest"
 )
 
 func TestFlowManualReceipt(t *testing.T) {
 	ctx := context.Background()
-	database := openTestDB(t)
+	database := dbtest.Open(t)
 	store := storage.NewFS(t.TempDir())
-	loc, err := time.LoadLocation("Europe/Berlin")
-	if err != nil {
-		t.Fatal(err)
-	}
-	fixed := time.Date(2026, 10, 8, 15, 0, 0, 0, loc)
-	svc := &service.Service{
-		DB:        database,
-		Store:     store,
-		Holidays:  holidays.NewCalendar(),
-		Loc:       loc,
-		Now:       func() time.Time { return fixed },
-		UploadMax: 1 << 20,
-		ImageTTL:  time.Hour,
-	}
-	sessions := &auth.Sessions{DB: database, Idle: time.Hour, Absolute: 2 * time.Hour, Secure: false}
-	hash := lightHash("geheim")
-	handler, err := server.New(server.Options{
-		Frontend: fstest.MapFS{"index.html": {Data: []byte("<title>Belegapp</title>")}},
-		BaseURL:  "https://belege.example.de",
-		Ready: server.ReadyChecks{
-			Database:   database.Write.PingContext,
-			Migrations: func(ctx context.Context) error { return db.MigrationsCurrent(ctx, database.Write) },
-			Storage:    store.Ping,
-			Typst:      func(context.Context) (string, error) { return "typst test", nil },
-		},
-		API: (&API{
-			Svc: svc, Sessions: sessions, Limiter: &auth.Limiter{}, PasswordHash: hash, OIDCLabel: "Mit SSO anmelden",
-		}).Handler(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ts := httptest.NewServer(handler)
-	t.Cleanup(ts.Close)
-	jar, _ := cookiejar.New(nil)
-	client := &http.Client{Jar: jar}
+	loc := dbtest.Loc(t)
+	svc := newTestService(t, database, store, dbtest.Clock(loc), nil)
+	handler := newTestAPI(t, svc, store)
+	ts, client := newTestServer(t, handler)
 
 	res := doJSON(t, client, http.MethodGet, ts.URL+"/api/v1/auth/config", "", nil)
 	if res.Status != 200 || !res.JSON["passwort"].(bool) {
@@ -87,10 +49,7 @@ func TestFlowManualReceipt(t *testing.T) {
 	if res.Status != 401 {
 		t.Fatalf("login %d", res.Status)
 	}
-	res = doJSON(t, client, http.MethodPost, ts.URL+"/api/v1/auth/login", "", map[string]string{"passwort": "geheim"})
-	if res.Status != 204 {
-		t.Fatalf("login ok %d %s", res.Status, res.Raw)
-	}
+	login(t, ts.URL, client)
 
 	res = doJSON(t, client, http.MethodGet, ts.URL+"/api/v1/werte", "", nil)
 	assertWerte(t, res)
@@ -361,19 +320,6 @@ func uploadJPEG(t *testing.T, client *http.Client, base string) string {
 		t.Fatal(err)
 	}
 	return body["id"].(string)
-}
-
-func openTestDB(t *testing.T) *db.DB {
-	t.Helper()
-	database, err := db.Open(filepath.Join(t.TempDir(), "belegapp.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = database.Close() })
-	if err := db.Migrate(context.Background(), database.Write); err != nil {
-		t.Fatal(err)
-	}
-	return database
 }
 
 func lightHash(password string) string {

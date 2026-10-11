@@ -13,7 +13,7 @@ import (
 	"github.com/BlackDark/vc-belegapp/internal/validate"
 )
 
-func (s *Service) warnungen(ctx context.Context, q *db.Queries, in BelegInput, regel rules.Jahresregel, tag calc.TagesResult, rank int, days []holidays.Feiertag, exportAm string, exportVersion int, selfID string) []validate.Warnung {
+func (s *Service) warnungen(ctx context.Context, q *db.Queries, in BelegInput, regel rules.Jahresregel, tag calc.TagesResult, rank int, days []holidays.Feiertag, selfID string) []validate.Warnung {
 	var out []validate.Warnung
 	if parsed, err := time.Parse("2006-01-02", in.Datum); err == nil {
 		switch parsed.Weekday() {
@@ -46,8 +46,6 @@ func (s *Service) warnungen(ctx context.Context, q *db.Queries, in BelegInput, r
 	if regel.SBWStatus == rules.StatusEntwurf {
 		out = append(out, validate.SBWEntwurf(regel.Jahr))
 	}
-	_ = exportAm
-	_ = exportVersion
 	for _, bildID := range in.BildIDs {
 		img, err := q.GetBelegbild(ctx, bildID)
 		if err != nil {

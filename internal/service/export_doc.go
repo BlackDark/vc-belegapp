@@ -32,6 +32,7 @@ func (s *Service) buildMonth(ctx context.Context, view Monat, einst Einstellunge
 	var rows []pdf.Zeile
 	var notes []string
 	var csvRows []export.Row
+	var csvSum export.Sum
 	var images []pdf.Image
 	var pictures []export.File
 	var anhang []pdf.AnhangSeite
@@ -59,7 +60,6 @@ func (s *Service) buildMonth(ctx context.Context, view Monat, einst Einstellunge
 		if err != nil {
 			return monthBuilt{}, err
 		}
-		shas := make([]string, 0, len(pics))
 		for n, pic := range pics {
 			original, readErr := readBlob(ctx, s.Store, pic.BlobKey)
 			if readErr != nil {
@@ -74,7 +74,6 @@ func (s *Service) buildMonth(ctx context.Context, view Monat, einst Einstellunge
 			if seite < 1 {
 				seite = n + 1
 			}
-			shas = append(shas, pic.Sha256)
 			pictures = append(pictures, export.File{
 				Name: fmt.Sprintf("bilder/%s_%s_s%d.jpg", beleg.Datum, export.Slug(beleg.HaendlerName), seite),
 				Data: original,
@@ -110,34 +109,10 @@ func (s *Service) buildMonth(ctx context.Context, view Monat, einst Einstellunge
 				Seite:          fmt.Sprintf("%d von %d", seite, len(pics)),
 			})
 		}
-		codes := make([]string, 0, len(beleg.Warnungen))
-		for _, warn := range beleg.Warnungen {
-			codes = append(codes, warn.Code)
-		}
-		grund := ""
-		if beleg.KorrekturGrund != nil {
-			grund = *beleg.KorrekturGrund
-		}
-		csvRows = append(csvRows, export.Row{
-			Nr:             nr,
-			Datum:          beleg.Datum,
-			Wochentag:      weekdayOf(beleg.Datum),
-			Mahlzeit:       beleg.Mahlzeit,
-			Bezugsort:      beleg.Bezugsort,
-			Arbeitsort:     beleg.Arbeitsort,
-			Haendler:       beleg.HaendlerName,
-			Ort:            beleg.HaendlerOrt,
-			Belegbetrag:    beleg.BelegbetragCent,
-			Anerkannt:      beleg.Berechnung.AnerkanntCent,
-			KorrekturGrund: grund,
-			Erstattung:     beleg.Berechnung.ErstattungCent,
-			Eigenanteil:    beleg.Berechnung.EigenanteilCent,
-			GV:             beleg.Berechnung.GVCent,
-			Steuerfrei:     beleg.Berechnung.SteuerfreiCent,
-			Regulaer:       beleg.Berechnung.RegulaerCent,
-			Warnungen:      strings.Join(codes, ","),
-			BildSHA256:     strings.Join(shas, ","),
-		})
+		csvRow := csvRowFromBeleg(beleg)
+		csvRow.Nr = nr
+		csvRows = append(csvRows, csvRow)
+		addToSum(&csvSum, beleg)
 	}
 	sum := view.Summen
 	rows = append(rows, pdf.Zeile{
@@ -222,15 +197,7 @@ func (s *Service) buildMonth(ctx context.Context, view Monat, einst Einstellunge
 		doc:      doc,
 		images:   images,
 		pictures: pictures,
-		csv: export.CSV(csvRows, export.Sum{
-			Belegbetrag: sum.BelegbetragCent,
-			Anerkannt:   sum.AnerkanntCent,
-			Erstattung:  sum.ErstattungCent,
-			Eigenanteil: sum.EigenanteilCent,
-			GV:          sum.GVCent,
-			Steuerfrei:  sum.SteuerfreiCent,
-			Regulaer:    sum.RegulaerCent,
-		}),
+		csv:      export.CSV(csvRows, csvSum),
 	}, nil
 }
 
@@ -382,7 +349,7 @@ func (s *Service) fingerprintDB(ctx context.Context, q *db.Queries, monat string
 	for _, row := range rows {
 		fmt.Fprintf(&b, "%s|%d|%s\n", row.ID, row.Version, row.GeaendertAm)
 	}
-	start, err := time.Parse("2006-01", monat)
+	start, err := parseMonat(monat)
 	if err != nil {
 		return "", err
 	}

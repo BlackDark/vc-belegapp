@@ -98,7 +98,7 @@ func TestReferenceListsAreOrdered(t *testing.T) {
 	if got := Bundeslaender(); len(got) != 16 || got[0] != "BW" || got[1] != "BY" || got[15] != "TH" {
 		t.Fatalf("bundeslaender %v", got)
 	}
-	if got := MahlzeitCodes(); len(got) != 3 || got[0] != "fruehstueck" || got[2] != "abend" {
+	if got := Mahlzeiten.Codes(); len(got) != 3 || got[0] != "fruehstueck" || got[2] != "abend" {
 		t.Fatalf("mahlzeiten %v", got)
 	}
 	sbw := SBWListe()
@@ -117,21 +117,76 @@ func TestReferenceListsAreOrdered(t *testing.T) {
 			t.Fatalf("map disagrees for %s", satz.Land)
 		}
 	}
-	bezugsorte := Bezugsorte()
+	bezugsorte := Bezugsorte.Entries()
 	if len(bezugsorte) != 6 || bezugsorte[0].Code != "supermarkt" || bezugsorte[5].Code != "sonstiges" {
 		t.Fatalf("bezugsorte %+v", bezugsorte)
 	}
 }
 
-func TestLabelOfFallsBackToCode(t *testing.T) {
-	if got := LabelOf(Mahlzeiten(), "fruehstueck"); got != "Frühstück" {
-		t.Fatalf("label %q", got)
+// The German labels are user-facing text pinned by the PDF golden test and by
+// GET /werte, so they are asserted here byte for byte, umlauts included.
+func TestCatalogLabelsAreExact(t *testing.T) {
+	cases := []struct {
+		catalog Catalog
+		code    string
+		label   string
+	}{
+		{Mahlzeiten, "fruehstueck", "Frühstück"},
+		{Mahlzeiten, "mittag", "Mittag"},
+		{Mahlzeiten, "abend", "Abend"},
+		{Bezugsorte, "supermarkt", "Supermarkt"},
+		{Bezugsorte, "restaurant", "Restaurant"},
+		{Bezugsorte, "kantine", "Kantine"},
+		{Bezugsorte, "baeckerei", "Bäckerei"},
+		{Bezugsorte, "lieferdienst", "Lieferdienst"},
+		{Bezugsorte, "sonstiges", "Sonstiges"},
+		{Arbeitsorte, "betrieb", "Betrieb"},
+		{Arbeitsorte, "homeoffice", "Homeoffice"},
+		{Quellen, "manuell", "manuell"},
+		{Quellen, "ki", "KI"},
+		{Quellen, "ki_korrigiert", "KI korrigiert"},
 	}
-	if got := LabelOf(Bezugsorte(), "baeckerei"); got != "Bäckerei" {
-		t.Fatalf("label %q", got)
+	for _, c := range cases {
+		if got := c.catalog.Label(c.code); got != c.label {
+			t.Errorf("label for %q is %q, want %q", c.code, got, c.label)
+		}
+		if !c.catalog.Valid(c.code) {
+			t.Errorf("%q rejected by its catalog", c.code)
+		}
+		if c.catalog.Label("unbekannt") != "unbekannt" || c.catalog.Valid("unbekannt") {
+			t.Errorf("unknown code is not passed through by %+v", c.catalog.Entries())
+		}
 	}
-	if got := LabelOf(Mahlzeiten(), "unbekannt"); got != "unbekannt" {
-		t.Fatalf("fallback %q", got)
+	// Codes and Entries must stay in lockstep and in the same order.
+	for _, catalog := range []Catalog{Mahlzeiten, Bezugsorte, Arbeitsorte, Quellen} {
+		entries := catalog.Entries()
+		codes := catalog.Codes()
+		if len(entries) == 0 || len(entries) != len(codes) {
+			t.Fatalf("%+v has %d entries but %d codes", entries, len(entries), len(codes))
+		}
+		for i, entry := range entries {
+			if entry.Code != codes[i] {
+				t.Fatalf("entry %d is %q but code %d is %q", i, entry.Code, i, codes[i])
+			}
+		}
+		entries[0].Label = "geaendert"
+		if catalog.Entries()[0].Label == "geaendert" {
+			t.Fatal("Entries hands out the catalog itself")
+		}
+	}
+	if len(Arbeitsorte.Codes()) != 2 || len(Quellen.Codes()) != 3 {
+		t.Fatalf("arbeitsorte %v quellen %v", Arbeitsorte.Codes(), Quellen.Codes())
+	}
+}
+
+func TestLandValid(t *testing.T) {
+	for _, land := range Bundeslaender() {
+		if !LandValid(land) {
+			t.Errorf("bundesland %s rejected", land)
+		}
+	}
+	if LandValid("XX") || LandValid("") || LandValid("bw") {
+		t.Fatal("unknown bundesland accepted")
 	}
 }
 
@@ -153,7 +208,7 @@ func TestDerivedTablesMatchTheLists(t *testing.T) {
 			}
 		}
 	}
-	for _, code := range MahlzeitCodes() {
+	for _, code := range Mahlzeiten.Codes() {
 		r := Vorschlag(2026, nil)
 		r.Mahlzeiten = []string{code}
 		r.StandardMahlzeit = code

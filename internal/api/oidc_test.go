@@ -13,6 +13,7 @@ import (
 
 	"github.com/BlackDark/vc-belegapp/internal/auth"
 	"github.com/BlackDark/vc-belegapp/internal/db"
+	"github.com/BlackDark/vc-belegapp/internal/db/dbtest"
 	"github.com/BlackDark/vc-belegapp/internal/server"
 	"github.com/BlackDark/vc-belegapp/internal/service"
 	"testing/fstest"
@@ -31,7 +32,7 @@ func TestOIDCAllowAndDeny(t *testing.T) {
 	}))
 	t.Cleanup(ts.Close)
 
-	database := openTestDB(t)
+	database := dbtest.Open(t)
 	secret := bytes32()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

@@ -56,11 +56,30 @@ type Monat struct {
 	Exporte             []ExportInfo       `json:"exporte"`
 }
 
+// monatLayout is the JJJJ-MM month format of the API and the database.
+const monatLayout = "2006-01"
+
+// parseMonat parses a JJJJ-MM month. It reports the raw time.Parse error so
+// every caller keeps its own error mapping; errMonatFormat is the usual one.
+func parseMonat(monat string) (time.Time, error) {
+	return time.Parse(monatLayout, monat)
+}
+
+// errMonatFormat is the problem for a month that is not in JJJJ-MM format.
+func errMonatFormat() *problem.Error {
+	return problem.New(422, "E_FELD_UNGUELTIG", "Der Monat muss im Format JJJJ-MM sein.")
+}
+
+// errNoRule is the problem for a year without a Jahresregel.
+func errNoRule() *problem.Error {
+	return problem.New(422, "E_JAHRESREGEL_FEHLT", "Für dieses Jahr ist keine Jahresregel hinterlegt.")
+}
+
 // GetMonat builds the month view.
 func (s *Service) GetMonat(ctx context.Context, monat string) (Monat, error) {
-	start, err := time.Parse("2006-01", monat)
+	start, err := parseMonat(monat)
 	if err != nil {
-		return Monat{}, problem.New(422, "E_FELD_UNGUELTIG", "Der Monat muss im Format JJJJ-MM sein.")
+		return Monat{}, errMonatFormat()
 	}
 	q := db.New(s.DB.Read)
 	status, err := monthStatus(ctx, q, monat)
@@ -95,7 +114,7 @@ func (s *Service) GetMonat(ctx context.Context, monat string) (Monat, error) {
 	byDatum := map[string]string{}
 	for _, row := range rows {
 		if regel == nil {
-			return Monat{}, problem.New(422, "E_JAHRESREGEL_FEHLT", "Für dieses Jahr ist keine Jahresregel hinterlegt.")
+			return Monat{}, errNoRule()
 		}
 		view, err := s.decorate(ctx, q, row, rows)
 		if err != nil {

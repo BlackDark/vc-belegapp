@@ -38,7 +38,7 @@ func (s *Service) prepare(ctx context.Context, q *db.Queries, in BelegInput, sel
 	}
 	row, err := q.GetJahresregel(ctx, int64(jahr))
 	if isNoRows(err) {
-		return Beleg{}, rules.Jahresregel{}, "", problem.New(422, "E_JAHRESREGEL_FEHLT", "Für dieses Jahr ist keine Jahresregel hinterlegt.")
+		return Beleg{}, rules.Jahresregel{}, "", errNoRule()
 	}
 	if err != nil {
 		return Beleg{}, rules.Jahresregel{}, "", err
@@ -54,9 +54,7 @@ func (s *Service) prepare(ctx context.Context, q *db.Queries, in BelegInput, sel
 	}
 	other, err := q.GetBelegByDatum(ctx, in.Datum)
 	if err == nil && other.ID != selfID {
-		return Beleg{}, rules.Jahresregel{}, "", problem.Fields("E_DATUM_BELEGT", "Für dieses Datum existiert bereits ein Beleg.", []problem.Field{{
-			Feld: "datum", Code: "E_DATUM_BELEGT", Text: "Für dieses Datum existiert bereits ein Beleg.",
-		}})
+		return Beleg{}, rules.Jahresregel{}, "", errDatumBelegt()
 	}
 	if err != nil && !isNoRows(err) {
 		return Beleg{}, rules.Jahresregel{}, "", err
@@ -87,11 +85,15 @@ func (s *Service) prepare(ctx context.Context, q *db.Queries, in BelegInput, sel
 		return Beleg{}, rules.Jahresregel{}, "", err
 	}
 	exportAm, exportVersion := s.latestExport(ctx, q, monat)
-	built := s.assemble(in, regel, rank, status, days, exportAm, exportVersion, selfID, ctx, q)
+	built := s.assemble(in, regel, rank, status, days, exportAm, exportVersion, selfID, true, ctx, q)
 	return built, regel, status, nil
 }
 
-func (s *Service) assemble(in BelegInput, regel rules.Jahresregel, rank int, status string, days []holidays.Feiertag, exportAm string, exportVersion int, selfID string, ctx context.Context, q *db.Queries) Beleg {
+// assemble builds the receipt view once, from the day formula to the warnings.
+// allowed is false only when decorate renders a stored receipt whose meal type
+// the year rule no longer subsidises: the day result then collapses to zero and
+// the subsidy warnings are replaced by a single W_MAHLZEIT_NICHT_BEZUSCHUSST.
+func (s *Service) assemble(in BelegInput, regel rules.Jahresregel, rank int, status string, days []holidays.Feiertag, exportAm string, exportVersion int, selfID string, allowed bool, ctx context.Context, q *db.Queries) Beleg {
 	anerkannt := in.BelegbetragCent
 	if in.KorrigierterBetragCent != nil {
 		anerkannt = *in.KorrigierterBetragCent
@@ -103,9 +105,12 @@ func (s *Service) assemble(in BelegInput, regel rules.Jahresregel, rank int, sta
 		SBWCent:         rules.SBWCent(regel, in.Mahlzeit),
 		AufschlagCent:   regel.HoechstzuschussAufschlagCent,
 		Variante:        regel.EigenanteilVariante,
-		Erlaubt:         true,
+		Erlaubt:         allowed,
 	})
-	warnungen := s.warnungen(ctx, q, in, regel, tag, rank, days, exportAm, exportVersion, selfID)
+	warnungen := s.warnungen(ctx, q, in, regel, tag, rank, days, selfID)
+	if !allowed {
+		warnungen = withoutSubsidy(warnungen)
+	}
 	return Beleg{
 		Datum:                  in.Datum,
 		Mahlzeit:               in.Mahlzeit,
@@ -138,6 +143,18 @@ func (s *Service) assemble(in BelegInput, regel rules.Jahresregel, rank int, sta
 	}
 }
 
+// withoutSubsidy drops the subsidy warnings of a meal type without
+// entitlement and closes the list with a single W_MAHLZEIT_NICHT_BEZUSCHUSST.
+func withoutSubsidy(warnungen []validate.Warnung) []validate.Warnung {
+	kept := make([]validate.Warnung, 0, len(warnungen)+1)
+	for _, w := range warnungen {
+		if w.Code != "W_HOECHSTZUSCHUSS" && w.Code != "W_MAHLZEIT_NICHT_BEZUSCHUSST" {
+			kept = append(kept, w)
+		}
+	}
+	return append(kept, validate.MahlzeitNichtBezuschusst())
+}
+
 func (b *Beleg) noteExport(geaendert string) {
 	kept := make([]validate.Warnung, 0, len(b.Warnungen)+1)
 	for _, w := range b.Warnungen {
@@ -161,7 +178,7 @@ func (s *Service) decorate(ctx context.Context, q *db.Queries, row db.Belege, mo
 	}
 	regelRow, err := q.GetJahresregel(ctx, int64(jahr))
 	if isNoRows(err) {
-		return Beleg{}, problem.New(422, "E_JAHRESREGEL_FEHLT", "Für dieses Jahr ist keine Jahresregel hinterlegt.")
+		return Beleg{}, errNoRule()
 	}
 	if err != nil {
 		return Beleg{}, err
@@ -193,35 +210,7 @@ func (s *Service) decorate(ctx context.Context, q *db.Queries, row db.Belege, mo
 	exportAm, exportVersion := s.latestExport(ctx, q, row.Datum[:7])
 	rank := receiptRank(monthRows, row.ID, row.Datum)
 	allowed := rules.MahlzeitErlaubt(regel, row.Mahlzeit)
-	anerkannt := in.BelegbetragCent
-	if in.KorrigierterBetragCent != nil {
-		anerkannt = *in.KorrigierterBetragCent
-	}
-	tag := calc.Tag(calc.TagesInput{
-		AnerkanntCent:   anerkannt,
-		BelegbetragCent: in.BelegbetragCent,
-		ZuschussCent:    regel.ZuschussCent,
-		SBWCent:         rules.SBWCent(regel, row.Mahlzeit),
-		AufschlagCent:   regel.HoechstzuschussAufschlagCent,
-		Variante:        regel.EigenanteilVariante,
-		Erlaubt:         allowed,
-	})
-	built := s.assemble(in, regel, rank, status, days, exportAm, exportVersion, row.ID, ctx, q)
-	if !allowed {
-		built.tag = tag
-		built.Berechnung.ErstattungCent = tag.ErstattungCent
-		built.Berechnung.EigenanteilCent = tag.EigenanteilCent
-		built.Berechnung.GVCent = tag.GVCent
-		built.Berechnung.SteuerfreiCent = tag.SteuerfreiCent
-		built.Berechnung.RegulaerCent = tag.RegulaerCent
-		kept := make([]validate.Warnung, 0, len(built.Warnungen)+1)
-		for _, w := range built.Warnungen {
-			if w.Code != "W_HOECHSTZUSCHUSS" && w.Code != "W_MAHLZEIT_NICHT_BEZUSCHUSST" {
-				kept = append(kept, w)
-			}
-		}
-		built.Warnungen = append(kept, validate.MahlzeitNichtBezuschusst())
-	}
+	built := s.assemble(in, regel, rank, status, days, exportAm, exportVersion, row.ID, allowed, ctx, q)
 	built.ID = row.ID
 	built.Quelle = row.Quelle
 	built.Version = int(row.Version)
@@ -364,11 +353,16 @@ func mapBelegWrite(err error) error {
 		return nil
 	}
 	if strings.Contains(err.Error(), "UNIQUE") {
-		return problem.Fields("E_DATUM_BELEGT", "Für dieses Datum existiert bereits ein Beleg.", []problem.Field{{
-			Feld: "datum", Code: "E_DATUM_BELEGT", Text: "Für dieses Datum existiert bereits ein Beleg.",
-		}})
+		return errDatumBelegt()
 	}
 	return err
+}
+
+// errDatumBelegt is the problem for a datum that already has a receipt.
+func errDatumBelegt() *problem.Error {
+	return problem.Fields("E_DATUM_BELEGT", "Für dieses Datum existiert bereits ein Beleg.", []problem.Field{{
+		Feld: "datum", Code: "E_DATUM_BELEGT", Text: "Für dieses Datum existiert bereits ein Beleg.",
+	}})
 }
 
 func requireChangeReason(status, reason string) error {
@@ -390,9 +384,9 @@ func monthStatus(ctx context.Context, q *db.Queries, monat string) (string, erro
 }
 
 func listMonth(ctx context.Context, q *db.Queries, monat string) ([]db.Belege, error) {
-	start, err := time.Parse("2006-01", monat)
+	start, err := parseMonat(monat)
 	if err != nil {
-		return nil, problem.New(422, "E_FELD_UNGUELTIG", "Der Monat muss im Format JJJJ-MM sein.")
+		return nil, errMonatFormat()
 	}
 	return q.ListBelegeByMonat(ctx, db.ListBelegeByMonatParams{
 		Datum:   start.Format("2006-01-02"),

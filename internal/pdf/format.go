@@ -52,40 +52,28 @@ func WeekdayShort(weekday int) string {
 	return names[weekday]
 }
 
-// Mahlzeit is the German meal label.
+// Mahlzeit is the German meal label. An unknown code is passed through, so
+// data written before a code was added still renders.
 func Mahlzeit(code string) string {
-	return rules.LabelOf(rules.Mahlzeiten(), code)
+	return rules.Mahlzeiten.Label(code)
 }
 
-// Bezugsort is the German purchase-place label.
+// Bezugsort is the German purchase-place label. An unknown code is passed
+// through, so data written before a code was added still renders.
 func Bezugsort(code string) string {
-	return rules.LabelOf(rules.Bezugsorte(), code)
+	return rules.Bezugsorte.Label(code)
 }
 
-// Arbeitsort is the German workplace label.
+// Arbeitsort is the German workplace label. An unknown code is passed through,
+// so data written before a code was added still renders.
 func Arbeitsort(code string) string {
-	switch code {
-	case "betrieb":
-		return "Betrieb"
-	case "homeoffice":
-		return "Homeoffice"
-	default:
-		return code
-	}
+	return rules.Arbeitsorte.Label(code)
 }
 
-// Quelle is the German capture-source label.
+// Quelle is the German capture-source label. An unknown code is passed
+// through, so data written before a code was added still renders.
 func Quelle(code string) string {
-	switch code {
-	case "ki":
-		return "KI"
-	case "ki_korrigiert":
-		return "KI korrigiert"
-	case "manuell":
-		return "manuell"
-	default:
-		return code
-	}
+	return rules.Quellen.Label(code)
 }
 
 // JaNein formats a boolean the way the PDF states a rule.

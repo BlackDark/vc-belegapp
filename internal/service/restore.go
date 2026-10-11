@@ -127,42 +127,55 @@ func (s *Service) applyImport(ctx context.Context, arc *export.Archive, actor Ac
 		return ImportResult{}, err
 	}
 	defer func() { _ = os.Remove(safetyZip) }()
-	if err := s.copyBlobs(ctx, arc); err != nil {
-		_ = s.rollback(ctx, safetyZip, safetyDB)
+	// From here on the live data is already half replaced, so every failure
+	// puts the safety snapshot back. The snapshot itself only goes away when
+	// the import ran through.
+	res, err := s.rollbackOnError(ctx, safetyZip, safetyDB, func() (ImportResult, error) {
+		if err := s.copyBlobs(ctx, arc); err != nil {
+			return ImportResult{}, err
+		}
+		snap, err := extractMember(arc, export.DBPath())
+		if err != nil {
+			return ImportResult{}, err
+		}
+		if err := s.DB.ReplaceFile(snap); err != nil {
+			_ = os.Remove(snap)
+			return ImportResult{}, err
+		}
+		if err := db.Migrate(ctx, s.DB.Write); err != nil {
+			return ImportResult{}, err
+		}
+		if _, err := s.MigrateBildKeys(ctx); err != nil {
+			return ImportResult{}, err
+		}
+		report, err := audit.Verify(ctx, s.DB.Read)
+		if err != nil {
+			return ImportResult{}, err
+		}
+		if !report.OK {
+			return ImportResult{}, problem.New(422, "E_IMPORT_UNGUELTIG", "Die Hash-Kette im Datenexport ist ungültig.")
+		}
+		if err := s.finishImport(ctx, arc, actor); err != nil {
+			return ImportResult{}, err
+		}
+		return resultFrom(arc), nil
+	})
+	if err != nil {
 		return ImportResult{}, err
 	}
-	snap, err := extractMember(arc, export.DBPath())
+	_ = os.Remove(safetyDB)
+	return res, nil
+}
+
+// rollbackOnError runs the import steps and restores the safety snapshot when
+// they fail. A rollback error never masks the original one.
+func (s *Service) rollbackOnError(ctx context.Context, safetyZip, safetyDB string, fn func() (ImportResult, error)) (ImportResult, error) {
+	res, err := fn()
 	if err != nil {
 		_ = s.rollback(ctx, safetyZip, safetyDB)
 		return ImportResult{}, err
 	}
-	if err := s.DB.ReplaceFile(snap); err != nil {
-		_ = os.Remove(snap)
-		_ = s.rollback(ctx, safetyZip, safetyDB)
-		return ImportResult{}, err
-	}
-	if err := db.Migrate(ctx, s.DB.Write); err != nil {
-		_ = s.rollback(ctx, safetyZip, safetyDB)
-		return ImportResult{}, err
-	}
-	if _, err := s.MigrateBildKeys(ctx); err != nil {
-		_ = s.rollback(ctx, safetyZip, safetyDB)
-		return ImportResult{}, err
-	}
-	report, err := audit.Verify(ctx, s.DB.Read)
-	if err != nil || !report.OK {
-		_ = s.rollback(ctx, safetyZip, safetyDB)
-		if err != nil {
-			return ImportResult{}, err
-		}
-		return ImportResult{}, problem.New(422, "E_IMPORT_UNGUELTIG", "Die Hash-Kette im Datenexport ist ungültig.")
-	}
-	if err := s.finishImport(ctx, arc, actor); err != nil {
-		_ = s.rollback(ctx, safetyZip, safetyDB)
-		return ImportResult{}, err
-	}
-	_ = os.Remove(safetyDB)
-	return resultFrom(arc), nil
+	return res, nil
 }
 
 func (s *Service) writeSafety(ctx context.Context) (string, string, error) {
@@ -336,20 +349,7 @@ func (s *Service) fetchBlob(ctx context.Context, key string) (string, error) {
 		return "", err
 	}
 	defer func() { _ = rc.Close() }()
-	f, err := os.CreateTemp("", "belegapp-fetch-*.zip")
-	if err != nil {
-		return "", err
-	}
-	if _, err := io.Copy(f, rc); err != nil {
-		_ = f.Close()
-		_ = os.Remove(f.Name())
-		return "", err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(f.Name())
-		return "", err
-	}
-	return f.Name(), nil
+	return copyToTemp("belegapp-fetch-*.zip", rc)
 }
 
 // SweepExports deletes download archives older than 24h and staged imports older than 30min.
@@ -403,11 +403,18 @@ func extractMember(arc *export.Archive, member string) (string, error) {
 		return "", err
 	}
 	defer func() { _ = rc.Close() }()
-	f, err := os.CreateTemp("", "belegapp-member-*")
+	return copyToTemp("belegapp-member-*", rc)
+}
+
+// copyToTemp writes r into a new temporary file and returns its path. A failed
+// copy or close leaves no half-written file behind. The caller owns the file
+// and has to remove it.
+func copyToTemp(pattern string, r io.Reader) (string, error) {
+	f, err := os.CreateTemp("", pattern)
 	if err != nil {
 		return "", err
 	}
-	if _, err := io.Copy(f, rc); err != nil {
+	if _, err := io.Copy(f, r); err != nil {
 		_ = f.Close()
 		_ = os.Remove(f.Name())
 		return "", err

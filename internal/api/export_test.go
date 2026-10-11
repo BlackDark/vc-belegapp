@@ -4,21 +4,14 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"net/http/cookiejar"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/BlackDark/vc-belegapp/internal/auth"
-	"github.com/BlackDark/vc-belegapp/internal/db"
-	"github.com/BlackDark/vc-belegapp/internal/holidays"
+	"github.com/BlackDark/vc-belegapp/internal/db/dbtest"
 	"github.com/BlackDark/vc-belegapp/internal/pdf"
 	"github.com/BlackDark/vc-belegapp/internal/rules"
-	"github.com/BlackDark/vc-belegapp/internal/server"
-	"github.com/BlackDark/vc-belegapp/internal/service"
 	"github.com/BlackDark/vc-belegapp/internal/storage"
-	"testing/fstest"
 )
 
 type stubPDF struct{}
@@ -28,42 +21,14 @@ func (stubPDF) Render(context.Context, pdf.Document, []pdf.Image) ([]byte, error
 }
 
 func TestMonatExport(t *testing.T) {
-	database := openTestDB(t)
+	database := dbtest.Open(t)
 	store := storage.NewFS(t.TempDir())
-	loc, err := time.LoadLocation("Europe/Berlin")
-	if err != nil {
-		t.Fatal(err)
-	}
+	loc := dbtest.Loc(t)
 	fixed := time.Date(2026, 10, 31, 12, 0, 0, 0, loc)
-	svc := &service.Service{
-		DB: database, Store: store, Holidays: holidays.NewCalendar(), Loc: loc,
-		Now: func() time.Time { return fixed }, UploadMax: 1 << 20, ImageTTL: time.Hour,
-		PDF: stubPDF{}, AppVersion: "test",
-	}
-	sessions := &auth.Sessions{DB: database, Idle: time.Hour, Absolute: 2 * time.Hour}
-	handler, err := server.New(server.Options{
-		Frontend: fstest.MapFS{"index.html": {Data: []byte("<title>Belegapp</title>")}},
-		BaseURL:  "https://belege.example.de",
-		Ready: server.ReadyChecks{
-			Database: database.Write.PingContext,
-			Migrations: func(ctx context.Context) error {
-				return db.MigrationsCurrent(ctx, database.Write)
-			},
-			Storage: store.Ping,
-			Typst:   func(context.Context) (string, error) { return "typst test", nil },
-		},
-		API: (&API{Svc: svc, Sessions: sessions, Limiter: &auth.Limiter{}, PasswordHash: lightHash("geheim")}).Handler(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ts := httptest.NewServer(handler)
-	t.Cleanup(ts.Close)
-	jar, _ := cookiejar.New(nil)
-	client := &http.Client{Jar: jar}
-	if res := doJSON(t, client, http.MethodPost, ts.URL+"/api/v1/auth/login", "", map[string]string{"passwort": "geheim"}); res.Status != 204 {
-		t.Fatal(res.Raw)
-	}
+	svc := newTestService(t, database, store, fixed, stubPDF{})
+	svc.AppVersion = "test"
+	ts, client := newTestServer(t, newTestAPI(t, svc, store))
+	login(t, ts.URL, client)
 	if res := doJSON(t, client, http.MethodPut, ts.URL+"/api/v1/jahresregeln/2026", "", rules.Vorschlag(2026, nil)); res.Status != 200 {
 		t.Fatalf("regel %d %s", res.Status, res.Raw)
 	}
