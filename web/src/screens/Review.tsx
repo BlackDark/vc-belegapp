@@ -194,6 +194,11 @@ export default function Review() {
             void queryClient.invalidateQueries({
               queryKey: queryKeys.monatAll,
             });
+            // Saving attaches the images to the Beleg and deleting one releases
+            // them back, so the unassigned list and its count both move.
+            void queryClient.invalidateQueries({
+              queryKey: queryKeys.offeneBilder,
+            });
             navigate("/monat");
           }}
         />

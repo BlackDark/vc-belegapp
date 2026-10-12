@@ -72,6 +72,19 @@ func (q *Queries) CountLockedMonths(ctx context.Context, arg CountLockedMonthsPa
 	return count, err
 }
 
+const countUnassignedBilder = `-- name: CountUnassignedBilder :one
+SELECT COUNT(*) FROM belegbilder
+WHERE beleg_id IS NULL
+  AND (?1 = '' OR erkennung_status = ?1)
+`
+
+func (q *Queries) CountUnassignedBilder(ctx context.Context, status interface{}) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countUnassignedBilder, status)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteAllSitzungen = `-- name: DeleteAllSitzungen :exec
 DELETE FROM sitzungen
 `
@@ -1082,6 +1095,63 @@ func (q *Queries) ListUnassignedBelegbilderBefore(ctx context.Context, erstelltA
 			&i.ErkennungModell,
 			&i.ErkennungDauerMs,
 			&i.ErstelltAm,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUnassignedBilder = `-- name: ListUnassignedBilder :many
+SELECT id, erstellt_am, erkennung_status, erkennung_fehler, breite, hoehe
+FROM belegbilder
+WHERE beleg_id IS NULL
+  AND (?1 = '' OR erkennung_status = ?1)
+ORDER BY erstellt_am DESC, id DESC
+LIMIT ?3 OFFSET ?2
+`
+
+type ListUnassignedBilderParams struct {
+	Status interface{}
+	Offset int64
+	Limit  int64
+}
+
+type ListUnassignedBilderRow struct {
+	ID              string
+	ErstelltAm      string
+	ErkennungStatus string
+	ErkennungFehler interface{}
+	Breite          int64
+	Hoehe           int64
+}
+
+// The "offene Bilder" list: uploaded images that no Beleg owns yet, newest
+// first. An empty status means "no filter"; the paged count runs the same
+// predicate so the total and the page always agree.
+func (q *Queries) ListUnassignedBilder(ctx context.Context, arg ListUnassignedBilderParams) ([]ListUnassignedBilderRow, error) {
+	rows, err := q.db.QueryContext(ctx, listUnassignedBilder, arg.Status, arg.Offset, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUnassignedBilderRow
+	for rows.Next() {
+		var i ListUnassignedBilderRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ErstelltAm,
+			&i.ErkennungStatus,
+			&i.ErkennungFehler,
+			&i.Breite,
+			&i.Hoehe,
 		); err != nil {
 			return nil, err
 		}

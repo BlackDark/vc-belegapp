@@ -521,6 +521,7 @@ Die Monatsansicht prüft `P_BILDER_VOLLSTAENDIG` per Stat (Blob vorhanden, Grö�
 | POST | `/belegbilder/{id}/erkennung` | Erkennung (erneut) starten → `202` |
 | GET | `/belegbilder/{id}/datei` · `/thumbnail` | Bild (`Cache-Control: private, max-age=31536000, immutable`) |
 | DELETE | `/belegbilder/{id}` | nur nicht zugeordnete Bilder → `204` |
+| GET | `/belegbilder/offen?status=&limit=50&offset=0` | nicht zugeordnete Bilder, neueste zuerst → `{bilder, gesamt, limit, offset}` (siehe 8.3) |
 | POST | `/belege/vorschau` | Beleg-Body ohne Speichern → `{berechnung, warnungen}` |
 | POST | `/belege` | anlegen → `201` Beleg |
 | GET | `/belege/{id}` | Beleg |
@@ -552,6 +553,14 @@ Die Monatsansicht prüft `P_BILDER_VOLLSTAENDIG` per Stat (Blob vorhanden, Grö�
   "erkennung": { "status": "fertig", "modell": "gpt-5-mini", "dauer_ms": 4210,
                  "ergebnis": { …Schema 10.3… }, "korrekturvorschlag_cent": 1250, "fehler": null },
   "duplikat_von": null }
+```
+
+**Offene Bilder** (`GET /belegbilder/offen`) – eine Seite nicht zugeordneter Bilder. Der Eintrag nennt weder Blob-Schlüssel noch Bilddaten und nicht das volle Erkennungsergebnis; das Prüf-Formular löst es über `GET /belegbilder/{id}` auf. `gesamt` zählt die gesamte Filterauswahl, nicht die Seite.
+```json
+{ "bilder": [{ "id": "01JA…", "erstellt_am": "2026-10-08T13:00:00Z",
+               "erkennung_status": "fertig", "erkennung_fehler": null,
+               "thumbnail_url": "/api/v1/belegbilder/01JA…/thumbnail" }],
+  "gesamt": 1, "limit": 50, "offset": 0 }
 ```
 
 **Beleg – Request (POST/PATCH)**
@@ -797,7 +806,7 @@ Letzte Zeile `summe;…` mit Summen. Für den Datenexport zusätzlich Spalte `be
 ## 13. UI
 
 ### 13.1 Grundsätze
-- Mobile-first, eine Spalte < 768 px; ab `md` Sidebar-Layout. Untere Navigation (mobil): **Heute**, **Monat**, **Einstellungen**; zentraler Kamera-FAB auf „Heute“ und „Monat“.
+- Mobile-first, eine Spalte < 768 px; ab `md` Sidebar-Layout. Untere Navigation (mobil): **Heute**, **Monat**, **Einstellungen**; zentraler Kamera-FAB auf „Heute“ und „Monat“. Sidebar zusätzlich mit **Offene Bilder**.
 - Dark Mode: `Hell | Dunkel | System` (Standard System), gespeichert in `localStorage`, Klasse `dark` auf `<html>`; Tailwind-v4-Tokens (shadcn-Variablen) für beide Themes.
 - Komponenten: solid-ui (Kobalte/corvu) im Repo unter `web/src/components/ui`; Icons lucide-solid; Toasts solid-sonner; Daten TanStack Query; Formulare TanStack Form.
 - Zahlen/Datum: `Intl.NumberFormat("de-DE", {style:"currency", currency:"EUR"})`, `Intl.DateTimeFormat("de-DE")`; Betragseingabe akzeptiert „7,67“ und „7.67“, `inputmode="decimal"`.
@@ -811,6 +820,7 @@ Letzte Zeile `summe;…` mit Summen. Für den Datenexport zusätzlich Spalte `be
 | Heute | Status heute (Beleg vorhanden: Karte mit Thumbnail/Betrag/Erstattung; sonst Kamera- und Galerie-Button groß), Monatsfortschritt „n / Limit“, ΣE des Monats, Hinweis bei fehlender Jahresregel |
 | Prüfen/Bearbeiten | Bild (Pinch-Zoom, Seitenwechsel, „+ Seite“), Erkennungsstatus (Skeleton/Fehler/„Erneut erkennen“), Felder: Datum, Mahlzeitart (Segmented, nur erlaubte), Bezugsort (Select), Arbeitsort (Toggle), Händler, Ort, Belegbetrag, Korrigierter Betrag + Grund (aufklappbar), Notiz; Positionsliste mit Kategorie-Badges; Korrekturvorschlag-Hinweis; Berechnungskarte (E, U, G, F, R); Warnungsliste; Speichern/Löschen; Änderungsgrund-Dialog im gesperrten Monat |
 | Monat | Monatsauswahl, Status-Badge, Kalender (Tageszellen mit Betrag/Wochenende/Feiertag/Warnung), Summenkarte, Belegliste, Buttons Vorschau/Exportieren, Banner bei `geaendert` |
+| Offene Bilder | Liste der nicht zugeordneten Bilder (Thumbnail, Hochladezeitpunkt, Erkennungsstatus-Badge, Fehlertext), je Eintrag Sprung in **Prüfen** mit `?bild={id}`; Leerzustand, wenn alles zugeordnet ist |
 | Export-Dialog | Prüfpunkte, Warnungen, Optionen CSV/ZIP, Arbeitnehmererklärung (Checkbox, Volltext), „Warnungen geprüft“, Vorschau, Final exportieren; bei `E_PRUEFPUNKT_FEHLGESCHLAGEN` die Export-Prüfpunkte neu laden; Liste der Exportversionen mit Downloads und Aufbewahrungsuhr |
 | Einstellungen | Profil; Monatsexport-Standards `export_csv_standard` / `export_zip_standard`; Jahresregeln (Liste; Editor mit Abschnitten Zuschuss, Sachbezugswerte (Button „amtliche Werte übernehmen“), Steuer (Pauschalierung, Gehaltsumwandlung, Bundesland → Kirchensteuer-Vorschlag, Satz), Berechnung (Eigenanteil-Variante mit Erklärung), Monatslimit + Modus, Eigene Feiertage); Belegerkennung (an/aus, Modell, Basis-URL read-only, „Verbindung testen“); Speicher (Backend read-only); Sitzungen; Datenexport/-import; Änderungsprotokoll (Liste, „Kette prüfen“); Darstellung; Über |
 
@@ -1022,7 +1032,7 @@ Coverage-Ziel: `internal/calc` 100 %, Backend gesamt ≥ 70 %.
 - ⚠️ 2027-Sachbezugswerte nach Bundesrat-Beschluss aktualisieren (Release vor Januar 2027).
 - ⚠️ Rundung der pauschalen Lohnsteuer (kaufmännisch angenommen) mit Lohnabrechnung abgleichen.
 - Teilbelege (mehrere Kassenzettel für eine Mahlzeit, steuerlich zulässig) – in v1 bewusst nicht unterstützt.
-- PDF-/E-Mail-Belege (Lieferdienste) als Eingabe.
+- PDF-/E-Mail-Belege (Lieferdienste) als Eingabe. Das Konzept **„braucht Prüfung“** ist als Sichtbarkeit explizit: `GET /belegbilder/offen` plus der Screen **Offene Bilder** listen jedes hochgeladene Bild ohne Beleg. Der IMAP-Abruf (ROADMAP, Option 1) legt seine Bilder dort ab und profitiert von derselben Liste; die Markierung eines Belegs als ungeprüft steht weiterhin aus.
 - Unterjährige Regeländerungen (z. B. Zuschusserhöhung zum 1.7.) – v1 nur pro Kalenderjahr.
 - Modellnamen/Preise (`gpt-5-mini`, Gemini Flash) vor M2 verifizieren; Eval-Set aufbauen.
 - solid-ui-Tokens auf Tailwind v4 portieren; Solid-2.0-Migration nach stabilem Release und Kobalte-Unterstützung.

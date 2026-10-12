@@ -161,6 +161,22 @@ SELECT beleg_ids FROM monatsexporte;
 -- name: ListUnassignedBelegbilderBefore :many
 SELECT * FROM belegbilder WHERE beleg_id IS NULL AND erstellt_am < ?;
 
+-- The "offene Bilder" list: uploaded images that no Beleg owns yet, newest
+-- first. An empty status means "no filter"; the paged count runs the same
+-- predicate so the total and the page always agree.
+-- name: ListUnassignedBilder :many
+SELECT id, erstellt_am, erkennung_status, erkennung_fehler, breite, hoehe
+FROM belegbilder
+WHERE beleg_id IS NULL
+  AND (sqlc.arg('status') = '' OR erkennung_status = sqlc.arg('status'))
+ORDER BY erstellt_am DESC, id DESC
+LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
+
+-- name: CountUnassignedBilder :one
+SELECT COUNT(*) FROM belegbilder
+WHERE beleg_id IS NULL
+  AND (sqlc.arg('status') = '' OR erkennung_status = sqlc.arg('status'));
+
 -- name: FindDuplicateBild :one
 SELECT b.id, b.datum
 FROM belegbilder i

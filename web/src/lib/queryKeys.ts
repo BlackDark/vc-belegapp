@@ -9,6 +9,7 @@ export const queryKeys = {
   monat: (monat: string) => ["monat", monat] as const,
   beleg: (id: string) => ["beleg", id] as const,
   bild: (id: string) => ["bild", id] as const,
+  offeneBilder: ["offene-bilder"] as const,
   info: ["info"] as const,
   werte: ["werte"] as const,
   sitzungen: ["sitzungen"] as const,

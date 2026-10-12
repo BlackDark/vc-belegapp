@@ -90,6 +90,25 @@ export type Bild = {
   thumbnail_url: string;
   erkennung: Erkennung;
 };
+// One entry of the "offene Bilder" list. It names no blob and carries no
+// recognition payload: opening it resolves the full Bild through client.bild.
+export type OffenesBild = {
+  id: string;
+  erstellt_am: string;
+  erkennung_status: string;
+  erkennung_fehler?: string | null;
+  thumbnail_url: string;
+  // When the sweeper will take this row, or null when no TTL is configured.
+  faellig_am?: string | null;
+};
+export type OffeneBilder = {
+  bilder: OffenesBild[];
+  gesamt: number;
+  limit: number;
+  offset: number;
+  // BELEGAPP_UNASSIGNED_IMAGE_TTL in whole hours; 0 means no sweeper runs.
+  ttl_stunden?: number;
+};
 export type Beleg = {
   id: string;
   datum: string;
@@ -322,6 +341,19 @@ export const client = {
   protokoll: () =>
     api<{ ok: boolean; anzahl: number }>("/api/v1/protokoll/pruefen"),
   bild: (id: string) => api<Bild>(`/api/v1/belegbilder/${id}`),
+  // Only unassigned images; an assigned one answers 422.
+  deleteBild: (id: string) =>
+    api<void>(`/api/v1/belegbilder/${id}`, { method: "DELETE" }),
+  offeneBilder: (
+    params: { status?: string; limit?: number; offset?: number } = {},
+  ) => {
+    const query = new URLSearchParams();
+    if (params.status) query.set("status", params.status);
+    if (params.limit != null) query.set("limit", String(params.limit));
+    if (params.offset != null) query.set("offset", String(params.offset));
+    const suffix = query.size > 0 ? `?${query.toString()}` : "";
+    return api<OffeneBilder>(`/api/v1/belegbilder/offen${suffix}`);
+  },
   erneut: (id: string) =>
     api<Bild>(`/api/v1/belegbilder/${id}/erkennung`, { method: "POST" }),
   testErkennung: () =>

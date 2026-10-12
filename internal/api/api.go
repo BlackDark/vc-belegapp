@@ -79,6 +79,7 @@ func (a *API) Handler() http.Handler {
 		r.Put("/jahresregeln/{jahr}", a.putRegel)
 		r.Get("/feiertage", a.feiertage)
 		r.Post("/belegbilder", a.uploadBild)
+		r.Get("/belegbilder/offen", a.listOffeneBilder)
 		r.Get("/belegbilder/{id}", a.getBild)
 		r.Post("/belegbilder/{id}/erkennung", a.startErkennung)
 		r.Get("/belegbilder/{id}/datei", a.bildDatei(false))

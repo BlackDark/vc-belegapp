@@ -151,6 +151,24 @@ func (a *API) getBild(w http.ResponseWriter, r *http.Request) {
 	a.writeJSON(w, http.StatusOK, bild)
 }
 
+// listOffeneBilder answers the unassigned images. limit and offset are parsed
+// leniently like the audit-log list: a bad number falls back to the default
+// rather than failing the request.
+func (a *API) listOffeneBilder(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	out, err := a.Svc.ListOffeneBilder(r.Context(), service.OffeneBilderParams{
+		Status: r.URL.Query().Get("status"),
+		Limit:  limit,
+		Offset: offset,
+	})
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, out)
+}
+
 func (a *API) bildDatei(thumb bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rc, err := a.Svc.OpenBild(r.Context(), chi.URLParam(r, "id"), thumb)

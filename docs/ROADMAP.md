@@ -38,6 +38,8 @@ Security notes for all intake paths:
 
 Suggested first slice: IMAP poll (option 1) plus the Web Share Target (option 3), both landing in a "needs review" state.
 
+The visibility prerequisite for that slice is done: `GET /belegbilder/offen` and the *Offene Bilder* screen list every uploaded image no Beleg owns, with a jump into the review form. The IMAP poll can drop its attachments there and they show up for the user; what is still missing is a flag on the Beleg itself that says "never reviewed".
+
 ### Deferred from the specification
 
 From [SPEC.md](SPEC.md) §1.2, §18 (M5), and §19.2, and [NOTES.md](NOTES.md):

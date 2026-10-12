@@ -9,6 +9,7 @@ const Today = lazy(() => import("./screens/Today"));
 const Capture = lazy(() => import("./screens/Capture"));
 const Review = lazy(() => import("./screens/Review"));
 const Month = lazy(() => import("./screens/Month"));
+const Unassigned = lazy(() => import("./screens/Unassigned"));
 const Settings = lazy(() => import("./screens/Settings"));
 const AnnualRulePage = lazy(() => import("./screens/AnnualRule"));
 
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="/belege/neu" component={Review} />
           <Route path="/belege/:id" component={Review} />
           <Route path="/monat" component={Month} />
+          <Route path="/offene-bilder" component={Unassigned} />
           <Route path="/einstellungen" component={Settings} />
           <Route path="/einstellungen/jahre/:jahr" component={AnnualRulePage} />
         </Route>

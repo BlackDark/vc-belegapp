@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/solid-query";
 import {
   CalendarDays,
   Camera,
+  Images,
   Monitor,
   Moon,
   Settings,
@@ -96,6 +97,12 @@ export default function Shell(props: ParentProps) {
                     label="Monat"
                     icon={<CalendarDays />}
                     active={location.pathname.startsWith("/monat")}
+                  />
+                  <NavItem
+                    href="/offene-bilder"
+                    label="Offene Bilder"
+                    icon={<Images />}
+                    active={location.pathname.startsWith("/offene-bilder")}
                   />
                   <NavItem
                     href="/einstellungen"

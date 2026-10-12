@@ -187,6 +187,148 @@ func (s *Service) DeleteBild(ctx context.Context, bildID string) error {
 	return nil
 }
 
+// OffeneBilderParams filters and paginates the unassigned-image list.
+type OffeneBilderParams struct {
+	Status string
+	Limit  int
+	Offset int
+}
+
+// OffenesBild is one unassigned image as the review list needs it. It carries
+// no blob key and no recognition payload; the deep link resolves the full
+// Belegbild through GET /belegbilder/{id} when the user opens it.
+type OffenesBild struct {
+	ID              string  `json:"id"`
+	ErstelltAm      string  `json:"erstellt_am"`
+	ErkennungStatus string  `json:"erkennung_status"`
+	ErkennungFehler *string `json:"erkennung_fehler"`
+	ThumbnailURL    string  `json:"thumbnail_url"`
+	// FaelligAm is when the sweep will take this row: ErstelltAm plus the TTL.
+	// It is nil when no TTL is configured, so the screen never claims a
+	// deadline the sweeper will not keep. Rows that came back from a deleted
+	// Beleg keep their original upload time, so the deadline is what explains
+	// them: it is in the past, and the next sweep removes them.
+	FaelligAm *string `json:"faellig_am"`
+}
+
+// OffeneBilder is one page of unassigned images plus the total for the filter,
+// so a client can page without a second count request.
+type OffeneBilder struct {
+	Bilder []OffenesBild `json:"bilder"`
+	Gesamt int           `json:"gesamt"`
+	Limit  int           `json:"limit"`
+	Offset int           `json:"offset"`
+	// TTLStunden is BELEGAPP_UNASSIGNED_IMAGE_TTL as whole hours, so the
+	// screen can state the real deadline instead of a hardcoded one. It is
+	// floored and never below 1: understating the grace period is the safe
+	// direction, promising more time than the sweeper grants is not. Zero
+	// means no sweeper runs at all and there is nothing to announce.
+	TTLStunden int `json:"ttl_stunden"`
+}
+
+// OffeneBilder page bounds. The default fits one screenful of thumbnails; the
+// cap keeps a hand-written limit= in the query string from loading the table.
+const (
+	offeneBilderDefaultLimit = 50
+	offeneBilderMaxLimit     = 100
+)
+
+// erkennungStatusen is the belegbilder.erkennung_status enum (5.2).
+var erkennungStatusen = map[string]bool{
+	"keine":      true,
+	"ausstehend": true,
+	"laeuft":     true,
+	"fertig":     true,
+	"fehler":     true,
+}
+
+// ListOffeneBilder returns uploaded images that no Beleg owns, newest first.
+// The month lock does not apply: an unassigned image belongs to no month, so
+// there is no gesperrter Monat to block. What the lock does affect is the way
+// rows arrive here — DeleteBeleg releases the images of a deleted Beleg back to
+// unassigned unless a Monatsexport still names them, and those rows are then
+// subject to BELEGAPP_UNASSIGNED_IMAGE_TTL like any other upload.
+func (s *Service) ListOffeneBilder(ctx context.Context, params OffeneBilderParams) (OffeneBilder, error) {
+	if params.Status != "" && !erkennungStatusen[params.Status] {
+		return OffeneBilder{}, problem.Fields("E_FELD_UNGUELTIG", "Der Erkennungsstatus ist unbekannt.", []problem.Field{{
+			Feld: "status", Code: "E_FELD_UNGUELTIG", Text: "Der Erkennungsstatus ist unbekannt.",
+		}})
+	}
+	limit := params.Limit
+	if limit <= 0 {
+		limit = offeneBilderDefaultLimit
+	}
+	if limit > offeneBilderMaxLimit {
+		limit = offeneBilderMaxLimit
+	}
+	offset := params.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	q := db.New(s.DB.Read)
+	rows, err := q.ListUnassignedBilder(ctx, db.ListUnassignedBilderParams{
+		Status: params.Status,
+		Limit:  int64(limit),
+		Offset: int64(offset),
+	})
+	if err != nil {
+		return OffeneBilder{}, err
+	}
+	total, err := q.CountUnassignedBilder(ctx, params.Status)
+	if err != nil {
+		return OffeneBilder{}, err
+	}
+	out := OffeneBilder{
+		Bilder: make([]OffenesBild, 0, len(rows)),
+		Gesamt: int(total),
+		Limit:  limit,
+		Offset: offset,
+		// The screen names the deadline, so it has to be the configured one.
+		TTLStunden: ttlStunden(s.ImageTTL),
+	}
+	for _, row := range rows {
+		bild := OffenesBild{
+			ID:              row.ID,
+			ErstelltAm:      row.ErstelltAm,
+			ErkennungStatus: row.ErkennungStatus,
+			ThumbnailURL:    "/api/v1/belegbilder/" + row.ID + "/thumbnail",
+			FaelligAm:       faelligAm(row.ErstelltAm, s.ImageTTL),
+		}
+		if text := asString(row.ErkennungFehler); text != "" {
+			bild.ErkennungFehler = &text
+		}
+		out.Bilder = append(out.Bilder, bild)
+	}
+	return out, nil
+}
+
+// ttlStunden renders the sweeper TTL in whole hours for the UI. See
+// OffeneBilder.TTLStunden for why it floors rather than rounds.
+func ttlStunden(ttl time.Duration) int {
+	if ttl <= 0 {
+		return 0
+	}
+	hours := int(ttl / time.Hour)
+	if hours < 1 {
+		return 1
+	}
+	return hours
+}
+
+// faelligAm is the moment sweepOnce stops sparing a row. A stamp that does not
+// parse yields no deadline rather than a wrong one.
+func faelligAm(erstellt string, ttl time.Duration) *string {
+	if ttl <= 0 {
+		return nil
+	}
+	stamp, err := time.Parse(time.RFC3339, erstellt)
+	if err != nil {
+		return nil
+	}
+	deadline := stamp.Add(ttl).UTC().Format(time.RFC3339)
+	return &deadline
+}
+
 // Sweep removes unassigned images older than the TTL until ctx ends.
 func (s *Service) Sweep(ctx context.Context) {
 	_ = s.sweepOnce(ctx)
