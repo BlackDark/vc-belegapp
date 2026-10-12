@@ -62,6 +62,9 @@ func (s *Service) HandleJob(ctx context.Context, job jobs.Job) (float64, string,
 	case "mail":
 		result, err := s.runMail(ctx)
 		return time.Since(start).Seconds(), result, err
+	case "notify":
+		result, err := s.runNotify(ctx, job.Payload)
+		return time.Since(start).Seconds(), result, err
 	default:
 		err := &recognition.CallError{Kind: recognition.KindPermanent, Text: "Unbekannter Job"}
 		return time.Since(start).Seconds(), "", err
@@ -69,7 +72,13 @@ func (s *Service) HandleJob(ctx context.Context, job jobs.Job) (float64, string,
 }
 
 // JobRetry puts the receipt image back to "ausstehend" while the job waits.
+// Only a recognition job carries a recognition status: the notify payload names
+// an image too, and writing a status onto that one would overwrite the state of
+// a recognition that is running perfectly well.
 func (s *Service) JobRetry(ctx context.Context, job jobs.Job, _ error) {
+	if job.Typ != "erkennung" {
+		return
+	}
 	bildID := payloadBildID(job.Payload)
 	if bildID == "" {
 		return
@@ -80,8 +89,12 @@ func (s *Service) JobRetry(ctx context.Context, job jobs.Job, _ error) {
 	})
 }
 
-// JobFail records a terminal recognition error on the image.
+// JobFail records a terminal recognition error on the image. It is scoped to
+// the recognition job for the same reason as JobRetry.
 func (s *Service) JobFail(ctx context.Context, job jobs.Job, err error) {
+	if job.Typ != "erkennung" {
+		return
+	}
 	bildID := payloadBildID(job.Payload)
 	if bildID == "" {
 		return

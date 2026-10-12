@@ -20,3 +20,8 @@ data:
   # BELEGAPP_MAIL_INTERVAL: 5m
   # BELEGAPP_MAIL_MAX_MESSAGES_PER_POLL: "50"
   # BELEGAPP_MAIL_MAX_ATTACHMENTS_PER_MESSAGE: "10"
+  # Review notification. Without BELEGAPP_NOTIFY_WEBHOOK_URL no notify job is
+  # created at all, so this stays commented out until an operator wants it.
+  # BELEGAPP_NOTIFY_WEBHOOK_URL: https://ntfy.sh/belegapp-pruefen
+  # BELEGAPP_NOTIFY_WEBHOOK_TOKEN_FILE: /run/secrets/notify_token
+  # BELEGAPP_NOTIFY_TIMEOUT: 10s

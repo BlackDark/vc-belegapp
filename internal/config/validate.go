@@ -95,6 +95,9 @@ func (c *Config) validate() error {
 	if err := c.validateMail(); err != nil {
 		return err
 	}
+	if err := c.validateNotify(); err != nil {
+		return err
+	}
 
 	if c.JobWorkers < 1 {
 		return fmt.Errorf("BELEGAPP_JOB_WORKERS must be at least 1")
@@ -270,6 +273,35 @@ func (c *Config) validateMail() error {
 	if strings.EqualFold(strings.TrimSpace(c.MailDoneFolder), strings.TrimSpace(c.MailInbox)) {
 		return fmt.Errorf("BELEGAPP_MAIL_DONE_FOLDER must differ from BELEGAPP_MAIL_INBOX")
 	}
+	return nil
+}
+
+// validateNotify checks the outbound review webhook. An empty URL is the
+// feature switched off, and the rest is ignored then, so an operator can keep
+// the variables in place and turn the announcements off. With a URL set it has
+// to be an absolute http(s) address, because this process posts to it on its
+// own behalf and cannot follow anything else.
+//
+// A userinfo section is refused even though url.Parse accepts it: an ntfy
+// token belongs in BELEGAPP_NOTIFY_WEBHOOK_TOKEN, and one hidden in the URL
+// would end up in every error the job queue stores.
+func (c *Config) validateNotify() error {
+	if c.NotifyTimeout <= 0 {
+		return fmt.Errorf("BELEGAPP_NOTIFY_TIMEOUT must be positive")
+	}
+	if !c.NotifyConfigured() {
+		return nil
+	}
+	u, err := url.Parse(strings.TrimSpace(c.NotifyWebhookURL))
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("BELEGAPP_NOTIFY_WEBHOOK_URL must be an absolute http(s) URL")
+	}
+	if u.User != nil {
+		return fmt.Errorf("BELEGAPP_NOTIFY_WEBHOOK_URL must not contain a userinfo section; use BELEGAPP_NOTIFY_WEBHOOK_TOKEN")
+	}
+	// Private and loopback hosts stay allowed, for the same reason as
+	// BELEGAPP_LLM_BASE_URL: this is operator config, and ntfy or a relay on
+	// the home network is a supported setup. No web request supplies it.
 	return nil
 }
 

@@ -99,6 +99,15 @@ type Config struct {
 	MailMaxMessages    int           `env:"BELEGAPP_MAIL_MAX_MESSAGES_PER_POLL" envDefault:"50"`
 	MailMaxAttachments int           `env:"BELEGAPP_MAIL_MAX_ATTACHMENTS_PER_MESSAGE" envDefault:"10"`
 
+	// Notify configures the outbound webhook that announces an image waiting
+	// for review. NotifyWebhookURL is the single switch: without it no notify
+	// job is ever created, whatever the token or the timeout say. There is no
+	// UI setting, so the address is operator config alone and no web request
+	// can ever choose where this application sends data.
+	NotifyWebhookURL   string        `env:"BELEGAPP_NOTIFY_WEBHOOK_URL"`
+	NotifyWebhookToken string        `env:"BELEGAPP_NOTIFY_WEBHOOK_TOKEN"`
+	NotifyTimeout      time.Duration `env:"BELEGAPP_NOTIFY_TIMEOUT" envDefault:"10s"`
+
 	Location *time.Location
 }
 
@@ -131,6 +140,14 @@ func (c Config) MailConfigured() bool {
 	return c.MailEnabled && strings.TrimSpace(c.MailHost) != "" && strings.TrimSpace(c.MailUsername) != ""
 }
 
+// NotifyConfigured reports whether the review webhook may fire. It is the
+// single gate: app.go builds no client and SaveBild enqueues no notify job when
+// this is false, so the feature costs an instance nothing until an operator
+// names an address.
+func (c Config) NotifyConfigured() bool {
+	return strings.TrimSpace(c.NotifyWebhookURL) != ""
+}
+
 func applySecretFiles(cfg *Config) error {
 	pairs := []struct {
 		name string
@@ -143,6 +160,7 @@ func applySecretFiles(cfg *Config) error {
 		{"BELEGAPP_S3_SECRET_ACCESS_KEY", &cfg.S3SecretAccessKey},
 		{"BELEGAPP_LLM_API_KEY", &cfg.LLMAPIKey},
 		{"BELEGAPP_MAIL_PASSWORD", &cfg.MailPassword},
+		{"BELEGAPP_NOTIFY_WEBHOOK_TOKEN", &cfg.NotifyWebhookToken},
 	}
 	for _, pair := range pairs {
 		if err := applyFile(pair.name, pair.dest); err != nil {

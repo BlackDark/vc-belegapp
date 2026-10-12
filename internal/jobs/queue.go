@@ -30,10 +30,13 @@ type Queue struct {
 	Log     *slog.Logger
 	// Handle runs one job. result is optional JSON stored when the job succeeds.
 	// An empty result is stored as {"ok":true}.
-	Handle   func(ctx context.Context, job Job) (seconds float64, result string, err error)
-	OnRetry  func(ctx context.Context, job Job, err error)
-	OnFail   func(ctx context.Context, job Job, err error)
-	OnResult func(result string, seconds float64)
+	Handle  func(ctx context.Context, job Job) (seconds float64, result string, err error)
+	OnRetry func(ctx context.Context, job Job, err error)
+	OnFail  func(ctx context.Context, job Job, err error)
+	// OnResult reports one finished job. typ is the job type, so a consumer can
+	// tell a recognition from a mail poll or a webhook delivery instead of
+	// counting every job of the queue as the same measurement.
+	OnResult func(typ, result string, seconds float64)
 	OnStats  func(waiting int)
 	wake     chan struct{}
 	wakeOnce sync.Once
@@ -134,7 +137,7 @@ func (q *Queue) execute(ctx context.Context, job Job) {
 		}
 		q.finishLogged(ctx, job, "fertig", q.stamp(), result, nil)
 		if q.OnResult != nil {
-			q.OnResult("fertig", seconds)
+			q.OnResult(job.Typ, "fertig", seconds)
 		}
 		if q.Log != nil {
 			q.Log.Info("job done", "id", job.ID, "typ", job.Typ, "dauer_s", seconds)
@@ -168,7 +171,7 @@ func (q *Queue) execute(ctx context.Context, job Job) {
 		q.OnFail(ctx, job, err)
 	}
 	if q.OnResult != nil {
-		q.OnResult("fehler", seconds)
+		q.OnResult(job.Typ, "fehler", seconds)
 	}
 	if q.Log != nil {
 		q.Log.Warn("job failed", "id", job.ID, "typ", job.Typ, "attempt", job.Versuche, "err", safeText(err))

@@ -40,6 +40,13 @@ services:
       # BELEGAPP_MAIL_DONE_FOLDER: Belege/erledigt
       # BELEGAPP_MAIL_ALLOWED_SENDERS: kasse@example.de
       # BELEGAPP_MAIL_INTERVAL: 5m
+      # Review notification, off unless BELEGAPP_NOTIFY_WEBHOOK_URL is set.
+      # Every stored image (phone upload, mail, watched folder) posts one
+      # bild.pruefen document; the payload carries no image data and no
+      # credential. Create the `notify_token` secret to send a bearer token.
+      # BELEGAPP_NOTIFY_WEBHOOK_URL: https://ntfy.sh/belegapp-pruefen
+      # BELEGAPP_NOTIFY_WEBHOOK_TOKEN_FILE: /run/secrets/notify_token
+      # BELEGAPP_NOTIFY_TIMEOUT: 10s
     secrets: [oidc_secret, pw_hash, openai_key, imap_password]
     healthcheck:
       test: ["CMD", "/belegapp", "healthcheck"]

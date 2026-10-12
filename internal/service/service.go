@@ -14,6 +14,7 @@ import (
 	"github.com/BlackDark/vc-belegapp/internal/holidays"
 	"github.com/BlackDark/vc-belegapp/internal/jobs"
 	"github.com/BlackDark/vc-belegapp/internal/mailinbox"
+	"github.com/BlackDark/vc-belegapp/internal/notify"
 	"github.com/BlackDark/vc-belegapp/internal/pdf"
 	"github.com/BlackDark/vc-belegapp/internal/recognition"
 	"github.com/BlackDark/vc-belegapp/internal/storage"
@@ -54,6 +55,12 @@ type Service struct {
 	MailMaxAttachments int
 	MailDoneFolder     string
 	MailAllowedSenders []string
+
+	// Notify posts the bild.pruefen webhook when an image lands unassigned. It
+	// is nil unless the operator set BELEGAPP_NOTIFY_WEBHOOK_URL, and
+	// enqueueBildPruefen returns on that check, so an instance without the
+	// feature never builds a payload or writes a queue row.
+	Notify *notify.Webhook
 
 	exportMu  sync.Mutex
 	exporting map[string]struct{}

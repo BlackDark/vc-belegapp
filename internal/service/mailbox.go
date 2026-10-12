@@ -11,6 +11,7 @@ import (
 
 	"github.com/BlackDark/vc-belegapp/internal/db"
 	"github.com/BlackDark/vc-belegapp/internal/mailinbox"
+	"github.com/BlackDark/vc-belegapp/internal/notify"
 	"github.com/BlackDark/vc-belegapp/internal/problem"
 )
 
@@ -215,7 +216,7 @@ func (s *Service) ingestAttachments(ctx context.Context, msg mailinbox.Message) 
 				"uid", msg.UID, "datei", attachment.Filename, "grenze", s.UploadMax)
 			continue
 		}
-		if _, err := s.SaveBild(ctx, attachment.Data, true); err != nil {
+		if _, err := s.SaveBildFrom(ctx, notify.SourceMail, attachment.Data, true); err != nil {
 			if !isContentRejection(err) {
 				// The store or the database is down. This attachment and the
 				// ones behind it did not make it to disk, so they are counted

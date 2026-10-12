@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -150,6 +151,50 @@ func TestQueueRequeuesWhenCancelled(t *testing.T) {
 	}
 	cancel()
 	waitStatus(t, database, id, "wartend")
+}
+
+// The queue runs four job types and the recognition metric counts one of them.
+// OnResult therefore has to name the type, or a webhook delivery — which fires
+// on every ingest — inflates a counter called belegapp_erkennung_total.
+func TestQueueOnResultNamesTheJobType(t *testing.T) {
+	database := openQueueDB(t)
+	var mu sync.Mutex
+	results := map[string]string{}
+	q := testQueue(database, func(context.Context, Job) (float64, string, error) { return 0.2, "", nil })
+	q.OnResult = func(typ, result string, _ float64) {
+		mu.Lock()
+		defer mu.Unlock()
+		results[typ] = result
+	}
+	ctx := context.Background()
+	for _, typ := range []string{"erkennung", "notify", "mail", "datenexport"} {
+		if _, err := q.Enqueue(ctx, typ, "{}"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runQueue(t, q)
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		mu.Lock()
+		done := len(results) == 4
+		mu.Unlock()
+		if done {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("OnResult reported %d of 4 job types", len(results))
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for typ, want := range map[string]string{
+		"erkennung": "fertig", "notify": "fertig", "mail": "fertig", "datenexport": "fertig",
+	} {
+		if results[typ] != want {
+			t.Errorf("job type %q reported as %q, want %q", typ, results[typ], want)
+		}
+	}
 }
 
 func TestQueueResetRequeuesRunning(t *testing.T) {

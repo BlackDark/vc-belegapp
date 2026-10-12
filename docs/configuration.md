@@ -67,6 +67,9 @@ Every variable uses the prefix `BELEGAPP_`. A secret may be set as `BELEGAPP_<NA
 | `BELEGAPP_MAIL_INTERVAL` | `5m` | Poll period |
 | `BELEGAPP_MAIL_MAX_MESSAGES_PER_POLL` | `50` | Messages one poll reads. A larger backlog is drained over the next polls |
 | `BELEGAPP_MAIL_MAX_ATTACHMENTS_PER_MESSAGE` | `10` | Pictures stored per message. The rest is skipped and logged |
+| `BELEGAPP_NOTIFY_WEBHOOK_URL` | empty | Absolute http(s) address that is told when an image waits for review. Empty is the switch: no job is created and nothing is sent |
+| `BELEGAPP_NOTIFY_WEBHOOK_TOKEN`, `BELEGAPP_NOTIFY_WEBHOOK_TOKEN_FILE` | empty | Sent as `Authorization: Bearer …` when set. Never logged, never part of the payload |
+| `BELEGAPP_NOTIFY_TIMEOUT` | `10s` | Deadline for one webhook delivery, connect to answer |
 
 <!-- config-env-end -->
 
@@ -113,6 +116,52 @@ One poll reads at most `BELEGAPP_MAIL_MAX_MESSAGES_PER_POLL` messages; the rest 
 The two flags serve one purpose and are written together: `\Seen` is what the operator sees in their own client, and `$Belegapp` is what the poll searches on. The keyword is authoritative because a phone mail client marks a receipt read when it previews the picture, and that must not hide it from the intake. A server that keeps no keywords answers `BAD` to the probe, and the poll then searches on `\Seen` alone. A server that searches on the keyword but refuses to store it is downgraded to `\Seen` for the rest of the process, and the poll reports the failed store instead of claiming a success that did not happen.
 
 Transport: `BELEGAPP_MAIL_TLS` (implicit TLS, the default) or `BELEGAPP_MAIL_STARTTLS` on port `143`. Exactly one of the two must be set — there is no plaintext mode, because the password would cross the network in the clear.
+
+## Review notifications
+
+An outbound webhook tells you that an image is waiting in *Offene Bilder*. It fires on **every** ingest — a manual phone upload, the IMAP poll, and the watched folder alike — because all three end up in the same list. The recipient filters on the payload's `quelle` field if a watched folder should be quieter than a photo.
+
+```bash
+BELEGAPP_NOTIFY_WEBHOOK_URL=https://ntfy.sh/belegapp-pruefen
+BELEGAPP_NOTIFY_WEBHOOK_TOKEN_FILE=/run/secrets/ntfy_token
+BELEGAPP_NOTIFY_TIMEOUT=10s
+```
+
+There is no UI setting. The address comes from the environment, so no web request can choose where this application sends data. Loopback and private addresses are allowed: an ntfy relay or a small script on the home network is a supported setup.
+
+Without `BELEGAPP_NOTIFY_WEBHOOK_URL` nothing happens at all — no queue row is written and no payload is built. `BELEGAPP_NOTIFY_WEBHOOK_TOKEN` alone changes nothing.
+
+The startup log prints a **redacted** address, never the raw one: scheme, host and port stay, every path segment becomes `***`, and a query string or fragment becomes a single `***`. That is deliberate — for this receiver class the credential often *is* the address (`https://ntfy.sh/<topic>`, `…/bot<TOKEN>/sendMessage`, `…?token=…`), and a startup line ends up on stdout, in the container log and in journald, where it outlives the process. `https://ntfy.sh/belegapp-pruefen` therefore logs as `https://ntfy.sh/***`, and whether a bearer token is configured is reported as a boolean, never as a value. The raw URL reaches no log call and no stored job error.
+
+The token, when set, is sent as `Authorization: Bearer …`. A token in the URL (`https://user:pass@host/…`) is refused at startup for that reason.
+
+### Payload
+
+```json
+{
+  "version": 1,
+  "event": "bild.pruefen",
+  "bild_id": "01hq3k7z8m9n0p1q2r3s4t5u6v",
+  "erstellt_am": "2026-10-08T13:00:00Z",
+  "quelle": "manuell",
+  "abschluss_url": "/belege/neu?bild=01hq3k7z8m9n0p1q2r3s4t5u6v"
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `version` | Schema version. A receiver that does not know it ignores the document |
+| `event` | Always `bild.pruefen` today. One event name per shape, so a filter can name it |
+| `bild_id` | The unassigned Belegbild. It is the id `GET /belegbilder/{id}` already answers for |
+| `erstellt_am` | When the image was stored, RFC 3339 in UTC |
+| `quelle` | `manuell`, `mail`, `watch`, or `unknown` — how the picture arrived. An intake that names no source, or one this version does not know, arrives as `unknown`, never as `manuell` |
+| `abschluss_url` | Deep link into the review form, a path inside this application. Prefix it with your own base URL |
+
+The document carries **no** image bytes, no blob key, no SHA-256, no mailbox host or folder, and no credential. A receiver learns that a picture arrived and gets an id it can look up itself. `abschluss_url` is a path, not an absolute link, so the payload says nothing about where this instance lives.
+
+### Retries
+
+The delivery is a `notify` queue job. A `5xx`, a `429`, a `408`, a timeout, or a refused connection is retried by the job queue with its backoff; a `4xx` is a decision by the receiver and is never repeated. The HTTP client itself never retries, so a recipient sees one message per job attempt. The response body is ignored — any `2xx` counts as delivered.
 
 ## Metrics
 

@@ -13,6 +13,7 @@ import (
 	"github.com/BlackDark/vc-belegapp/internal/db"
 	"github.com/BlackDark/vc-belegapp/internal/id"
 	"github.com/BlackDark/vc-belegapp/internal/imaging"
+	"github.com/BlackDark/vc-belegapp/internal/notify"
 	"github.com/BlackDark/vc-belegapp/internal/problem"
 	"github.com/BlackDark/vc-belegapp/internal/recognition"
 	"github.com/BlackDark/vc-belegapp/internal/storage"
@@ -45,7 +46,25 @@ type Erkennung struct {
 
 // SaveBild normalises an upload and stores the JPEG plus a thumbnail.
 // recognize queues background recognition when the feature is switched on.
+// A picture from the phone or the browser is intake "manuell".
 func (s *Service) SaveBild(ctx context.Context, data []byte, recognize bool) (Bild, error) {
+	return s.SaveBildFrom(ctx, notify.SourceManual, data, recognize)
+}
+
+// SaveBildFrom is SaveBild with an explicit intake source. The source is one
+// field of the bild.pruefen webhook payload and nothing else: it is what lets a
+// recipient filter an announcement by where the picture came from, and it never
+// changes how an image is stored, normalised, or recognised.
+//
+// A caller that names no source, or one this version does not know, becomes
+// "unknown" rather than an error and rather than "manuell". Rejecting would cost
+// a receipt that is already in the user's hand over a label, and defaulting to
+// "manuell" would tell the recipient that a machine intake was a phone upload —
+// which is exactly the mistake a filter on quelle must not make.
+func (s *Service) SaveBildFrom(ctx context.Context, quelle string, data []byte, recognize bool) (Bild, error) {
+	if !notify.KnownSource(quelle) {
+		quelle = notify.SourceUnknown
+	}
 	if s.UploadMax > 0 && int64(len(data)) > s.UploadMax {
 		return Bild{}, problem.New(413, "E_BILD_ZU_GROSS", "Das Bild ist zu groß.")
 	}
@@ -113,6 +132,11 @@ func (s *Service) SaveBild(ctx context.Context, data []byte, recognize bool) (Bi
 	if status == "ausstehend" {
 		s.enqueueOrMarkFailed(ctx, bildID)
 	}
+	// The image is on disk and no Beleg owns it, which is exactly what the
+	// review screen shows. The announcement goes out next to the recognition
+	// job because both answer the same question — what happened to this
+	// upload — and one of them may be switched off without affecting the other.
+	s.enqueueBildPruefen(ctx, bildID, stamp, quelle)
 	row, err := db.New(s.DB.Write).GetBelegbild(ctx, bildID)
 	if err != nil {
 		return Bild{}, err

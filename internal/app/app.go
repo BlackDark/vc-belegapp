@@ -23,6 +23,7 @@ import (
 	"github.com/BlackDark/vc-belegapp/internal/holidays"
 	"github.com/BlackDark/vc-belegapp/internal/jobs"
 	"github.com/BlackDark/vc-belegapp/internal/mailinbox"
+	"github.com/BlackDark/vc-belegapp/internal/notify"
 	"github.com/BlackDark/vc-belegapp/internal/pdf"
 	"github.com/BlackDark/vc-belegapp/internal/recognition"
 	"github.com/BlackDark/vc-belegapp/internal/server"
@@ -135,6 +136,17 @@ func Serve(ctx context.Context, opt Options) error {
 		svc.MailAllowedSenders = opt.Config.MailAllowedSender
 		opt.Log.Info("mail intake enabled", "host", opt.Config.MailHost, "ordner", opt.Config.MailInbox, "abgelegt_in", opt.Config.MailDoneFolder)
 	}
+	if opt.Config.NotifyConfigured() {
+		// The address is operator config and nothing else, so there is no
+		// request that can move it. The token is never logged and never leaves
+		// this struct.
+		svc.Notify = notify.NewWebhook(notify.WebhookOptions{
+			URL:     opt.Config.NotifyWebhookURL,
+			Token:   opt.Config.NotifyWebhookToken,
+			Timeout: opt.Config.NotifyTimeout,
+		})
+		logNotifyEnabled(opt.Log, opt.Config)
+	}
 	migrated, err := svc.MigrateBildKeys(ctx)
 	if err != nil {
 		return err
@@ -220,10 +232,7 @@ func Serve(ctx context.Context, opt Options) error {
 	if opt.Config.MetricsAddr != "" {
 		metrics := server.NewMetrics()
 		metricsReg = metrics.Registry
-		queue.OnResult = func(result string, seconds float64) {
-			metrics.ErkennungTotal.WithLabelValues(result).Inc()
-			metrics.ErkennungDauer.Observe(seconds)
-		}
+		queue.OnResult = observeErkennung(metrics)
 		queue.OnStats = func(waiting int) {
 			metrics.JobsWartend.Set(float64(waiting))
 		}
@@ -299,6 +308,48 @@ func newExtractor(cfg config.Config) recognition.ReceiptExtractor {
 		ReasoningEffort: cfg.LLMReasoningEffort,
 		Timeout:         cfg.LLMTimeout,
 	})
+}
+
+// logNotifyEnabled writes the one startup line about the outbound webhook.
+//
+// The address is redacted rather than printed. For this receiver class the
+// credential normally sits inside the URL itself — the ntfy topic, the Telegram
+// bot token, a ?token= value — validateNotify only refuses a userinfo section,
+// and this line goes to stdout, to the container log and to journald, where a
+// leaked token outlives the process. The bearer token is reported as a boolean:
+// whether one is configured is what an operator needs to know, its value never
+// leaves the config struct.
+func logNotifyEnabled(log *slog.Logger, cfg config.Config) {
+	if log == nil {
+		return
+	}
+	log.Info("review webhook enabled",
+		"url", notify.RedactURL(cfg.NotifyWebhookURL),
+		"bearer_token", cfg.NotifyWebhookToken != "",
+	)
+}
+
+// jobTypErkennung is the one job type the recognition metrics describe.
+const jobTypErkennung = "erkennung"
+
+// observeErkennung counts finished recognition jobs.
+//
+// The queue is shared by four job types, but belegapp_erkennung_total is named
+// after the recognition and its help text says as much. A mail poll or a webhook
+// delivery that ran through the same counter made the number count something
+// else, and notify is the worst of them: it fires on every ingest, so an
+// instance with the webhook switched on roughly doubled the counter and its rate
+// answered "how many pictures arrived" instead of "how is the model doing".
+// Restricting the metric to what it names keeps it honest and needs no second
+// pair of instruments for jobs an operator did not ask to measure.
+func observeErkennung(metrics server.Metrics) func(typ, result string, seconds float64) {
+	return func(typ, result string, seconds float64) {
+		if typ != jobTypErkennung {
+			return
+		}
+		metrics.ErkennungTotal.WithLabelValues(result).Inc()
+		metrics.ErkennungDauer.Observe(seconds)
+	}
 }
 
 // newMailSource builds the IMAP intake, or nil when the operator did not turn

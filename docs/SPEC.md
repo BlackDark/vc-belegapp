@@ -77,6 +77,7 @@ internal/rules           Jahresregeln, Validierung, amtliche Voreinstellungen
 internal/holidays        Feiertagskalender (Wrapper um rickar/cal/v2/de + Eigene Feiertage)
 internal/storage         BlobStore-Interface, fs, s3
 internal/recognition      ReceiptExtractor-Interface, openaicompat, fake
+internal/notify           ausgehender Webhook (Prüfbenachrichtigung), Retry-Klassen
 internal/imaging         Decode, Orientierung, Resize, JPEG-Encode, Thumbnail
 internal/pdf             PDFRenderer-Interface, typstcli, Templates + Fonts (embed)
 internal/export          Monatsexport (PDF/CSV/ZIP), Datenexport/-import
@@ -556,6 +557,22 @@ Ablauf je Nachricht, in dieser Reihenfolge:
 4. Erst danach wird die Nachricht abgeschlossen: `\Seen` plus Marker `$Belegapp`, bei gesetztem `BELEGAPP_MAIL_DONE_FOLDER` zusätzlich `MOVE`. **Es wird nie `\Deleted` gesetzt und nie expungiert**; ein Server ohne `MOVE` liefert für den Ordner ein `permanent`, die Bilder sind trotzdem gespeichert.
 5. Ein Fehler vor Schritt 4 lässt die Nachricht unmarkiert, der nächste Abruf wiederholt sie. Dadurch entstehen bei einem Abbruch oder Retry keine Dubletten.
 
+### 8.2.2 Prüfbenachrichtigung (kein Endpunkt)
+
+Wenn ein Bild ohne Beleg in *Offene Bilder* landet, meldet die Anwendung das nach außen. Auch das ist kein HTTP-Endpunkt, sondern ein ausgehender Webhook: derselbe Codeweg, der das Bild speichert (`SaveBild`), reiht neben dem `erkennung`-Job einen Job vom Typ `notify` ein, und der Job sendet **einen** HTTP-POST. Ein eingehender Endpunkt wäre hier der falsche Weg — er wäre eine SSRF-Fläche, der ausgehende Aufruf nicht.
+
+Die Benachrichtigung feuert bei **jedem** Eingang: manuelle Upload, IMAP-Abruf und überwachter Ordner laufen alle durch `SaveBild`. Ein Quellfilter gehört nicht in den Code; wer nur Mails möchte, filtert im Empfänger über `quelle`.
+
+Ablauf:
+
+1. `SaveBild` hat das Bild gespeichert und den `erkennung`-Job eingereiht. Steht keine Webhook-Adresse in der Konfiguration, endet der Zweig hier: kein Payload, keine Jobzeile, kein Aufwachen der Queue.
+2. Der Job sendet das versionierte JSON-Dokument (siehe [configuration.md](configuration.md)) als POST mit `Content-Type: application/json` und, falls gesetzt, `Authorization: Bearer <token>`.
+3. Der HTTP-Client wiederholt **nicht**. Die Wiederholung gehört der Queue, damit ein Empfänger je Versuch genau eine Nachricht sieht und der Backoff an einer Stelle bleibt.
+
+Ergebnisklassifikation wie bei der Erkennung (10.6): `2xx` ist zugestellt; `5xx`, `408`, `429`, Zeitüberschreitung und Verbindungsfehler sind `transient` und werden mit dem Queue-Backoff wiederholt; jeder andere `4xx` ist `permanent` und wird nicht wiederholt. Der Antwortinhalt wird nicht ausgewertet.
+
+Das Dokument trägt **keine** Bilddaten: keine Bytes, keinen Blob-Key, keine SHA-256, weder Postfach-Host noch -Ordner, keine Zugangsdaten. Es nennt die Bild-ID, den Zeitpunkt, die Quelle und einen Deep Link in den Prüf-Dialog. `JobRetry` und `JobFail` wirken nur auf `erkennung`-Jobs: der `notify`-Payload nennt ebenfalls eine Bild-ID und würde sonst den Erkennungsstatus eines völlig gesunden Bildes überschreiben.
+
 ### 8.3 Ressourcen (Beispiele)
 **Belegbild**
 ```json
@@ -908,6 +925,9 @@ Alle Variablen mit Präfix `BELEGAPP_`; für Geheimnisse zusätzlich `<NAME>_FIL
 | `BELEGAPP_MAIL_ALLOWED_SENDERS` | `` | Komma-Liste von Absendern, exakter Vergleich. Leer = jeder Absender |
 | `BELEGAPP_MAIL_INTERVAL` | `5m` | Abruf-Takt |
 | `BELEGAPP_MAIL_MAX_ATTACHMENTS_PER_MESSAGE` | `10` | gespeicherte Bilder je Nachricht; der Rest wird übersprungen und protokolliert |
+| `BELEGAPP_NOTIFY_WEBHOOK_URL` | `` | absolute http(s)-Adresse für die Prüfbenachrichtigung (8.2.2). Leer = aus: keine Jobzeile, kein Versand |
+| `BELEGAPP_NOTIFY_WEBHOOK_TOKEN(_FILE)` | `` | `Authorization: Bearer …`; nie im Log, nie im Payload. Steht nicht in der URL — die steht im Startprotokoll |
+| `BELEGAPP_NOTIFY_TIMEOUT` | `10s` | Frist für einen Zustellversuch, Verbindungsaufbau bis Antwort |
 
 CLI: `belegapp serve` (Default) · `hash-password` · `healthcheck [--url]` · `migrate` · `backup --out <zip>` · `restore <zip> --yes` · `verify-audit` · `version`.
 
@@ -1035,7 +1055,7 @@ Coverage-Ziel: `internal/calc` 100 %, Backend gesamt ≥ 70 %.
 | **M2 Belegerkennung** | Job-Queue, `openaicompat` + `fake`, Schema, Nachverarbeitung, Korrekturvorschlag, Retry/Fallback, UI-Polling, „Verbindung testen“ | Mit `gpt-5-mini` werden Datum/Händler/Betrag vorausgefüllt (NF-1); Fehlerfälle 10.6 per Contract-Test; manuelle Erfassung bei LLM-Ausfall unverändert möglich; Wechsel auf Ollama nur per Env |
 | **M3 Monatsexport & Sperre** | Typst-Template, PDFRenderer, Vorschau (ENTWURF), finaler Export, Prüfpunkte, Arbeitnehmererklärung, CSV/ZIP, Monatsstatus, Änderungsgrund, Exportversionen mit Änderungsabschnitt | Golden-PDF M1 entspricht 12.2; PDF/A-2b-Validierung bestanden; nach Export ist Bearbeiten ohne Änderungsgrund unmöglich; Version 2 listet Änderungen; NF-2 erfüllt |
 | **M4 Datenexport/-import & Release v1.0** | Datenexport/-import (UI + CLI), Backend-Wechsel per Import, PWA (Manifest, Icons, Update-Prompt), GoReleaser + GHCR + Signatur + SBOM, release-please, Compose- und K8s-Beispiele, README/Betriebsdoku | Roundtrip-Test grün; Restore auf frischem Host ergibt identische Summen und gültige Hash-Kette; `v1.0.0`-Release mit Binaries und multi-arch Image (signiert); App auf iOS/Android installierbar; Kustomize-Beispiel läuft in Kind |
-| M5 (optional) | IMAP-Abruf (umgesetzt, siehe 8.2.1), Web Share Target, Litestream-Doku, geplanter automatischer Datenexport, PDF-Belege als Eingabe, Regelperioden innerhalb eines Jahres | nach Bedarf |
+| M5 (optional) | IMAP-Abruf (umgesetzt, siehe 8.2.1), Web Share Target, Prüfbenachrichtigung als Webhook (umgesetzt, siehe 8.2.2), Litestream-Doku, geplanter automatischer Datenexport, PDF-Belege als Eingabe, Regelperioden innerhalb eines Jahres | nach Bedarf |
 
 ---
 
@@ -1056,7 +1076,7 @@ Coverage-Ziel: `internal/calc` 100 %, Backend gesamt ≥ 70 %.
 - ⚠️ 2027-Sachbezugswerte nach Bundesrat-Beschluss aktualisieren (Release vor Januar 2027).
 - ⚠️ Rundung der pauschalen Lohnsteuer (kaufmännisch angenommen) mit Lohnabrechnung abgleichen.
 - Teilbelege (mehrere Kassenzettel für eine Mahlzeit, steuerlich zulässig) – in v1 bewusst nicht unterstützt.
-- PDF-/E-Mail-Belege (Lieferdienste) als Eingabe. Das Konzept **„braucht Prüfung“** ist als Sichtbarkeit explizit: `GET /belegbilder/offen` plus der Screen **Offene Bilder** listen jedes hochgeladene Bild ohne Beleg. Der **IMAP-Abruf (8.2.1) legt seine Bildanhänge genau dort ab** und profitiert von derselben Liste. Offen bleibt: die Markierung eines Belegs als ungeprüft, PDF-Anhänge (kein Rasterizer), und das PWA-Web-Share-Target (ROADMAP).
+- PDF-/E-Mail-Belege (Lieferdienste) als Eingabe. Das Konzept **„braucht Prüfung"** ist als Sichtbarkeit explizit: `GET /belegbilder/offen` plus der Screen **Offene Bilder** listen jedes hochgeladene Bild ohne Beleg. Der **IMAP-Abruf (8.2.1) legt seine Bildanhänge genau dort ab** und profitiert von derselben Liste; die **Prüfbenachrichtigung (8.2.2)** meldet jeden Eingang dorthin. Offen bleibt: die Markierung eines Belegs als ungeprüft, PDF-Anhänge (kein Rasterizer), und das PWA-Web-Share-Target (ROADMAP).
 - Unterjährige Regeländerungen (z. B. Zuschusserhöhung zum 1.7.) – v1 nur pro Kalenderjahr.
 - Modellnamen/Preise (`gpt-5-mini`, Gemini Flash) vor M2 verifizieren; Eval-Set aufbauen.
 - solid-ui-Tokens auf Tailwind v4 portieren; Solid-2.0-Migration nach stabilem Release und Kobalte-Unterstützung.

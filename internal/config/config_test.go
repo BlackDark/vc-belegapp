@@ -326,6 +326,141 @@ func TestLoadMailPasswordFile(t *testing.T) {
 	}
 }
 
+// TestLoadNotifyDefaults covers the switch-off case: without an address the
+// whole feature is off, and the variables keep their defaults, so an instance
+// that never configures a webhook is unaffected by any of it.
+func TestLoadNotifyDefaults(t *testing.T) {
+	clearEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.NotifyConfigured() {
+		t.Fatal("review webhook is configured on defaults")
+	}
+	if cfg.NotifyWebhookURL != "" || cfg.NotifyWebhookToken != "" {
+		t.Fatalf("notify defaults: url %q token %q", cfg.NotifyWebhookURL, cfg.NotifyWebhookToken)
+	}
+	if cfg.NotifyTimeout != 10*time.Second {
+		t.Fatalf("notify timeout %s", cfg.NotifyTimeout)
+	}
+}
+
+func TestLoadNotifyEnabled(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BELEGAPP_NOTIFY_WEBHOOK_URL", "https://ntfy.sh/belegapp-pruefen")
+	t.Setenv("BELEGAPP_NOTIFY_WEBHOOK_TOKEN", "tk_geheim")
+	t.Setenv("BELEGAPP_NOTIFY_TIMEOUT", "3s")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.NotifyConfigured() {
+		t.Fatal("review webhook is not configured")
+	}
+	if cfg.NotifyWebhookToken != "tk_geheim" || cfg.NotifyTimeout != 3*time.Second {
+		t.Fatalf("notify config %+v", cfg)
+	}
+}
+
+// A local relay is a supported setup, the same reason BELEGAPP_LLM_BASE_URL
+// allows a loopback address: the operator names the endpoint, no request does.
+func TestLoadNotifyAllowsPrivateHost(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BELEGAPP_NOTIFY_WEBHOOK_URL", "http://127.0.0.1:8081/hook")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.NotifyConfigured() {
+		t.Fatal("loopback webhook refused")
+	}
+}
+
+func TestLoadNotifyRejectsInvalid(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"relative", map[string]string{"BELEGAPP_NOTIFY_WEBHOOK_URL": "/hook"}, "absolute http(s) URL"},
+		{"no scheme", map[string]string{"BELEGAPP_NOTIFY_WEBHOOK_URL": "ntfy.sh/belegapp"}, "absolute http(s) URL"},
+		{"wrong scheme", map[string]string{"BELEGAPP_NOTIFY_WEBHOOK_URL": "ftp://ntfy.sh/x"}, "absolute http(s) URL"},
+		{"no host", map[string]string{"BELEGAPP_NOTIFY_WEBHOOK_URL": "https://"}, "absolute http(s) URL"},
+		// A token in the URL would travel through the job log and the error
+		// text; the token variable is the only place one belongs.
+		{"credentials in url", map[string]string{"BELEGAPP_NOTIFY_WEBHOOK_URL": "https://tk_geheim@ntfy.sh/x"}, "userinfo"},
+		{"timeout zero", map[string]string{"BELEGAPP_NOTIFY_TIMEOUT": "0"}, "BELEGAPP_NOTIFY_TIMEOUT"},
+		{"timeout negative", map[string]string{"BELEGAPP_NOTIFY_TIMEOUT": "-1s"}, "BELEGAPP_NOTIFY_TIMEOUT"},
+		// The timeout is checked even with the feature off, so a typo is
+		// reported at startup instead of at the first announcement.
+		{"timeout zero without url", map[string]string{"BELEGAPP_NOTIFY_TIMEOUT": "0s"}, "BELEGAPP_NOTIFY_TIMEOUT"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearEnv(t)
+			for key, val := range tt.env {
+				t.Setenv(key, val)
+			}
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("got %v, want substring %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// A token without an address is not a configuration: it changes nothing, so it
+// must not fail the start either.
+func TestLoadNotifyTokenWithoutURLIsAccepted(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BELEGAPP_NOTIFY_WEBHOOK_TOKEN", "tk_geheim")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.NotifyConfigured() {
+		t.Fatal("a token alone switched the feature on")
+	}
+}
+
+// The token follows the same _FILE contract as every other secret.
+func TestLoadNotifyTokenFile(t *testing.T) {
+	clearEnv(t)
+	path := filepath.Join(t.TempDir(), "notify_token")
+	if err := os.WriteFile(path, []byte("  tk_aus_der_datei\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BELEGAPP_NOTIFY_WEBHOOK_URL", "https://ntfy.sh/belegapp")
+	t.Setenv("BELEGAPP_NOTIFY_WEBHOOK_TOKEN_FILE", path)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.NotifyWebhookToken != "tk_aus_der_datei" {
+		t.Fatalf("token %q", cfg.NotifyWebhookToken)
+	}
+
+	t.Setenv("BELEGAPP_NOTIFY_WEBHOOK_TOKEN", "from-env")
+	_, err = Load()
+	if err == nil || !strings.Contains(err.Error(), "both set") {
+		t.Fatalf("got %v, want both-set error", err)
+	}
+}
+
+// NotifyConfigured is the single gate the application reads, so a blank
+// address must not switch the feature on.
+func TestNotifyConfigured(t *testing.T) {
+	if (Config{NotifyWebhookURL: "https://ntfy.sh/x"}).NotifyConfigured() != true {
+		t.Fatal("complete config reported as not configured")
+	}
+	for _, url := range []string{"", "   ", "\t"} {
+		if (Config{NotifyWebhookURL: url, NotifyWebhookToken: "tk"}).NotifyConfigured() {
+			t.Fatalf("address %q reported as configured", url)
+		}
+	}
+}
+
 // MailConfigured is the single gate the application reads, so each missing
 // piece has to turn it off.
 func TestMailConfigured(t *testing.T) {

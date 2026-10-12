@@ -26,7 +26,7 @@ Goal: forward or redirect a receipt (photo or PDF) somewhere and have it appear 
 | 2. Inbound-mail webhook | A provider (Mailgun, Postmark, SendGrid Inbound Parse, Cloudflare Email Workers) posts parsed mail to a signed endpoint. | Instant; no mailbox credentials | Needs a public endpoint, a provider account, and signature verification per provider |
 | 3. PWA Web Share Target | Register `share_target` in the manifest so "Share → Belegapp" on the phone uploads an image or PDF. | No server-side mail at all; native feel; already in SPEC M5 | Phone only; Android well supported, iOS limited |
 | 4. Watched folder / WebDAV | Import files that appear in a folder (or a Nextcloud/WebDAV path), e.g. from a scanner or sync client. | Simple; works with scanners | Another credential or volume; less useful on the go |
-| 5. Review notification | Notify (e-mail, ntfy, webhook) when an imported Beleg needs review. | Closes the loop for options 1–4 | Extra outbound configuration |
+| ~~5. Review notification~~ | **Done.** An outbound webhook (`BELEGAPP_NOTIFY_WEBHOOK_URL`, ntfy-compatible) fires on every ingest and posts a versioned `bild.pruefen` document naming the image, the intake source, and a deep link — no image data, no credential. See [SPEC](SPEC.md) §8.2.2 and [configuration](configuration.md). | Closes the loop for every intake path | Extra outbound configuration; still one credential on the operator's side |
 
 Security notes for all intake paths:
 
@@ -36,7 +36,7 @@ Security notes for all intake paths:
 - Idempotency: dedupe by message ID and attachment SHA-256 so retries and re-forwards do not create duplicates; respect the one-Beleg-per-day rule (conflicts become review items). **Partly done**: the poll marks each message `\Seen` plus the `$Belegapp` keyword and never reprocesses it; SHA-256 deduplication then comes free from the content-addressed blob key. Conflicts on a day still land as separate review items.
 - Imported Belege are never final until confirmed in the UI, and never touch a locked month without an Änderungsgrund. **Done**: the poll only ever creates unassigned Belegbilder, which the *Offene Bilder* screen hands to the normal review flow.
 
-Suggested next slice: the Web Share Target (option 3) and the review notification (option 5), both landing in the same "needs review" state.
+Suggested next slice: the Web Share Target (option 3) and the watched folder (option 4), both landing in the same "needs review" state.
 
 The visibility prerequisite is done as well: `GET /belegbilder/offen` and the *Offene Bilder* screen list every uploaded image no Beleg owns, with a jump into the review form, and the IMAP poll drops its attachments there. What is still missing is a flag on the Beleg itself that says "never reviewed".
 
