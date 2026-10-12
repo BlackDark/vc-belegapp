@@ -78,7 +78,28 @@ type Config struct {
 	TypstBin             string        `env:"BELEGAPP_TYPST_BIN" envDefault:"typst"`
 	PDFTimeout           time.Duration `env:"BELEGAPP_PDF_TIMEOUT" envDefault:"120s"`
 	MetricsAddr          string        `env:"BELEGAPP_METRICS_ADDR"`
-	Location             *time.Location
+
+	// Mail configures the IMAP intake. MailEnabled is the switch: without it
+	// no ticker runs and no mail job is ever enqueued, whatever else is set.
+	// There is no plaintext mode. Either MailTLS (implicit, normally 993) or
+	// MailStartTLS (normally 143) has to be true, so the password never
+	// crosses the network in the clear.
+	MailEnabled        bool   `env:"BELEGAPP_MAIL_ENABLED" envDefault:"false"`
+	MailHost           string `env:"BELEGAPP_MAIL_HOST"`
+	MailPort           int    `env:"BELEGAPP_MAIL_PORT" envDefault:"993"`
+	MailUsername       string `env:"BELEGAPP_MAIL_USERNAME"`
+	MailPassword       string `env:"BELEGAPP_MAIL_PASSWORD"`
+	MailTLS            bool   `env:"BELEGAPP_MAIL_TLS" envDefault:"true"`
+	MailStartTLS       bool   `env:"BELEGAPP_MAIL_STARTTLS" envDefault:"false"`
+	MailInbox          string `env:"BELEGAPP_MAIL_INBOX" envDefault:"INBOX"`
+	MailDoneFolder     string `env:"BELEGAPP_MAIL_DONE_FOLDER"`
+	MailSendersRaw     string `env:"BELEGAPP_MAIL_ALLOWED_SENDERS"`
+	MailAllowedSender  []string
+	MailInterval       time.Duration `env:"BELEGAPP_MAIL_INTERVAL" envDefault:"5m"`
+	MailMaxMessages    int           `env:"BELEGAPP_MAIL_MAX_MESSAGES_PER_POLL" envDefault:"50"`
+	MailMaxAttachments int           `env:"BELEGAPP_MAIL_MAX_ATTACHMENTS_PER_MESSAGE" envDefault:"10"`
+
+	Location *time.Location
 }
 
 // Load reads configuration from the environment and validates it.
@@ -102,6 +123,14 @@ func (c Config) AuthConfigured() bool {
 	return c.AuthPasswordHash != "" || c.OIDCIssuerURL != ""
 }
 
+// MailConfigured reports whether the IMAP intake may run. It is the single
+// gate: app.go starts no ticker and enqueues no mail job when this is false,
+// so a leftover BELEGAPP_MAIL_HOST in the environment does not by itself turn
+// the feature on.
+func (c Config) MailConfigured() bool {
+	return c.MailEnabled && strings.TrimSpace(c.MailHost) != "" && strings.TrimSpace(c.MailUsername) != ""
+}
+
 func applySecretFiles(cfg *Config) error {
 	pairs := []struct {
 		name string
@@ -113,6 +142,7 @@ func applySecretFiles(cfg *Config) error {
 		{"BELEGAPP_S3_ACCESS_KEY_ID", &cfg.S3AccessKeyID},
 		{"BELEGAPP_S3_SECRET_ACCESS_KEY", &cfg.S3SecretAccessKey},
 		{"BELEGAPP_LLM_API_KEY", &cfg.LLMAPIKey},
+		{"BELEGAPP_MAIL_PASSWORD", &cfg.MailPassword},
 	}
 	for _, pair := range pairs {
 		if err := applyFile(pair.name, pair.dest); err != nil {

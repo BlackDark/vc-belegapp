@@ -29,7 +29,18 @@ services:
       BELEGAPP_OIDC_ALLOWED_EMAILS: ${BELEGAPP_OIDC_ALLOWED_EMAILS:-}
       BELEGAPP_AUTH_PASSWORD_HASH_FILE: /run/secrets/pw_hash
       BELEGAPP_LLM_API_KEY_FILE: /run/secrets/openai_key
-    secrets: [oidc_secret, pw_hash, openai_key]
+      # Receipt intake by e-mail, off unless BELEGAPP_MAIL_ENABLED is true.
+      # Create the `imap_password` secret and uncomment the three lines below to
+      # turn it on; a dedicated account with an app password is the right setup.
+      # BELEGAPP_MAIL_ENABLED: "true"
+      # BELEGAPP_MAIL_HOST: imap.example.de
+      # BELEGAPP_MAIL_USERNAME: belege@example.de
+      # BELEGAPP_MAIL_PASSWORD_FILE: /run/secrets/imap_password
+      # BELEGAPP_MAIL_INBOX: Belege
+      # BELEGAPP_MAIL_DONE_FOLDER: Belege/erledigt
+      # BELEGAPP_MAIL_ALLOWED_SENDERS: kasse@example.de
+      # BELEGAPP_MAIL_INTERVAL: 5m
+    secrets: [oidc_secret, pw_hash, openai_key, imap_password]
     healthcheck:
       test: ["CMD", "/belegapp", "healthcheck"]
       interval: 30s
@@ -43,3 +54,7 @@ secrets:
     file: ${PASSWORD_HASH_FILE:?path to the argon2id password hash}
   openai_key:
     file: ${LLM_API_KEY_FILE:?path to the LLM API key}
+  # Only read when the IMAP intake is enabled (BELEGAPP_MAIL_ENABLED). The
+  # path points at the app password of a dedicated mail account.
+  imap_password:
+    file: ${IMAP_PASSWORD_FILE:-/dev/null}

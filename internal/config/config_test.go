@@ -160,3 +160,196 @@ func clearEnv(t *testing.T) {
 		}
 	}
 }
+
+// TestLoadMailDefaults covers the switch-off case: the intake is off and the
+// variables keep their defaults, so an instance that never touches mail is
+// unaffected by any of it.
+func TestLoadMailDefaults(t *testing.T) {
+	clearEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MailConfigured() {
+		t.Fatal("mail intake is configured on defaults")
+	}
+	// TLS defaults on: implicit TLS is the only transport besides STARTTLS,
+	// so the safe one is the one an operator gets without asking.
+	if cfg.MailEnabled || cfg.MailStartTLS || !cfg.MailTLS {
+		t.Fatalf("mail transport defaults: enabled=%v tls=%v starttls=%v", cfg.MailEnabled, cfg.MailTLS, cfg.MailStartTLS)
+	}
+	if cfg.MailPort != 993 || cfg.MailInbox != "INBOX" || cfg.MailDoneFolder != "" {
+		t.Fatalf("mail defaults: port=%d inbox=%s done=%q", cfg.MailPort, cfg.MailInbox, cfg.MailDoneFolder)
+	}
+	if cfg.MailInterval != 5*time.Minute || cfg.MailMaxAttachments != 10 || cfg.MailMaxMessages != 50 {
+		t.Fatalf("mail interval %s cap %d poll limit %d", cfg.MailInterval, cfg.MailMaxAttachments, cfg.MailMaxMessages)
+	}
+	if cfg.MailAllowedSender != nil {
+		t.Fatalf("allowlist defaults to %v", cfg.MailAllowedSender)
+	}
+}
+
+func TestLoadMailEnabled(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BELEGAPP_MAIL_ENABLED", "true")
+	t.Setenv("BELEGAPP_MAIL_HOST", "imap.example.de")
+	t.Setenv("BELEGAPP_MAIL_USERNAME", "belege@example.de")
+	t.Setenv("BELEGAPP_MAIL_PASSWORD", "app-password")
+	t.Setenv("BELEGAPP_MAIL_DONE_FOLDER", "Belege/erledigt")
+	t.Setenv("BELEGAPP_MAIL_ALLOWED_SENDERS", "kasse@example.de, Belege@Example.DE ,")
+	t.Setenv("BELEGAPP_MAIL_INTERVAL", "90s")
+	t.Setenv("BELEGAPP_MAIL_MAX_ATTACHMENTS_PER_MESSAGE", "3")
+	t.Setenv("BELEGAPP_MAIL_MAX_MESSAGES_PER_POLL", "25")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.MailConfigured() {
+		t.Fatal("mail intake is not configured")
+	}
+	if cfg.MailInterval != 90*time.Second || cfg.MailMaxAttachments != 3 || cfg.MailMaxMessages != 25 {
+		t.Fatalf("interval %s cap %d poll limit %d", cfg.MailInterval, cfg.MailMaxAttachments, cfg.MailMaxMessages)
+	}
+	if len(cfg.MailAllowedSender) != 2 || cfg.MailAllowedSender[0] != "kasse@example.de" || cfg.MailAllowedSender[1] != "Belege@Example.DE" {
+		t.Fatalf("allowlist %#v", cfg.MailAllowedSender)
+	}
+	if cfg.MailDoneFolder != "Belege/erledigt" || !cfg.MailTLS || cfg.MailStartTLS {
+		t.Fatalf("mail transport/folder: %+v", cfg)
+	}
+}
+
+// BELEGAPP_MAIL_ENABLED with no host is a switch that promises something the
+// config cannot deliver, so it is a startup error rather than a silent no-op.
+func TestLoadMailRejectsInvalid(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"enabled without host", map[string]string{"BELEGAPP_MAIL_ENABLED": "true"}, "BELEGAPP_MAIL_HOST"},
+		{"enabled without user", map[string]string{"BELEGAPP_MAIL_ENABLED": "true", "BELEGAPP_MAIL_HOST": "imap.example.de"}, "BELEGAPP_MAIL_USERNAME"},
+		{"host with scheme", map[string]string{
+			"BELEGAPP_MAIL_ENABLED": "true", "BELEGAPP_MAIL_HOST": "imaps://imap.example.de",
+			"BELEGAPP_MAIL_USERNAME": "belege@example.de",
+		}, "BELEGAPP_MAIL_HOST"},
+		{"host with path", map[string]string{
+			"BELEGAPP_MAIL_ENABLED": "true", "BELEGAPP_MAIL_HOST": "imap.example.de/belege",
+			"BELEGAPP_MAIL_USERNAME": "belege@example.de",
+		}, "BELEGAPP_MAIL_HOST"},
+		{"port zero", map[string]string{
+			"BELEGAPP_MAIL_ENABLED": "true", "BELEGAPP_MAIL_HOST": "imap.example.de",
+			"BELEGAPP_MAIL_USERNAME": "belege@example.de", "BELEGAPP_MAIL_PORT": "0",
+		}, "BELEGAPP_MAIL_PORT"},
+		{"port too large", map[string]string{
+			"BELEGAPP_MAIL_ENABLED": "true", "BELEGAPP_MAIL_HOST": "imap.example.de",
+			"BELEGAPP_MAIL_USERNAME": "belege@example.de", "BELEGAPP_MAIL_PORT": "70000",
+		}, "BELEGAPP_MAIL_PORT"},
+		{"no tls", map[string]string{
+			"BELEGAPP_MAIL_ENABLED": "true", "BELEGAPP_MAIL_HOST": "imap.example.de",
+			"BELEGAPP_MAIL_USERNAME": "belege@example.de", "BELEGAPP_MAIL_TLS": "false",
+		}, "plaintext IMAP is not supported"},
+		{"both tls", map[string]string{
+			"BELEGAPP_MAIL_ENABLED": "true", "BELEGAPP_MAIL_HOST": "imap.example.de",
+			"BELEGAPP_MAIL_USERNAME": "belege@example.de", "BELEGAPP_MAIL_STARTTLS": "true",
+		}, "must not both be true"},
+		{"starttls on 993", map[string]string{
+			"BELEGAPP_MAIL_ENABLED": "true", "BELEGAPP_MAIL_HOST": "imap.example.de",
+			"BELEGAPP_MAIL_USERNAME": "belege@example.de", "BELEGAPP_MAIL_TLS": "false",
+			"BELEGAPP_MAIL_STARTTLS": "true",
+		}, "implicit TLS port"},
+		{"empty inbox", map[string]string{
+			"BELEGAPP_MAIL_ENABLED": "true", "BELEGAPP_MAIL_HOST": "imap.example.de",
+			"BELEGAPP_MAIL_USERNAME": "belege@example.de", "BELEGAPP_MAIL_INBOX": "   ",
+		}, "BELEGAPP_MAIL_INBOX"},
+		{"done folder equals inbox", map[string]string{
+			"BELEGAPP_MAIL_ENABLED": "true", "BELEGAPP_MAIL_HOST": "imap.example.de",
+			"BELEGAPP_MAIL_USERNAME": "belege@example.de", "BELEGAPP_MAIL_DONE_FOLDER": "inbox",
+		}, "must differ"},
+		{"interval zero", map[string]string{"BELEGAPP_MAIL_INTERVAL": "0"}, "BELEGAPP_MAIL_INTERVAL"},
+		{"interval negative", map[string]string{"BELEGAPP_MAIL_INTERVAL": "-5m"}, "BELEGAPP_MAIL_INTERVAL"},
+		{"attachment cap zero", map[string]string{"BELEGAPP_MAIL_MAX_ATTACHMENTS_PER_MESSAGE": "0"}, "BELEGAPP_MAIL_MAX_ATTACHMENTS_PER_MESSAGE"},
+		{"poll limit zero", map[string]string{"BELEGAPP_MAIL_MAX_MESSAGES_PER_POLL": "0"}, "BELEGAPP_MAIL_MAX_MESSAGES_PER_POLL"},
+		{"poll limit negative", map[string]string{"BELEGAPP_MAIL_MAX_MESSAGES_PER_POLL": "-1"}, "BELEGAPP_MAIL_MAX_MESSAGES_PER_POLL"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearEnv(t)
+			for key, val := range tt.env {
+				t.Setenv(key, val)
+			}
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("got %v, want substring %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// STARTTLS on 143 is the second supported transport.
+func TestLoadMailStartTLS(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BELEGAPP_MAIL_ENABLED", "true")
+	t.Setenv("BELEGAPP_MAIL_HOST", "mail.internal")
+	t.Setenv("BELEGAPP_MAIL_PORT", "143")
+	t.Setenv("BELEGAPP_MAIL_USERNAME", "belege")
+	t.Setenv("BELEGAPP_MAIL_TLS", "false")
+	t.Setenv("BELEGAPP_MAIL_STARTTLS", "true")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.MailStartTLS || cfg.MailTLS {
+		t.Fatalf("starttls %v tls %v", cfg.MailStartTLS, cfg.MailTLS)
+	}
+}
+
+// The password follows the same _FILE contract as every other secret.
+func TestLoadMailPasswordFile(t *testing.T) {
+	clearEnv(t)
+	path := filepath.Join(t.TempDir(), "imap_password")
+	if err := os.WriteFile(path, []byte("  app-password-from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BELEGAPP_MAIL_PASSWORD_FILE", path)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MailPassword != "app-password-from-file" {
+		t.Fatalf("mail password %q", cfg.MailPassword)
+	}
+
+	t.Setenv("BELEGAPP_MAIL_PASSWORD", "from-env")
+	_, err = Load()
+	if err == nil || !strings.Contains(err.Error(), "both set") {
+		t.Fatalf("got %v, want both-set error", err)
+	}
+}
+
+// MailConfigured is the single gate the application reads, so each missing
+// piece has to turn it off.
+func TestMailConfigured(t *testing.T) {
+	base := Config{
+		MailEnabled:  true,
+		MailHost:     "imap.example.de",
+		MailUsername: "belege@example.de",
+	}
+	if !base.MailConfigured() {
+		t.Fatal("complete config reported as not configured")
+	}
+	off := base
+	off.MailEnabled = false
+	if off.MailConfigured() {
+		t.Fatal("disabled config reported as configured")
+	}
+	noHost := base
+	noHost.MailHost = "  "
+	if noHost.MailConfigured() {
+		t.Fatal("hostless config reported as configured")
+	}
+	noUser := base
+	noUser.MailUsername = ""
+	if noUser.MailConfigured() {
+		t.Fatal("userless config reported as configured")
+	}
+}

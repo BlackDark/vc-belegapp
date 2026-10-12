@@ -1,0 +1,926 @@
+package mailinbox
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/emersion/go-imap/v2"
+	"github.com/emersion/go-imap/v2/imapclient"
+	"github.com/emersion/go-imap/v2/imapserver"
+	"github.com/emersion/go-imap/v2/imapserver/imapmemserver"
+)
+
+// memServer is go-imap's own in-memory server reached over an in-process
+// pipe. It speaks the real protocol, so this exercises search, fetch, store,
+// and move against genuine server behaviour rather than a mock of it. No socket
+// is opened: both ends come from net.Pipe.
+type memServer struct {
+	ln      *pipeListener
+	server  *imapserver.Server
+	mem     *imapmemserver.Server
+	user    *imapmemserver.User
+	serveWG sync.WaitGroup
+}
+
+type pipeAddr struct{}
+
+func (pipeAddr) Network() string { return "pipe" }
+func (pipeAddr) String() string  { return "pipe" }
+
+// pipeListener hands out the server ends of net.Pipe connections. The IMAP
+// server accepts on it like any other listener.
+type pipeListener struct {
+	conns  chan net.Conn
+	closed chan struct{}
+	once   sync.Once
+	// log, when set, tees the bytes the client sends into it. A test that
+	// cares about the wire command rather than about a Go struct sets it
+	// before it builds the source.
+	log *commandLog
+}
+
+// commandLog records what a client wrote. Every write goes through one mutex,
+// because the observer client writes from the test goroutine while the source
+// client writes from its own session goroutine.
+type commandLog struct {
+	mu   sync.Mutex
+	text bytes.Buffer
+}
+
+func (l *commandLog) add(p []byte) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.text.Write(p)
+}
+
+func (l *commandLog) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.text.String()
+}
+
+// recordedConn is the client end of the pipe with its writes recorded.
+type recordedConn struct {
+	net.Conn
+	log *commandLog
+}
+
+func (c *recordedConn) Write(p []byte) (int, error) {
+	c.log.add(p)
+	return c.Conn.Write(p)
+}
+
+func newPipeListener() *pipeListener {
+	return &pipeListener{conns: make(chan net.Conn), closed: make(chan struct{})}
+}
+
+func (l *pipeListener) Accept() (net.Conn, error) {
+	select {
+	case conn := <-l.conns:
+		return conn, nil
+	case <-l.closed:
+		return nil, net.ErrClosed
+	}
+}
+
+func (l *pipeListener) Close() error {
+	l.once.Do(func() { close(l.closed) })
+	return nil
+}
+
+func (l *pipeListener) Addr() net.Addr { return pipeAddr{} }
+
+// pipeDialer wires one client connection to one server connection.
+func (l *pipeListener) dialer(_ string, options *imapclient.Options) (*imapclient.Client, error) {
+	clientConn, serverConn := net.Pipe()
+	select {
+	case l.conns <- serverConn:
+	case <-l.closed:
+		return nil, net.ErrClosed
+	}
+	if l.log != nil {
+		clientConn = &recordedConn{Conn: clientConn, log: l.log}
+	}
+	return imapclient.New(clientConn, options), nil
+}
+
+func newMemServer(t *testing.T, username, password string, caps imap.CapSet) *memServer {
+	t.Helper()
+	return newMemServerWith(t, username, password, caps, nil)
+}
+
+// newMemServerWith optionally wraps the mem server session, which is how a
+// test simulates a server that lacks a capability.
+func newMemServerWith(t *testing.T, username, password string, caps imap.CapSet, wrap func(imapserver.Session) imapserver.Session) *memServer {
+	t.Helper()
+	mem := imapmemserver.New()
+	user := imapmemserver.NewUser(username, password)
+	mem.AddUser(user)
+	if caps == nil {
+		caps = imap.CapSet{imap.CapIMAP4rev1: {}}
+	}
+	ln := newPipeListener()
+	ms := &memServer{ln: ln, mem: mem, user: user}
+	ms.server = imapserver.New(&imapserver.Options{
+		NewSession: func(*imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
+			session := mem.NewSession()
+			if wrap != nil {
+				session = wrap(session)
+			}
+			return session, nil, nil
+		},
+		// InsecureAuth is the mem server's own stand-in for TLS: the pipe is
+		// already a private, in-process connection, and the suite is about
+		// protocol behaviour, not about the handshake.
+		InsecureAuth: true,
+		Caps:         caps,
+		Logger:       testLogger{},
+	})
+	ms.serveWG.Add(1)
+	go func() {
+		defer ms.serveWG.Done()
+		_ = ms.server.Serve(ln)
+	}()
+	t.Cleanup(func() {
+		_ = ms.server.Close()
+		_ = ln.Close()
+		ms.serveWG.Wait()
+	})
+	return ms
+}
+
+type testLogger struct{}
+
+func (testLogger) Printf(string, ...any) {}
+
+// testTime keeps the fixture deterministic; the Date header carries the same
+// instant.
+var testTime = time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+
+// source builds an IMAP source pointed at the in-process server.
+func (ms *memServer) source(t *testing.T, options Options) *IMAP {
+	t.Helper()
+	options.Host = "pipe"
+	options.Port = 993
+	if options.Inbox == "" {
+		options.Inbox = "INBOX"
+	}
+	if options.Username == "" {
+		options.Username = "belege"
+	}
+	if options.Password == "" {
+		options.Password = "app-password"
+	}
+	options.TLS = false
+	options.STARTTLS = false
+	src := New(options)
+	if src == nil {
+		t.Fatal("New returned nil")
+	}
+	src.dial = ms.ln.dialer
+	return src
+}
+
+func (ms *memServer) createMailbox(t *testing.T, name string) {
+	t.Helper()
+	if err := ms.user.Create(name, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// bytesLiteral is the imap.LiteralReader the mem server's Append wants.
+type bytesLiteral struct {
+	*bytes.Reader
+	size int64
+}
+
+func newLiteral(raw []byte) *bytesLiteral {
+	return &bytesLiteral{Reader: bytes.NewReader(raw), size: int64(len(raw))}
+}
+
+func (l *bytesLiteral) Size() int64 { return l.size }
+
+// appendMessage puts one RFC 5322 message into a folder. The mem server
+// dereferences the options without a nil check, so it always gets one.
+func (ms *memServer) appendMessage(t *testing.T, mailbox string, raw []byte) imap.UID {
+	t.Helper()
+	data, err := ms.user.Append(mailbox, newLiteral(raw), &imap.AppendOptions{Time: testTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data.UID
+}
+
+// messageWith builds a multipart mail with one picture attachment, one PDF, and
+// a text body — the exact shape a forwarded receipt has.
+func messageWithImage(from, subject string, picture []byte, mimeType, filename string, extra map[string]string) []byte {
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "From: %s\r\n", from)
+	fmt.Fprintf(&buf, "To: belege@example.de\r\n")
+	fmt.Fprintf(&buf, "Subject: %s\r\n", subject)
+	fmt.Fprintf(&buf, "Date: Thu, 08 Oct 2026 12:00:00 +0200\r\n")
+	buf.WriteString("MIME-Version: 1.0\r\n")
+	for key, value := range extra {
+		fmt.Fprintf(&buf, "%s: %s\r\n", key, value)
+	}
+	boundary := "----=_belegapp_test"
+	fmt.Fprintf(&buf, "Content-Type: multipart/mixed; boundary=%q\r\n\r\n", boundary)
+
+	fmt.Fprintf(&buf, "--%s\r\n", boundary)
+	buf.WriteString("Content-Type: text/plain; charset=utf-8\r\n\r\n")
+	buf.WriteString("Beleg im Anhang.\r\n")
+
+	fmt.Fprintf(&buf, "--%s\r\n", boundary)
+	fmt.Fprintf(&buf, "Content-Type: %s; name=%q\r\n", mimeType, filename)
+	buf.WriteString("Content-Transfer-Encoding: base64\r\n")
+	fmt.Fprintf(&buf, "Content-Disposition: attachment; filename=%q\r\n\r\n", filename)
+	encoded := base64.StdEncoding.EncodeToString(picture)
+	for i := 0; i < len(encoded); i += 76 {
+		end := i + 76
+		if end > len(encoded) {
+			end = len(encoded)
+		}
+		buf.WriteString(encoded[i:end])
+		buf.WriteString("\r\n")
+	}
+	fmt.Fprintf(&buf, "--%s--\r\n", boundary)
+	return buf.Bytes()
+}
+
+// pngBytes is a minimal valid 1x1 PNG.
+func pngBytes() []byte {
+	return []byte{
+		0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a,
+		0x00, 0x00, 0x00, 0x0d, 'I', 'H', 'D', 'R',
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+		0x89,
+		0x00, 0x00, 0x00, 0x0a, 'I', 'D', 'A', 'T',
+		0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01,
+		0x0d, 0x0a, 0x2d, 0xb4,
+		0x00, 0x00, 0x00, 0x00, 'I', 'E', 'N', 'D', 0xae, 0x42, 0x60, 0x82,
+	}
+}
+
+// The whole round trip against the real protocol: login, search, fetch with
+// MIME decoding, the image kept and the PDF dropped.
+func TestIMAPFetchRealServer(t *testing.T) {
+	ctx := context.Background()
+	ms := newMemServer(t, "belege", "app-password", nil)
+	ms.createMailbox(t, "INBOX")
+	ms.appendMessage(t, "INBOX", messageWithImage(
+		"kasse@example.de", "Kassenbon",
+		pngBytes(), "image/png", "beleg.png",
+		map[string]string{"X-Mailer": "Telefon"},
+	))
+
+	src := ms.source(t, Options{MaxAttachmentBytes: 1 << 20})
+	messages, err := src.Fetch(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("messages %d", len(messages))
+	}
+	msg := messages[0]
+	if msg.From != "kasse@example.de" {
+		t.Fatalf("from %q", msg.From)
+	}
+	if msg.UID == 0 {
+		t.Fatal("no UID")
+	}
+	if len(msg.Attachments) != 1 {
+		t.Fatalf("attachments %d, want only the PNG", len(msg.Attachments))
+	}
+	att := msg.Attachments[0]
+	if att.MimeType != "image/png" || att.Filename != "beleg.png" {
+		t.Fatalf("attachment %+v", att)
+	}
+	if !bytes.Equal(att.Data, pngBytes()) {
+		t.Fatalf("attachment bytes differ (%d)", len(att.Data))
+	}
+}
+
+// A PDF attachment is reported with its declared type but without bytes: the
+// source never reads a body it is going to hand back unusable, and the service
+// rejects it on the type.
+func TestIMAPFetchSkipsPDFBody(t *testing.T) {
+	ctx := context.Background()
+	ms := newMemServer(t, "belege", "app-password", nil)
+	ms.createMailbox(t, "INBOX")
+	ms.appendMessage(t, "INBOX", messageWithImage(
+		"kasse@example.de", "Kassenbon als PDF",
+		[]byte("%PDF-1.7\n%%EOF\n"), "application/pdf", "beleg.pdf", nil,
+	))
+
+	src := ms.source(t, Options{})
+	messages, err := src.Fetch(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("messages %d", len(messages))
+	}
+	if len(messages[0].Attachments) != 1 {
+		t.Fatalf("attachments %d, want the PDF reported", len(messages[0].Attachments))
+	}
+	att := messages[0].Attachments[0]
+	if att.MimeType != "application/pdf" {
+		t.Fatalf("declared type %q, want application/pdf", att.MimeType)
+	}
+	if att.Usable() || len(att.Data) != 0 {
+		t.Fatalf("the PDF body was read: %+v", att)
+	}
+}
+
+// The idempotency contract end to end: after MarkIngested the keyword probe
+// makes the next Fetch skip the message, so a second poll produces nothing.
+func TestIMAPFetchIsIdempotentAfterMarkIngested(t *testing.T) {
+	ctx := context.Background()
+	ms := newMemServer(t, "belege", "app-password", nil)
+	ms.createMailbox(t, "INBOX")
+	ms.appendMessage(t, "INBOX", messageWithImage("kasse@example.de", "Bon", pngBytes(), "image/png", "b.png", nil))
+	ms.appendMessage(t, "INBOX", messageWithImage("kasse@example.de", "Bon 2", pngBytes(), "image/png", "b2.png", nil))
+
+	src := ms.source(t, Options{})
+	first, err := src.Fetch(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 2 {
+		t.Fatalf("first fetch %d", len(first))
+	}
+	uids := []imap.UID{first[0].UID, first[1].UID}
+	if err := src.MarkIngested(ctx, uids); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := src.Fetch(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 0 {
+		t.Fatalf("second fetch returned %d messages; the marker did not stick", len(second))
+	}
+}
+
+// A rejected sender's mail has to come out of the poll exactly as it went in.
+// RFC 3501 §6.4.8 makes a plain BODY fetch set \Seen as a side effect, so the
+// command on the wire has to be BODY.PEEK[]: without it the poll would mark
+// every stranger's mail read before the allowlist ever saw it, which is the one
+// thing docs/configuration.md promises it does not do.
+func TestIMAPFetchUsesPeekAndSetsNoFlag(t *testing.T) {
+	ctx := context.Background()
+	ms := newMemServer(t, "belege", "app-password", nil)
+	wire := &commandLog{}
+	ms.ln.log = wire
+	ms.createMailbox(t, "INBOX")
+	uid := ms.appendMessage(t, "INBOX", messageWithImage(
+		"fremd@example.de", "Kassenbon", pngBytes(), "image/png", "beleg.png", nil,
+	))
+
+	src := ms.source(t, Options{})
+	messages, err := src.Fetch(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 || messages[0].UID != uid {
+		t.Fatalf("fetch %+v", messages)
+	}
+
+	sent := wire.String()
+	if !strings.Contains(sent, "BODY.PEEK[]") {
+		t.Fatalf("the poll did not ask for BODY.PEEK[]: %q", sent)
+	}
+	if strings.Contains(sent, "BODY[]") {
+		t.Fatalf("a plain BODY[] fetch sets \\Seen on every message it reads: %q", sent)
+	}
+	if flags := ms.flags(t, "INBOX", uid); len(flags) != 0 {
+		t.Fatalf("reading set the flags %v on a message the poll has not consumed", flags)
+	}
+}
+
+// The two dispositions of one poll against the real protocol: the allowed
+// message is flagged, and the stranger's is left untouched — no flags, still in
+// the queue for the operator, and read again on the next poll without having
+// been consumed.
+func TestIMAPRejectedSenderMessageStaysUntouched(t *testing.T) {
+	ctx := context.Background()
+	ms := newMemServer(t, "belege", "app-password", nil)
+	ms.createMailbox(t, "INBOX")
+	rejected := ms.appendMessage(t, "INBOX", messageWithImage(
+		"fremd@example.de", "Kassenbon", pngBytes(), "image/png", "fremd.png", nil))
+	accepted := ms.appendMessage(t, "INBOX", messageWithImage(
+		"kasse@example.de", "Kassenbon", pngBytes(), "image/png", "kasse.png", nil))
+
+	src := ms.source(t, Options{})
+	messages, err := src.Fetch(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("fetch %d messages", len(messages))
+	}
+
+	// What IngestMailbox does: the allowlist first, then the disposition for
+	// everything that was not rejected.
+	var seen []imap.UID
+	for _, msg := range messages {
+		if msg.From != "kasse@example.de" {
+			continue
+		}
+		seen = append(seen, msg.UID)
+	}
+	if err := src.MarkIngested(ctx, seen); err != nil {
+		t.Fatal(err)
+	}
+
+	if flags := ms.flags(t, "INBOX", rejected); len(flags) != 0 {
+		t.Fatalf("the rejected message carries the flags %v; it has to stay untouched", flags)
+	}
+	if !hasFlag(ms.flags(t, "INBOX", accepted), Marker) {
+		t.Fatal("the accepted message was not flagged")
+	}
+	if n := ms.messageCount(t, "INBOX"); n != 2 {
+		t.Fatalf("messages in INBOX %d, want 2; nothing may be deleted", n)
+	}
+
+	second, err := src.Fetch(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 1 || second[0].UID != rejected {
+		t.Fatalf("second fetch %+v, want only the rejected message again", second)
+	}
+	if flags := ms.flags(t, "INBOX", rejected); len(flags) != 0 {
+		t.Fatalf("the second poll touched the rejected message: %v", flags)
+	}
+}
+
+// The marker is \Seen plus $Belegapp; nothing else is touched, so the message
+// stays readable in the operator's own client.
+func TestIMAPMarkIngestedSetsSeenAndKeywordOnly(t *testing.T) {
+	ctx := context.Background()
+	ms := newMemServer(t, "belege", "app-password", nil)
+	ms.createMailbox(t, "INBOX")
+	uid := ms.appendMessage(t, "INBOX", messageWithImage("kasse@example.de", "Bon", pngBytes(), "image/png", "b.png", nil))
+
+	src := ms.source(t, Options{})
+	if err := src.MarkIngested(ctx, []imap.UID{uid}); err != nil {
+		t.Fatal(err)
+	}
+
+	flags := ms.flags(t, "INBOX", uid)
+	if !hasFlag(flags, imap.FlagSeen) {
+		t.Fatalf("flags %v, want \\Seen", flags)
+	}
+	if !hasFlag(flags, Marker) {
+		t.Fatalf("flags %v, want %s", flags, Marker)
+	}
+	if hasFlag(flags, imap.FlagDeleted) {
+		t.Fatalf("flags %v: \\Deleted was set", flags)
+	}
+	// The message is still there. Nothing was expunged.
+	if n := ms.messageCount(t, "INBOX"); n != 1 {
+		t.Fatalf("messages in INBOX %d, want 1", n)
+	}
+}
+
+// hasFlag compares case-insensitively: IMAP flag names are not case-sensitive
+// and servers normalise them, so "$Belegapp" comes back as "$belegapp".
+func hasFlag(flags map[imap.Flag]bool, want imap.Flag) bool {
+	for flag, set := range flags {
+		if set && strings.EqualFold(string(flag), string(want)) {
+			return true
+		}
+	}
+	return false
+}
+
+// With a done folder the message is copied out and the source keeps the copy
+// the operator filed. Nothing is deleted from the destination.
+func TestIMAPMoveToDoneFolder(t *testing.T) {
+	ctx := context.Background()
+	ms := newMemServer(t, "belege", "app-password", imap.CapSet{imap.CapIMAP4rev1: {}, imap.CapMove: {}})
+	ms.createMailbox(t, "INBOX")
+	ms.createMailbox(t, "Belege/erledigt")
+	uid := ms.appendMessage(t, "INBOX", messageWithImage("kasse@example.de", "Bon", pngBytes(), "image/png", "b.png", nil))
+
+	src := ms.source(t, Options{})
+	if err := src.MarkIngested(ctx, []imap.UID{uid}); err != nil {
+		t.Fatal(err)
+	}
+	if err := src.Move(ctx, []imap.UID{uid}, "Belege/erledigt"); err != nil {
+		t.Fatal(err)
+	}
+	if n := ms.messageCount(t, "Belege/erledigt"); n != 1 {
+		t.Fatalf("messages in the done folder %d", n)
+	}
+	if n := ms.messageCount(t, "INBOX"); n != 0 {
+		t.Fatalf("messages left in INBOX %d", n)
+	}
+}
+
+// MOVE is the only way a message leaves a folder here. A server without the
+// capability is reported instead of falling back to COPY + \Deleted + EXPUNGE.
+func TestIMAPMoveWithoutCapabilityIsPermanent(t *testing.T) {
+	ctx := context.Background()
+	ms := newMemServer(t, "belege", "app-password", nil)
+	ms.createMailbox(t, "INBOX")
+	ms.createMailbox(t, "Belege/erledigt")
+	uid := ms.appendMessage(t, "INBOX", messageWithImage("kasse@example.de", "Bon", pngBytes(), "image/png", "b.png", nil))
+
+	src := ms.source(t, Options{})
+	err := src.Move(ctx, []imap.UID{uid}, "Belege/erledigt")
+	if err == nil {
+		t.Fatal("expected the missing MOVE capability to be reported")
+	}
+	var call *Error
+	if !asError(err, &call) {
+		t.Fatalf("error %v carries no retry class", err)
+	}
+	if call.RetryKind() != KindPermanent {
+		t.Fatalf("retry kind %q, want %q", call.RetryKind(), KindPermanent)
+	}
+	// The message stayed in the inbox; no fallback deleted it.
+	if n := ms.messageCount(t, "INBOX"); n != 1 {
+		t.Fatalf("messages in INBOX %d, want 1", n)
+	}
+}
+
+// A wrong password is an auth failure: the job queue must not retry it, and
+// the password itself reaches neither the error nor the log.
+func TestIMAPWrongPasswordIsAuth(t *testing.T) {
+	ctx := context.Background()
+	ms := newMemServer(t, "belege", "app-password", nil)
+	ms.createMailbox(t, "INBOX")
+	const secret = "s3cr3t-app-passwort-4711"
+
+	var buf bytes.Buffer
+	src := ms.source(t, Options{Password: secret, Log: slog.New(slog.NewJSONHandler(&buf, nil))})
+	_, err := src.Fetch(ctx, 10)
+	if err == nil {
+		t.Fatal("expected a login failure")
+	}
+	var call *Error
+	if !asError(err, &call) {
+		t.Fatalf("error %v carries no retry class", err)
+	}
+	if call.RetryKind() != KindAuth {
+		t.Fatalf("retry kind %q, want %q", call.RetryKind(), KindAuth)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("the error leaks the password: %v", err)
+	}
+	if strings.Contains(buf.String(), secret) {
+		t.Fatalf("the log leaks the password: %s", buf.String())
+	}
+}
+
+// A server that is not there is transient, so the queue tries again.
+func TestIMAPDialFailureIsTransient(t *testing.T) {
+	ctx := context.Background()
+	src := New(Options{Host: "pipe", Port: 993, Username: "belege", Password: "x", Timeout: 50 * time.Millisecond})
+	src.dial = func(string, *imapclient.Options) (*imapclient.Client, error) {
+		return nil, &net.OpError{Op: "dial", Err: fmt.Errorf("connection refused")}
+	}
+	_, err := src.Fetch(ctx, 10)
+	var call *Error
+	if !asError(err, &call) {
+		t.Fatalf("error %v carries no retry class", err)
+	}
+	if call.RetryKind() != KindTransient {
+		t.Fatalf("retry kind %q, want %q", call.RetryKind(), KindTransient)
+	}
+}
+
+// An attachment over the cap is truncated to cap+1 bytes, never to cap, so the
+// caller can tell "at the limit" from "over it".
+func TestIMAPAttachmentCap(t *testing.T) {
+	ctx := context.Background()
+	ms := newMemServer(t, "belege", "app-password", nil)
+	ms.createMailbox(t, "INBOX")
+	ms.appendMessage(t, "INBOX", messageWithImage(
+		"kasse@example.de", "Riesiges Bild", pngBytes(), "image/png", "gross.png", nil,
+	))
+
+	src := ms.source(t, Options{MaxAttachmentBytes: 10})
+	messages, err := src.Fetch(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 || len(messages[0].Attachments) != 1 {
+		t.Fatalf("messages %+v", messages)
+	}
+	if got := len(messages[0].Attachments[0].Data); got != 11 {
+		t.Fatalf("attachment read %d bytes, want cap+1", got)
+	}
+}
+
+// Without RFC 5258 keywords the server rejects the probe with BAD and the poll
+// falls back to \Seen. The idempotency has to survive that path too, or a
+// poll on such a server would duplicate every receipt.
+func TestIMAPFallbackToSeenWithoutKeywords(t *testing.T) {
+	ctx := context.Background()
+	// noKeywordsSession answers BAD to any SEARCH that names a flag.
+	ms := newMemServerWith(t, "belege", "app-password", nil, withoutKeywords)
+	ms.createMailbox(t, "INBOX")
+	ms.appendMessage(t, "INBOX", messageWithImage("kasse@example.de", "Bon", pngBytes(), "image/png", "b.png", nil))
+
+	src := ms.source(t, Options{})
+	first, err := src.Fetch(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1 {
+		t.Fatalf("first fetch %d", len(first))
+	}
+	if err := src.MarkIngested(ctx, []imap.UID{first[0].UID}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := src.Fetch(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 0 {
+		t.Fatalf("second fetch %d messages; the \\Seen fallback did not stick", len(second))
+	}
+}
+
+// noKeywordsSession refuses a SEARCH that names a keyword, the way a
+// pre-RFC 5258 server does: \Seen is from RFC 3501 and every server has it, an
+// arbitrary $keyword is from RFC 5258 and an older one answers BAD.
+type noKeywordsSession struct {
+	imapserver.Session
+}
+
+func (s noKeywordsSession) Search(kind imapserver.NumKind, criteria *imap.SearchCriteria, options *imap.SearchOptions) (*imap.SearchData, error) {
+	for _, flag := range append(append([]imap.Flag{}, criteria.Flag...), criteria.NotFlag...) {
+		if !strings.HasPrefix(string(flag), `\`) {
+			return nil, &imap.Error{Type: imap.StatusResponseTypeBad, Text: "Unsupported search key: FLAG"}
+		}
+	}
+	return s.Session.Search(kind, criteria, options)
+}
+
+func withoutKeywords(session imapserver.Session) imapserver.Session {
+	return noKeywordsSession{Session: session}
+}
+
+func refusingKeywordStore(session imapserver.Session) imapserver.Session {
+	return refuseKeywordStore{Session: session}
+}
+
+// A server that searches keywords but refuses to store one is the one case
+// where neither marker can be persisted. The next poll searches on the keyword
+// alone, so reporting success here would hand the same message back on every
+// poll and ingest that receipt again and again. The failed store is reported,
+// this process stops trusting the keyword, and the message leaves the queue on
+// \Seen — so the second poll is empty.
+func TestIMAPMarkIngestedReportsRefusedKeywordStore(t *testing.T) {
+	ctx := context.Background()
+	ms := newMemServerWith(t, "belege", "app-password", nil, refusingKeywordStore)
+	ms.createMailbox(t, "INBOX")
+	uid := ms.appendMessage(t, "INBOX", messageWithImage("kasse@example.de", "Bon", pngBytes(), "image/png", "b.png", nil))
+
+	src := ms.source(t, Options{})
+	messages, err := src.Fetch(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 || messages[0].UID != uid {
+		t.Fatalf("fetch %+v", messages)
+	}
+
+	err = src.MarkIngested(ctx, []imap.UID{uid})
+	if err == nil {
+		t.Fatal("a store that persisted neither marker must not report success")
+	}
+	var call *Error
+	if !asError(err, &call) {
+		t.Fatalf("error %v carries no retry class", err)
+	}
+	if call.RetryKind() != KindTransient {
+		t.Fatalf("retry kind %q, want %q", call.RetryKind(), KindTransient)
+	}
+	if strings.Contains(err.Error(), "app-password") {
+		t.Fatalf("the error leaks the password: %v", err)
+	}
+
+	flags := ms.flags(t, "INBOX", uid)
+	if !hasFlag(flags, imap.FlagSeen) {
+		t.Fatalf("flags %v, want \\Seen so the message leaves the queue", flags)
+	}
+	if hasFlag(flags, imap.FlagDeleted) {
+		t.Fatalf("flags %v: \\Deleted was set", flags)
+	}
+
+	second, err := src.Fetch(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 0 {
+		t.Fatalf("second fetch returned %d messages; the receipt would be ingested again on every poll", len(second))
+	}
+}
+
+// The store that refuses the keyword only has to be discovered once. From then
+// on the probe skips the question, the poll searches on \Seen alone, and every
+// MarkIngested that still carried the keyword would be a command the server
+// answers with BAD and a warning to the operator — once per poll, forever, for
+// a marker nothing reads any more.
+func TestIMAPMarkIngestedStopsAskingForAKeywordItKnowsItCannotStore(t *testing.T) {
+	ctx := context.Background()
+	ms := newMemServerWith(t, "belege", "app-password", nil, refusingKeywordStore)
+	wire := &commandLog{}
+	ms.ln.log = wire
+	ms.createMailbox(t, "INBOX")
+	for i := 0; i < 2; i++ {
+		ms.appendMessage(t, "INBOX", messageWithImage("kasse@example.de", "Bon", pngBytes(), "image/png", "b.png", nil))
+	}
+
+	src := ms.source(t, Options{})
+	messages, err := src.Fetch(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("fetched %d messages", len(messages))
+	}
+	// The first store is the one that has to discover the problem: the probe
+	// said the keyword works, the store contradicts it.
+	if err := src.MarkIngested(ctx, []imap.UID{messages[0].UID}); err == nil {
+		t.Fatal("a store that persisted neither marker must not report success")
+	}
+
+	// The next message arrives, and its disposition is the second poll of a
+	// process that now knows the keyword is unusable.
+	ms.ln.log = &commandLog{}
+	wire = ms.ln.log
+	if err := src.MarkIngested(ctx, []imap.UID{messages[1].UID}); err != nil {
+		t.Fatalf("the \\Seen fallback must succeed: %v", err)
+	}
+	for _, command := range strings.Split(wire.String(), "\r\n") {
+		if strings.Contains(command, string(Marker)) {
+			t.Fatalf("the poll sent %q again after the keyword proved unstorable", command)
+		}
+	}
+
+	// And the message still leaves the queue, which is the whole point of the
+	// downgraded store.
+	remaining, err := src.Fetch(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("fetch returned %d messages; the \\Seen store did not leave the queue", len(remaining))
+	}
+}
+
+// refuseKeywordStore rejects a STORE that carries a keyword but keeps the
+// search working, which is what an inconsistent server looks like.
+type refuseKeywordStore struct {
+	imapserver.Session
+}
+
+func (s refuseKeywordStore) Store(w *imapserver.FetchWriter, numSet imap.NumSet, flags *imap.StoreFlags, options *imap.StoreOptions) error {
+	for _, flag := range flags.Flags {
+		if !strings.HasPrefix(string(flag), `\`) {
+			return &imap.Error{Type: imap.StatusResponseTypeBad, Text: "Cannot store that flag"}
+		}
+	}
+	return s.Session.Store(w, numSet, flags, options)
+}
+
+// Fetch caps the batch so a large backlog is drained over several polls.
+func TestIMAPFetchRespectsLimit(t *testing.T) {
+	ctx := context.Background()
+	ms := newMemServer(t, "belege", "app-password", nil)
+	ms.createMailbox(t, "INBOX")
+	for i := 0; i < 3; i++ {
+		ms.appendMessage(t, "INBOX", messageWithImage("kasse@example.de", "Bon", pngBytes(), "image/png", "b.png", nil))
+	}
+	src := ms.source(t, Options{})
+	messages, err := src.Fetch(ctx, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("fetched %d messages, want the limit of 2", len(messages))
+	}
+}
+
+// classify is the contract the job queue reads, so every IMAP status response
+// maps onto a retry class on purpose.
+func TestClassify(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"auth failed", &imap.Error{Type: imap.StatusResponseTypeNo, Code: imap.ResponseCodeAuthenticationFailed}, KindAuth},
+		{"bad", &imap.Error{Type: imap.StatusResponseTypeBad}, KindPermanent},
+		{"no", &imap.Error{Type: imap.StatusResponseTypeNo, Text: "Mailbox in use"}, KindTransient},
+		{"timeout", context.DeadlineExceeded, KindTransient},
+		{"already classified", &Error{Kind: KindAuth, Text: "x"}, KindAuth},
+		{"plain", fmt.Errorf("boom"), KindTransient},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := retryKind(classify(tt.err)); got != tt.want {
+				t.Fatalf("retry kind %q, want %q", got, tt.want)
+			}
+		})
+	}
+	if classify(nil) != nil {
+		t.Fatal("a nil error must stay nil")
+	}
+}
+
+func TestNewWithoutHostIsNil(t *testing.T) {
+	if New(Options{Username: "belege"}) != nil {
+		t.Fatal("a source without a host must be nil")
+	}
+	if New(Options{Host: "imap.example.de"}) != nil {
+		t.Fatal("a source without a user must be nil")
+	}
+	if src := New(Options{Host: "imap.example.de", Username: "belege"}); src == nil {
+		t.Fatal("a complete source must not be nil")
+	}
+}
+
+func TestNewAppliesDefaults(t *testing.T) {
+	src := New(Options{Host: "imap.example.de", Username: "belege"})
+	if src.Address() != "imap.example.de:993" {
+		t.Fatalf("address %s", src.Address())
+	}
+	if src.options.Inbox != "INBOX" || src.options.MaxAttachmentBytes != 15<<20 || src.options.Timeout <= 0 {
+		t.Fatalf("defaults %+v", src.options)
+	}
+	if src.DoneFolder() != "" {
+		t.Fatalf("done folder %q", src.DoneFolder())
+	}
+}
+
+// asError is errors.As with a shorter call site in the table tests.
+func asError(err error, target **Error) bool {
+	return errors.As(err, target)
+}
+
+// observer is a second, independent client used only by the tests to read the
+// server state back the way an operator's mail client would.
+func (ms *memServer) observer(t *testing.T) *imapclient.Client {
+	t.Helper()
+	client, err := ms.ln.dialer("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	if err := client.Login("belege", "app-password").Wait(); err != nil {
+		t.Fatal(err)
+	}
+	return client
+}
+
+// flags reads the stored flags of one message over the wire.
+func (ms *memServer) flags(t *testing.T, mailbox string, uid imap.UID) map[imap.Flag]bool {
+	t.Helper()
+	client := ms.observer(t)
+	if _, err := client.Select(mailbox, nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+	messages, err := client.Fetch(imap.UIDSetNum(uid), &imap.FetchOptions{Flags: true}).Collect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("fetched %d messages", len(messages))
+	}
+	out := make(map[imap.Flag]bool, len(messages[0].Flags))
+	for _, flag := range messages[0].Flags {
+		out[flag] = true
+	}
+	return out
+}
+
+// messageCount is the STATUS number the operator would see.
+func (ms *memServer) messageCount(t *testing.T, mailbox string) int {
+	t.Helper()
+	data, err := ms.observer(t).Status(mailbox, &imap.StatusOptions{NumMessages: true}).Wait()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data.NumMessages == nil {
+		t.Fatal("no message count")
+	}
+	return int(*data.NumMessages)
+}

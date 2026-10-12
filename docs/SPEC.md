@@ -28,7 +28,7 @@ Eine selbst gehostete, mobil optimierte Web-App (PWA) für **einen Nutzer** (Edu
 - Arbeitszeit-, Urlaubs- oder Krankheitserfassung (Belegtag zählt; nur Warnungen).
 - Reisekosten/Verpflegungsmehraufwand.
 - Mehrere Belege oder mehrere bezuschusste Mahlzeiten pro Tag (genau ein Beleg pro Belegtag; ein Beleg darf bis zu 3 Belegbilder haben, siehe 5.2).
-- PDF- oder E-Mail-Belege als Eingabe (nur Bilder, siehe Offene Punkte).
+- PDF-Belege als Eingabe (nur Bilder, siehe Offene Punkte). **E-Mail als Transport ist seit dem IMAP-Abruf umgesetzt (8.2.1):** eine weitergeleitete Nachricht mit Bildanhängen landet als unzugeordnetes Belegbild in **Offene Bilder**. PDF-Anhänge bleiben außen vor — es gibt keinen Rasterizer.
 - Offline-Erfassung mit Sync-Queue (PWA nur installierbar + App-Shell-Cache).
 - Native Apps, englische UI.
 
@@ -544,6 +544,18 @@ Die Monatsansicht prüft `P_BILDER_VOLLSTAENDIG` per Stat (Blob vorhanden, Grö�
 | GET | `/werte` | amtliche Referenzwerte aus `internal/rules`: `{sachbezugswerte: [{jahr, fruehstueck_cent, mittag_cent, abend_cent, status}], kirchensteuer: [{land, satz_bp}], bundeslaender: [code], mahlzeiten: [{code, label}], bezugsorte: [{code, label}]}` (Listen in fester Reihenfolge) |
 | GET | `/system/info` | `{version, commit, build_datum, storage_backend, erkennung_konfiguriert, oidc, typst_version}` |
 
+### 8.2.1 IMAP-Abruf (kein Endpunkt)
+
+Der Belegeingang per E-Mail ist kein HTTP-Endpunkt, sondern ein Hintergrundjob: `app.go` startet neben `Sweep` einen `time.Ticker` (`BELEGAPP_MAIL_INTERVAL`, Vorgabe `5m`), der einen Job vom Typ `mail` einreiht. Der Job erledigt den eigentlichen IMAP-Zugriff, damit die Worker ihn mit dem vorhandenen `RetryKind`-Mechanismus wiederholen können. Ohne konfiguriertes Postfach läuft kein Ticker und es entsteht keine Jobzeile.
+
+Ablauf je Nachricht, in dieser Reihenfolge:
+
+1. `UID SEARCH NOT $Belegapp` holt die Nachrichten, die diese Anwendung noch nicht verarbeitet hat. Marker und `\Seen` sind die beiden Schreibweise desselben Zustands; `\Seen` allein ist der Rückfall für Server ohne RFC 5258.
+2. `BELEGAPP_MAIL_ALLOWED_SENDERS` (exakter Vergleich, leer = alle) wird geprüft. Ein nicht zugelassener Absender wird **stillschweigend abgelehnt** und nur protokolliert; die Nachricht bleibt unverändert im Postfach.
+3. Bildanhänge (JPEG, PNG, WebP) laufen einzeln durch `SaveBild`, das Größengrenze, Formatliste und den `erkennung`-Job übernimmt. PDF und andere Typen werden übersprungen und protokolliert; es gibt keinen Rasterizer (siehe 1.2).
+4. Erst danach wird die Nachricht abgeschlossen: `\Seen` plus Marker `$Belegapp`, bei gesetztem `BELEGAPP_MAIL_DONE_FOLDER` zusätzlich `MOVE`. **Es wird nie `\Deleted` gesetzt und nie expungiert**; ein Server ohne `MOVE` liefert für den Ordner ein `permanent`, die Bilder sind trotzdem gespeichert.
+5. Ein Fehler vor Schritt 4 lässt die Nachricht unmarkiert, der nächste Abruf wiederholt sie. Dadurch entstehen bei einem Abbruch oder Retry keine Dubletten.
+
 ### 8.3 Ressourcen (Beispiele)
 **Belegbild**
 ```json
@@ -884,6 +896,18 @@ Alle Variablen mit Präfix `BELEGAPP_`; für Geheimnisse zusätzlich `<NAME>_FIL
 | `BELEGAPP_TYPST_BIN` | `typst` | Pfad zum Typst-Binary |
 | `BELEGAPP_PDF_TIMEOUT` | `120s` | |
 | `BELEGAPP_METRICS_ADDR` | `` | z. B. `:9090`; leer = aus |
+| `BELEGAPP_MAIL_ENABLED` | `false` | globaler Schalter für den IMAP-Abruf (8.2). Aus = kein Ticker, kein Job |
+| `BELEGAPP_MAIL_HOST` | `` | Pflicht bei aktivem Abruf |
+| `BELEGAPP_MAIL_PORT` | `993` | `993` = implizites TLS, `143` mit STARTTLS |
+| `BELEGAPP_MAIL_USERNAME` | `` | Pflicht bei aktivem Abruf |
+| `BELEGAPP_MAIL_PASSWORD(_FILE)` | `` | App-Passwort eines eigenen Postfach-Kontos; nie im Log |
+| `BELEGAPP_MAIL_TLS` | `true` | Implizites TLS. Genau eines von `BELEGAPP_MAIL_TLS` und `BELEGAPP_MAIL_STARTTLS` muss gesetzt sein; Klartext-IMAP wird abgelehnt |
+| `BELEGAPP_MAIL_STARTTLS` | `false` | STARTTLS auf Port `143` |
+| `BELEGAPP_MAIL_INBOX` | `INBOX` | abgefragter Ordner, idealerweise nur für Belege |
+| `BELEGAPP_MAIL_DONE_FOLDER` | `` | Ordner, in den eine verarbeitete Nachricht verschoben wird. Leer = nur `\Seen` plus Marker `$Belegapp`; braucht `MOVE` |
+| `BELEGAPP_MAIL_ALLOWED_SENDERS` | `` | Komma-Liste von Absendern, exakter Vergleich. Leer = jeder Absender |
+| `BELEGAPP_MAIL_INTERVAL` | `5m` | Abruf-Takt |
+| `BELEGAPP_MAIL_MAX_ATTACHMENTS_PER_MESSAGE` | `10` | gespeicherte Bilder je Nachricht; der Rest wird übersprungen und protokolliert |
 
 CLI: `belegapp serve` (Default) · `hash-password` · `healthcheck [--url]` · `migrate` · `backup --out <zip>` · `restore <zip> --yes` · `verify-audit` · `version`.
 
@@ -1011,7 +1035,7 @@ Coverage-Ziel: `internal/calc` 100 %, Backend gesamt ≥ 70 %.
 | **M2 Belegerkennung** | Job-Queue, `openaicompat` + `fake`, Schema, Nachverarbeitung, Korrekturvorschlag, Retry/Fallback, UI-Polling, „Verbindung testen“ | Mit `gpt-5-mini` werden Datum/Händler/Betrag vorausgefüllt (NF-1); Fehlerfälle 10.6 per Contract-Test; manuelle Erfassung bei LLM-Ausfall unverändert möglich; Wechsel auf Ollama nur per Env |
 | **M3 Monatsexport & Sperre** | Typst-Template, PDFRenderer, Vorschau (ENTWURF), finaler Export, Prüfpunkte, Arbeitnehmererklärung, CSV/ZIP, Monatsstatus, Änderungsgrund, Exportversionen mit Änderungsabschnitt | Golden-PDF M1 entspricht 12.2; PDF/A-2b-Validierung bestanden; nach Export ist Bearbeiten ohne Änderungsgrund unmöglich; Version 2 listet Änderungen; NF-2 erfüllt |
 | **M4 Datenexport/-import & Release v1.0** | Datenexport/-import (UI + CLI), Backend-Wechsel per Import, PWA (Manifest, Icons, Update-Prompt), GoReleaser + GHCR + Signatur + SBOM, release-please, Compose- und K8s-Beispiele, README/Betriebsdoku | Roundtrip-Test grün; Restore auf frischem Host ergibt identische Summen und gültige Hash-Kette; `v1.0.0`-Release mit Binaries und multi-arch Image (signiert); App auf iOS/Android installierbar; Kustomize-Beispiel läuft in Kind |
-| M5 (optional) | Web Share Target, Litestream-Doku, geplanter automatischer Datenexport, PDF-Belege als Eingabe, Regelperioden innerhalb eines Jahres | nach Bedarf |
+| M5 (optional) | IMAP-Abruf (umgesetzt, siehe 8.2.1), Web Share Target, Litestream-Doku, geplanter automatischer Datenexport, PDF-Belege als Eingabe, Regelperioden innerhalb eines Jahres | nach Bedarf |
 
 ---
 
@@ -1032,7 +1056,7 @@ Coverage-Ziel: `internal/calc` 100 %, Backend gesamt ≥ 70 %.
 - ⚠️ 2027-Sachbezugswerte nach Bundesrat-Beschluss aktualisieren (Release vor Januar 2027).
 - ⚠️ Rundung der pauschalen Lohnsteuer (kaufmännisch angenommen) mit Lohnabrechnung abgleichen.
 - Teilbelege (mehrere Kassenzettel für eine Mahlzeit, steuerlich zulässig) – in v1 bewusst nicht unterstützt.
-- PDF-/E-Mail-Belege (Lieferdienste) als Eingabe. Das Konzept **„braucht Prüfung“** ist als Sichtbarkeit explizit: `GET /belegbilder/offen` plus der Screen **Offene Bilder** listen jedes hochgeladene Bild ohne Beleg. Der IMAP-Abruf (ROADMAP, Option 1) legt seine Bilder dort ab und profitiert von derselben Liste; die Markierung eines Belegs als ungeprüft steht weiterhin aus.
+- PDF-/E-Mail-Belege (Lieferdienste) als Eingabe. Das Konzept **„braucht Prüfung“** ist als Sichtbarkeit explizit: `GET /belegbilder/offen` plus der Screen **Offene Bilder** listen jedes hochgeladene Bild ohne Beleg. Der **IMAP-Abruf (8.2.1) legt seine Bildanhänge genau dort ab** und profitiert von derselben Liste. Offen bleibt: die Markierung eines Belegs als ungeprüft, PDF-Anhänge (kein Rasterizer), und das PWA-Web-Share-Target (ROADMAP).
 - Unterjährige Regeländerungen (z. B. Zuschusserhöhung zum 1.7.) – v1 nur pro Kalenderjahr.
 - Modellnamen/Preise (`gpt-5-mini`, Gemini Flash) vor M2 verifizieren; Eval-Set aufbauen.
 - solid-ui-Tokens auf Tailwind v4 portieren; Solid-2.0-Migration nach stabilem Release und Kobalte-Unterstützung.

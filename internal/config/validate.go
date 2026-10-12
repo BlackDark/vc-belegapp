@@ -92,6 +92,9 @@ func (c *Config) validate() error {
 	if err := c.validateLLM(); err != nil {
 		return err
 	}
+	if err := c.validateMail(); err != nil {
+		return err
+	}
 
 	if c.JobWorkers < 1 {
 		return fmt.Errorf("BELEGAPP_JOB_WORKERS must be at least 1")
@@ -214,6 +217,59 @@ func (c *Config) validateLLM() error {
 	// Private and loopback hosts stay allowed. The URL is operator config,
 	// and a local OpenAI-compatible server (Ollama) is a supported setup.
 	// Callers do not supply this address.
+	return nil
+}
+
+// validateMail checks the IMAP intake. MailEnabled is the switch; without it
+// the feature is off and the rest is ignored, so an operator can keep the
+// variables in place and turn the poll off. With it on, the connection details
+// have to be complete and the transport has to be encrypted — this application
+// has no plaintext mode, because the password would otherwise cross the network
+// in the clear.
+func (c *Config) validateMail() error {
+	c.MailAllowedSender = splitList(c.MailSendersRaw)
+	if c.MailInterval <= 0 {
+		return fmt.Errorf("BELEGAPP_MAIL_INTERVAL must be positive")
+	}
+	if c.MailMaxMessages < 1 {
+		return fmt.Errorf("BELEGAPP_MAIL_MAX_MESSAGES_PER_POLL must be at least 1")
+	}
+	if c.MailMaxAttachments < 1 {
+		return fmt.Errorf("BELEGAPP_MAIL_MAX_ATTACHMENTS_PER_MESSAGE must be at least 1")
+	}
+	if !c.MailEnabled {
+		return nil
+	}
+	if strings.TrimSpace(c.MailHost) == "" {
+		return fmt.Errorf("BELEGAPP_MAIL_HOST is required when BELEGAPP_MAIL_ENABLED is true")
+	}
+	if strings.ContainsAny(c.MailHost, " \t/\\") || strings.Contains(c.MailHost, "://") {
+		return fmt.Errorf("BELEGAPP_MAIL_HOST must be a bare host name or IP address without a scheme or path")
+	}
+	if c.MailPort < 1 || c.MailPort > 65535 {
+		return fmt.Errorf("BELEGAPP_MAIL_PORT must be between 1 and 65535")
+	}
+	if strings.TrimSpace(c.MailUsername) == "" {
+		return fmt.Errorf("BELEGAPP_MAIL_USERNAME is required when BELEGAPP_MAIL_ENABLED is true")
+	}
+	if c.MailTLS && c.MailStartTLS {
+		return fmt.Errorf("BELEGAPP_MAIL_TLS and BELEGAPP_MAIL_STARTTLS must not both be true")
+	}
+	if !c.MailTLS && !c.MailStartTLS {
+		return fmt.Errorf("BELEGAPP_MAIL_TLS or BELEGAPP_MAIL_STARTTLS must be true; plaintext IMAP is not supported")
+	}
+	if c.MailStartTLS && c.MailPort == 993 {
+		// Port 993 is the implicit-TLS port; a STARTTLS upgrade there hangs
+		// until the dial timeout on most servers. Naming it early beats a
+		// silent misconfiguration.
+		return fmt.Errorf("BELEGAPP_MAIL_PORT 993 is the implicit TLS port; use 143 with BELEGAPP_MAIL_STARTTLS")
+	}
+	if strings.TrimSpace(c.MailInbox) == "" {
+		return fmt.Errorf("BELEGAPP_MAIL_INBOX is empty")
+	}
+	if strings.EqualFold(strings.TrimSpace(c.MailDoneFolder), strings.TrimSpace(c.MailInbox)) {
+		return fmt.Errorf("BELEGAPP_MAIL_DONE_FOLDER must differ from BELEGAPP_MAIL_INBOX")
+	}
 	return nil
 }
 

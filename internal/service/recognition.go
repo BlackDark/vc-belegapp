@@ -59,6 +59,9 @@ func (s *Service) HandleJob(ctx context.Context, job jobs.Job) (float64, string,
 	case "datenexport":
 		result, err := s.runDatenexport(ctx, job)
 		return time.Since(start).Seconds(), result, err
+	case "mail":
+		result, err := s.runMail(ctx)
+		return time.Since(start).Seconds(), result, err
 	default:
 		err := &recognition.CallError{Kind: recognition.KindPermanent, Text: "Unbekannter Job"}
 		return time.Since(start).Seconds(), "", err

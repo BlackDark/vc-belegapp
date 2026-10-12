@@ -22,6 +22,7 @@ import (
 	"github.com/BlackDark/vc-belegapp/internal/db"
 	"github.com/BlackDark/vc-belegapp/internal/holidays"
 	"github.com/BlackDark/vc-belegapp/internal/jobs"
+	"github.com/BlackDark/vc-belegapp/internal/mailinbox"
 	"github.com/BlackDark/vc-belegapp/internal/pdf"
 	"github.com/BlackDark/vc-belegapp/internal/recognition"
 	"github.com/BlackDark/vc-belegapp/internal/server"
@@ -123,6 +124,16 @@ func Serve(ctx context.Context, opt Options) error {
 		LLMTimeout:     opt.Config.LLMTimeout,
 		PDF:            renderer,
 		AppVersion:     appVersion,
+		Log:            opt.Log,
+	}
+	if box := newMailSource(opt.Config, opt.Log); box != nil {
+		svc.Mail = box
+		svc.MailInterval = opt.Config.MailInterval
+		svc.MailMaxMessages = opt.Config.MailMaxMessages
+		svc.MailMaxAttachments = opt.Config.MailMaxAttachments
+		svc.MailDoneFolder = opt.Config.MailDoneFolder
+		svc.MailAllowedSenders = opt.Config.MailAllowedSender
+		opt.Log.Info("mail intake enabled", "host", opt.Config.MailHost, "ordner", opt.Config.MailInbox, "abgelegt_in", opt.Config.MailDoneFolder)
 	}
 	migrated, err := svc.MigrateBildKeys(ctx)
 	if err != nil {
@@ -152,6 +163,10 @@ func Serve(ctx context.Context, opt Options) error {
 	var background sync.WaitGroup
 	background.Go(func() { sessions.Run(runCtx) })
 	background.Go(func() { svc.Sweep(runCtx) })
+	// No mailbox configured means no ticker and no mail job, ever.
+	if svc.Mail != nil {
+		background.Go(func() { svc.PollMailbox(runCtx) })
+	}
 	svc.StartJobs(runCtx)
 	defer func() {
 		cancel()
@@ -283,6 +298,27 @@ func newExtractor(cfg config.Config) recognition.ReceiptExtractor {
 		Format:          cfg.LLMResponseFormat,
 		ReasoningEffort: cfg.LLMReasoningEffort,
 		Timeout:         cfg.LLMTimeout,
+	})
+}
+
+// newMailSource builds the IMAP intake, or nil when the operator did not turn
+// it on. The per-attachment byte cap reuses BELEGAPP_UPLOAD_MAX_BYTES so there
+// is one number for "how large a picture may be" in this application.
+func newMailSource(cfg config.Config, log *slog.Logger) mailinbox.Source {
+	if !cfg.MailConfigured() {
+		return nil
+	}
+	return mailinbox.New(mailinbox.Options{
+		Host:               cfg.MailHost,
+		Port:               cfg.MailPort,
+		Username:           cfg.MailUsername,
+		Password:           cfg.MailPassword,
+		TLS:                cfg.MailTLS,
+		STARTTLS:           cfg.MailStartTLS,
+		Inbox:              cfg.MailInbox,
+		DoneFolder:         cfg.MailDoneFolder,
+		MaxAttachmentBytes: cfg.UploadMaxBytes,
+		Log:                log,
 	})
 }
 

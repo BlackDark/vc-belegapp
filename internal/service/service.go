@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/BlackDark/vc-belegapp/internal/db"
 	"github.com/BlackDark/vc-belegapp/internal/holidays"
 	"github.com/BlackDark/vc-belegapp/internal/jobs"
+	"github.com/BlackDark/vc-belegapp/internal/mailinbox"
 	"github.com/BlackDark/vc-belegapp/internal/pdf"
 	"github.com/BlackDark/vc-belegapp/internal/recognition"
 	"github.com/BlackDark/vc-belegapp/internal/storage"
@@ -39,6 +41,19 @@ type Service struct {
 	LLMTimeout     time.Duration
 	PDF            pdf.Renderer
 	AppVersion     string
+	Log            *slog.Logger
+
+	// Mail is the IMAP intake. It is nil when no mailbox is configured, and
+	// IngestMailbox is a no-op in that case. MailInterval is the poll period,
+	// MailMaxMessages how many messages one poll takes, MailMaxAttachments the
+	// per-message picture cap, and MailDoneFolder where an ingested message is
+	// moved (empty: only flag it).
+	Mail               mailinbox.Source
+	MailInterval       time.Duration
+	MailMaxMessages    int
+	MailMaxAttachments int
+	MailDoneFolder     string
+	MailAllowedSenders []string
 
 	exportMu  sync.Mutex
 	exporting map[string]struct{}

@@ -8,3 +8,15 @@ data:
   BELEGAPP_TRUSTED_PROXIES: 10.0.0.0/8
   BELEGAPP_STORAGE_BACKEND: fs
   BELEGAPP_COOKIE_SECURE: "true"
+  # Receipt intake by e-mail. Uncomment together with BELEGAPP_MAIL_PASSWORD in
+  # the belegapp secret; without BELEGAPP_MAIL_ENABLED no ticker runs and no
+  # mail job is created. Use a dedicated account with an app password.
+  # BELEGAPP_MAIL_ENABLED: "true"
+  # BELEGAPP_MAIL_HOST: imap.example.de
+  # BELEGAPP_MAIL_USERNAME: belege@example.de
+  # BELEGAPP_MAIL_INBOX: Belege
+  # BELEGAPP_MAIL_DONE_FOLDER: Belege/erledigt
+  # BELEGAPP_MAIL_ALLOWED_SENDERS: kasse@example.de
+  # BELEGAPP_MAIL_INTERVAL: 5m
+  # BELEGAPP_MAIL_MAX_MESSAGES_PER_POLL: "50"
+  # BELEGAPP_MAIL_MAX_ATTACHMENTS_PER_MESSAGE: "10"

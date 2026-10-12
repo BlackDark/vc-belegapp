@@ -54,6 +54,19 @@ Every variable uses the prefix `BELEGAPP_`. A secret may be set as `BELEGAPP_<NA
 | `BELEGAPP_TYPST_BIN` | `typst` | Typst binary. The image uses `/usr/local/bin/typst` |
 | `BELEGAPP_PDF_TIMEOUT` | `120s` | Monatsexport compile timeout |
 | `BELEGAPP_METRICS_ADDR` | empty | Prometheus listen address, for example `:9090`. No authentication |
+| `BELEGAPP_MAIL_ENABLED` | `false` | Global switch for the IMAP intake. Off means no ticker and no mail job, whatever else is set |
+| `BELEGAPP_MAIL_HOST` | empty | IMAP host, for example `imap.example.de`. Required when the intake is on |
+| `BELEGAPP_MAIL_PORT` | `993` | IMAP port. `993` is implicit TLS, `143` with `BELEGAPP_MAIL_STARTTLS` |
+| `BELEGAPP_MAIL_USERNAME` | empty | Login name. Required when the intake is on |
+| `BELEGAPP_MAIL_PASSWORD`, `BELEGAPP_MAIL_PASSWORD_FILE` | empty | App password of a dedicated mail account. Never logged |
+| `BELEGAPP_MAIL_TLS` | `true` | Implicit TLS. Exactly one of `BELEGAPP_MAIL_TLS` and `BELEGAPP_MAIL_STARTTLS` has to be true; plaintext IMAP is refused |
+| `BELEGAPP_MAIL_STARTTLS` | `false` | Upgrade a plain connection with STARTTLS. Then use port `143` |
+| `BELEGAPP_MAIL_INBOX` | `INBOX` | Polled folder, ideally one only receipts are forwarded to |
+| `BELEGAPP_MAIL_DONE_FOLDER` | empty | Folder an ingested message is moved to. Empty only sets `\Seen` plus the `$Belegapp` marker. Needs a server with `MOVE` |
+| `BELEGAPP_MAIL_ALLOWED_SENDERS` | empty | Comma-separated sender addresses, exact match. Empty admits every sender |
+| `BELEGAPP_MAIL_INTERVAL` | `5m` | Poll period |
+| `BELEGAPP_MAIL_MAX_MESSAGES_PER_POLL` | `50` | Messages one poll reads. A larger backlog is drained over the next polls |
+| `BELEGAPP_MAIL_MAX_ATTACHMENTS_PER_MESSAGE` | `10` | Pictures stored per message. The rest is skipped and logged |
 
 <!-- config-env-end -->
 
@@ -71,6 +84,35 @@ BELEGAPP_LLM_RESPONSE_FORMAT=auto
 ```
 
 On the Compose network the host name is `ollama` (`http://ollama:11434/v1`). The request sends only the normalised JPEG, EXIF removed, rescaled to `BELEGAPP_LLM_MAX_IMAGE_PX`.
+
+## Receipt intake by e-mail
+
+Forward receipts to a dedicated mailbox or folder and the poll puts them into *Offene Bilder*. It is off unless `BELEGAPP_MAIL_ENABLED` is `true`; without it no ticker runs and no mail job is created, so the other variables can stay in place.
+
+```bash
+BELEGAPP_MAIL_ENABLED=true
+BELEGAPP_MAIL_HOST=imap.example.de
+BELEGAPP_MAIL_USERNAME=belege@example.de
+BELEGAPP_MAIL_PASSWORD_FILE=/run/secrets/imap_password
+BELEGAPP_MAIL_INBOX=Belege
+BELEGAPP_MAIL_DONE_FOLDER=Belege/erledigt
+BELEGAPP_MAIL_ALLOWED_SENDERS=kasse@example.de,lieferando@example.de
+BELEGAPP_MAIL_INTERVAL=5m
+```
+
+Use a dedicated account with an app password. **Mail is never deleted.** An ingested message is flagged `\Seen` plus the keyword `$Belegapp`, and moved to `BELEGAPP_MAIL_DONE_FOLDER` when that is set. A server without the `MOVE` extension is reported in the log instead: the go-imap client would otherwise fall back to `COPY` + `\Deleted` + `EXPUNGE`, which this application never does.
+
+Only JPEG, PNG, and WebP attachments are stored (SPEC §1.2). PDF and every other type are skipped and logged; there is no rasteriser. An attachment over `BELEGAPP_UPLOAD_MAX_BYTES` is skipped, and at most `BELEGAPP_MAIL_MAX_ATTACHMENTS_PER_MESSAGE` attachments are kept per message. The per-attachment cap is the same number as for a manual upload.
+
+A single attachment that cannot be stored — a corrupt file, a picture over the pixel limit — is logged and skipped, and the rest of the message and the rest of the poll carry on. Such an attachment is decided by its own bytes and would be refused on every retry, so the message is flagged anyway; re-reading it would only add another copy of the images it did carry. A failure of the blob store or the database ends the poll instead, and the messages already stored are flagged before the error is reported, so the job retry does not duplicate them.
+
+One poll reads at most `BELEGAPP_MAIL_MAX_MESSAGES_PER_POLL` messages; the rest waits for the next one.
+
+`BELEGAPP_MAIL_ALLOWED_SENDERS` compares the full address, case-insensitively. Empty admits every sender. A non-matching sender is rejected silently — one log line, nothing shown to the user — and its message is left untouched in the folder: the poll reads message bodies with `BODY.PEEK[]`, which sets no flag, so even `\Seen` stays where the operator left it.
+
+The two flags serve one purpose and are written together: `\Seen` is what the operator sees in their own client, and `$Belegapp` is what the poll searches on. The keyword is authoritative because a phone mail client marks a receipt read when it previews the picture, and that must not hide it from the intake. A server that keeps no keywords answers `BAD` to the probe, and the poll then searches on `\Seen` alone. A server that searches on the keyword but refuses to store it is downgraded to `\Seen` for the rest of the process, and the poll reports the failed store instead of claiming a success that did not happen.
+
+Transport: `BELEGAPP_MAIL_TLS` (implicit TLS, the default) or `BELEGAPP_MAIL_STARTTLS` on port `143`. Exactly one of the two must be set — there is no plaintext mode, because the password would cross the network in the clear.
 
 ## Metrics
 

@@ -18,11 +18,11 @@ Nothing in the approved backlog. The last item — serving the official values (
 
 ### Receipt intake by e-mail
 
-Goal: forward or redirect a receipt (photo or PDF) somewhere and have it appear as a Beleg to review. SPEC §1.2 currently excludes PDF and e-mail receipts, so any option below also needs PDF input (render the first pages to images before recognition).
+Goal: forward or redirect a receipt (photo or PDF) somewhere and have it appear as a Beleg to review. SPEC §1.2 currently excludes PDF receipts, so any option below that takes a PDF also needs PDF input (render the first pages to images before recognition).
 
 | Option | How | Pros | Cons |
 | --- | --- | --- | --- |
-| 1. Scheduled IMAP poll | A job polls a dedicated mailbox, folder, or label (e.g. `Belege`) on an interval. Extract image/PDF attachments, dedupe by SHA-256, run Belegerkennung, create Belege marked for review, then move or flag the message. Config via env, e.g. `BELEGAPP_MAIL_IMAP_URL`, `_USER`, `_PASSWORD_FILE` (app password), `_FOLDER`, `_INTERVAL`. | Works with any provider and with forwarding rules; no public endpoint; fits the existing job queue | Credentials stored in the app; polling delay; OAuth-only providers need app passwords |
+| ~~1. Scheduled IMAP poll~~ | **Done.** A `mail` job polls a dedicated folder on `BELEGAPP_MAIL_INTERVAL`, stores the image attachments as unassigned Belegbilder in *Offene Bilder*, then flags the message `\Seen` + `$Belegapp` and moves it to `BELEGAPP_MAIL_DONE_FOLDER`. Config via `BELEGAPP_MAIL_*`; see [SPEC](SPEC.md) §8.2.1 and [configuration](configuration.md). | Works with any provider and with forwarding rules; no public endpoint; fits the existing job queue | Credentials stored in the app; polling delay; OAuth-only providers need app passwords; images only, no PDF |
 | 2. Inbound-mail webhook | A provider (Mailgun, Postmark, SendGrid Inbound Parse, Cloudflare Email Workers) posts parsed mail to a signed endpoint. | Instant; no mailbox credentials | Needs a public endpoint, a provider account, and signature verification per provider |
 | 3. PWA Web Share Target | Register `share_target` in the manifest so "Share → Belegapp" on the phone uploads an image or PDF. | No server-side mail at all; native feel; already in SPEC M5 | Phone only; Android well supported, iOS limited |
 | 4. Watched folder / WebDAV | Import files that appear in a folder (or a Nextcloud/WebDAV path), e.g. from a scanner or sync client. | Simple; works with scanners | Another credential or volume; less useful on the go |
@@ -30,15 +30,15 @@ Goal: forward or redirect a receipt (photo or PDF) somewhere and have it appear 
 
 Security notes for all intake paths:
 
-- Sender allowlist (exact addresses, ideally with DKIM/SPF pass) for mail; reject everything else silently.
-- Size and type limits (JPEG, PNG, HEIC, PDF only; cap per attachment and per message).
-- PDFs are untrusted: rasterise in a sandboxed step with page and time limits; never execute embedded content.
-- Idempotency: dedupe by message ID and attachment SHA-256 so retries and re-forwards do not create duplicates; respect the one-Beleg-per-day rule (conflicts become review items).
-- Imported Belege are never final until confirmed in the UI, and never touch a locked month without an Änderungsgrund.
+- Sender allowlist (exact addresses, ideally with DKIM/SPF pass) for mail; reject everything else silently. **Done for the IMAP poll** via `BELEGAPP_MAIL_ALLOWED_SENDERS`.
+- Size and type limits (JPEG, PNG, WebP only; cap per attachment and per message). **Done**: `BELEGAPP_UPLOAD_MAX_BYTES` per attachment, `BELEGAPP_MAIL_MAX_ATTACHMENTS_PER_MESSAGE` per message, PDF skipped and logged.
+- PDFs are untrusted: rasterise in a sandboxed step with page and time limits; never execute embedded content. **Still open** — the poll has no rasteriser.
+- Idempotency: dedupe by message ID and attachment SHA-256 so retries and re-forwards do not create duplicates; respect the one-Beleg-per-day rule (conflicts become review items). **Partly done**: the poll marks each message `\Seen` plus the `$Belegapp` keyword and never reprocesses it; SHA-256 deduplication then comes free from the content-addressed blob key. Conflicts on a day still land as separate review items.
+- Imported Belege are never final until confirmed in the UI, and never touch a locked month without an Änderungsgrund. **Done**: the poll only ever creates unassigned Belegbilder, which the *Offene Bilder* screen hands to the normal review flow.
 
-Suggested first slice: IMAP poll (option 1) plus the Web Share Target (option 3), both landing in a "needs review" state.
+Suggested next slice: the Web Share Target (option 3) and the review notification (option 5), both landing in the same "needs review" state.
 
-The visibility prerequisite for that slice is done: `GET /belegbilder/offen` and the *Offene Bilder* screen list every uploaded image no Beleg owns, with a jump into the review form. The IMAP poll can drop its attachments there and they show up for the user; what is still missing is a flag on the Beleg itself that says "never reviewed".
+The visibility prerequisite is done as well: `GET /belegbilder/offen` and the *Offene Bilder* screen list every uploaded image no Beleg owns, with a jump into the review form, and the IMAP poll drops its attachments there. What is still missing is a flag on the Beleg itself that says "never reviewed".
 
 ### Deferred from the specification
 
