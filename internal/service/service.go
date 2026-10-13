@@ -82,6 +82,9 @@ type Service struct {
 	jobParent context.Context
 	jobCancel context.CancelFunc
 	jobWG     sync.WaitGroup
+	// jobStopTimeout overrides jobShutdownTimeout for the stop of the workers.
+	// Zero is the normal case and means the constant; only the test sets it.
+	jobStopTimeout time.Duration
 }
 
 // ImportLaeuft reports whether a data import currently holds the write lock.

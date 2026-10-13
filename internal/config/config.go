@@ -70,7 +70,21 @@ type Config struct {
 	LLMTimeout         time.Duration `env:"BELEGAPP_LLM_TIMEOUT" envDefault:"60s"`
 	LLMMaxImagePX      int           `env:"BELEGAPP_LLM_MAX_IMAGE_PX" envDefault:"1600"`
 
-	JobWorkers           int           `env:"BELEGAPP_JOB_WORKERS" envDefault:"2"`
+	JobWorkers int `env:"BELEGAPP_JOB_WORKERS" envDefault:"2"`
+	// JobTimeout is the deadline one background intake job gets: the folder
+	// poll, the mailbox poll and the review webhook. Those run unattended, so a
+	// ceiling is what turns a hung poll into a reported failure. It is a
+	// ceiling for a job that notices it is running long, not a way to interrupt
+	// blocking filesystem I/O; the concurrency cap in internal/jobs is what
+	// bounds how many stuck jobs can hold the pool.
+	//
+	// Two job types are outside it and there is no per-type override to change
+	// that: the recognition, which bounds its own model call with
+	// BELEGAPP_LLM_TIMEOUT, and the data export, which a person is waiting for
+	// — it renders every Belegbild and zips the lot, and a ceiling there would
+	// fail a slow export on a large dataset three times and leave a permanently
+	// failed download behind.
+	JobTimeout           time.Duration `env:"BELEGAPP_JOB_TIMEOUT" envDefault:"10m"`
 	UploadMaxBytes       int64         `env:"BELEGAPP_UPLOAD_MAX_BYTES" envDefault:"15728640"`
 	ImportMaxBytes       int64         `env:"BELEGAPP_IMPORT_MAX_BYTES" envDefault:"4294967296"`
 	UnassignedImageTTL   time.Duration `env:"BELEGAPP_UNASSIGNED_IMAGE_TTL" envDefault:"24h"`

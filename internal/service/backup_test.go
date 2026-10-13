@@ -6,11 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
@@ -19,6 +22,7 @@ import (
 
 	"github.com/BlackDark/vc-belegapp/internal/audit"
 	"github.com/BlackDark/vc-belegapp/internal/export"
+	"github.com/BlackDark/vc-belegapp/internal/jobs"
 	"github.com/BlackDark/vc-belegapp/internal/storage"
 )
 
@@ -186,6 +190,63 @@ func rewriteSchema(t *testing.T, raw []byte, version int64) []byte {
 		t.Fatal(err)
 	}
 	return buf.Bytes()
+}
+
+// A handler in blocking filesystem I/O cannot be interrupted, so an unbounded
+// jobWG.Wait() would hang the shutdown instead of the job. The stop gives up
+// after its bound and says so; the job it was holding stays in "laeuft" and the
+// next start resets it.
+func TestStopJobsGivesUpOnAStuckHandler(t *testing.T) {
+	svc := newTestService(t, nil)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	svc.Jobs = &jobs.Queue{
+		DB: svc.DB, Workers: 1, Poll: 10 * time.Millisecond,
+		Handle: func(context.Context, jobs.Job) (float64, string, error) {
+			close(started)
+			<-release // ignores the context, the way a hung read does
+			return 0.1, "", nil
+		},
+	}
+	var buf syncBuffer
+	svc.Log = slog.New(slog.NewJSONHandler(&buf, nil))
+	// The production bound is far too long to sit through in a test.
+	svc.jobStopTimeout = 50 * time.Millisecond
+	svc.StartJobs(context.Background())
+	if _, err := svc.Jobs.Enqueue(context.Background(), "watch", "{}"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the job never started")
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		svc.WaitJobs()
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(3 * time.Second):
+		close(release)
+		t.Fatal("the stop waits for a handler it cannot interrupt")
+	}
+	close(release)
+
+	if !strings.Contains(buf.String(), "did not stop") {
+		t.Errorf("giving up on the workers was not reported: %s", buf.String())
+	}
+	// Nothing was lost: the job is still marked running, and Reset on the next
+	// start is what puts it back in the queue.
+	var status string
+	if err := svc.DB.Read.QueryRow(`SELECT status FROM jobs`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "laeuft" {
+		t.Errorf("job status %q, want laeuft until the next start resets it", status)
+	}
 }
 
 func fakeS3Store(t *testing.T) *storage.S3 {

@@ -38,6 +38,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.ExportRetentionYears != 10 || cfg.UnassignedImageTTL != 24*time.Hour {
 		t.Fatalf("retention %d ttl %s", cfg.ExportRetentionYears, cfg.UnassignedImageTTL)
 	}
+	if cfg.JobTimeout != 10*time.Minute {
+		t.Fatalf("job timeout %s", cfg.JobTimeout)
+	}
 	if cfg.OIDCButtonLabel != "Mit SSO anmelden" || cfg.AuthConfigured() {
 		t.Fatalf("auth defaults")
 	}
@@ -63,6 +66,7 @@ func TestLoadRejectsInvalid(t *testing.T) {
 		{"s3 bucket", "BELEGAPP_STORAGE_BACKEND", "s3", "BELEGAPP_S3_BUCKET"},
 		{"llm format", "BELEGAPP_LLM_RESPONSE_FORMAT", "text", "BELEGAPP_LLM_RESPONSE_FORMAT"},
 		{"workers", "BELEGAPP_JOB_WORKERS", "0", "BELEGAPP_JOB_WORKERS"},
+		{"job timeout", "BELEGAPP_JOB_TIMEOUT", "0", "BELEGAPP_JOB_TIMEOUT"},
 		{"retention", "BELEGAPP_EXPORT_RETENTION_YEARS", "0", "BELEGAPP_EXPORT_RETENTION_YEARS"},
 		{"base url path", "BELEGAPP_BASE_URL", "https://belege.example.de/app", "BELEGAPP_BASE_URL"},
 	}
@@ -218,6 +222,18 @@ func TestLoadMailEnabled(t *testing.T) {
 	}
 }
 
+// withMailPassword adds a usable password to a table case, so a case that is
+// about some other variable is not short-circuited by the missing-password
+// check that sits between the username and everything after it.
+func withMailPassword(env map[string]string) map[string]string {
+	out := make(map[string]string, len(env)+1)
+	for key, val := range env {
+		out[key] = val
+	}
+	out["BELEGAPP_MAIL_PASSWORD"] = "app-password"
+	return out
+}
+
 // BELEGAPP_MAIL_ENABLED with no host is a switch that promises something the
 // config cannot deliver, so it is a startup error rather than a silent no-op.
 func TestLoadMailRejectsInvalid(t *testing.T) {
@@ -236,35 +252,43 @@ func TestLoadMailRejectsInvalid(t *testing.T) {
 			"BELEGAPP_MAIL_ENABLED": "true", "BELEGAPP_MAIL_HOST": "imap.example.de/belege",
 			"BELEGAPP_MAIL_USERNAME": "belege@example.de",
 		}, "BELEGAPP_MAIL_HOST"},
-		{"port zero", map[string]string{
+		{"port zero", withMailPassword(map[string]string{
 			"BELEGAPP_MAIL_ENABLED": "true", "BELEGAPP_MAIL_HOST": "imap.example.de",
 			"BELEGAPP_MAIL_USERNAME": "belege@example.de", "BELEGAPP_MAIL_PORT": "0",
-		}, "BELEGAPP_MAIL_PORT"},
-		{"port too large", map[string]string{
+		}), "BELEGAPP_MAIL_PORT"},
+		{"port too large", withMailPassword(map[string]string{
 			"BELEGAPP_MAIL_ENABLED": "true", "BELEGAPP_MAIL_HOST": "imap.example.de",
 			"BELEGAPP_MAIL_USERNAME": "belege@example.de", "BELEGAPP_MAIL_PORT": "70000",
-		}, "BELEGAPP_MAIL_PORT"},
-		{"no tls", map[string]string{
+		}), "BELEGAPP_MAIL_PORT"},
+		{"no tls", withMailPassword(map[string]string{
 			"BELEGAPP_MAIL_ENABLED": "true", "BELEGAPP_MAIL_HOST": "imap.example.de",
 			"BELEGAPP_MAIL_USERNAME": "belege@example.de", "BELEGAPP_MAIL_TLS": "false",
-		}, "plaintext IMAP is not supported"},
-		{"both tls", map[string]string{
+		}), "plaintext IMAP is not supported"},
+		{"both tls", withMailPassword(map[string]string{
 			"BELEGAPP_MAIL_ENABLED": "true", "BELEGAPP_MAIL_HOST": "imap.example.de",
 			"BELEGAPP_MAIL_USERNAME": "belege@example.de", "BELEGAPP_MAIL_STARTTLS": "true",
-		}, "must not both be true"},
-		{"starttls on 993", map[string]string{
+		}), "must not both be true"},
+		{"starttls on 993", withMailPassword(map[string]string{
 			"BELEGAPP_MAIL_ENABLED": "true", "BELEGAPP_MAIL_HOST": "imap.example.de",
 			"BELEGAPP_MAIL_USERNAME": "belege@example.de", "BELEGAPP_MAIL_TLS": "false",
 			"BELEGAPP_MAIL_STARTTLS": "true",
-		}, "implicit TLS port"},
-		{"empty inbox", map[string]string{
+		}), "implicit TLS port"},
+		{"empty inbox", withMailPassword(map[string]string{
 			"BELEGAPP_MAIL_ENABLED": "true", "BELEGAPP_MAIL_HOST": "imap.example.de",
 			"BELEGAPP_MAIL_USERNAME": "belege@example.de", "BELEGAPP_MAIL_INBOX": "   ",
-		}, "BELEGAPP_MAIL_INBOX"},
-		{"done folder equals inbox", map[string]string{
+		}), "BELEGAPP_MAIL_INBOX"},
+		{"done folder equals inbox", withMailPassword(map[string]string{
 			"BELEGAPP_MAIL_ENABLED": "true", "BELEGAPP_MAIL_HOST": "imap.example.de",
 			"BELEGAPP_MAIL_USERNAME": "belege@example.de", "BELEGAPP_MAIL_DONE_FOLDER": "inbox",
-		}, "must differ"},
+		}), "must differ"},
+		{"enabled without password", map[string]string{
+			"BELEGAPP_MAIL_ENABLED": "true", "BELEGAPP_MAIL_HOST": "imap.example.de",
+			"BELEGAPP_MAIL_USERNAME": "belege@example.de",
+		}, "BELEGAPP_MAIL_PASSWORD"},
+		{"enabled with blank password", map[string]string{
+			"BELEGAPP_MAIL_ENABLED": "true", "BELEGAPP_MAIL_HOST": "imap.example.de",
+			"BELEGAPP_MAIL_USERNAME": "belege@example.de", "BELEGAPP_MAIL_PASSWORD": "   ",
+		}, "BELEGAPP_MAIL_PASSWORD"},
 		{"interval zero", map[string]string{"BELEGAPP_MAIL_INTERVAL": "0"}, "BELEGAPP_MAIL_INTERVAL"},
 		{"interval negative", map[string]string{"BELEGAPP_MAIL_INTERVAL": "-5m"}, "BELEGAPP_MAIL_INTERVAL"},
 		{"attachment cap zero", map[string]string{"BELEGAPP_MAIL_MAX_ATTACHMENTS_PER_MESSAGE": "0"}, "BELEGAPP_MAIL_MAX_ATTACHMENTS_PER_MESSAGE"},
@@ -292,6 +316,7 @@ func TestLoadMailStartTLS(t *testing.T) {
 	t.Setenv("BELEGAPP_MAIL_HOST", "mail.internal")
 	t.Setenv("BELEGAPP_MAIL_PORT", "143")
 	t.Setenv("BELEGAPP_MAIL_USERNAME", "belege")
+	t.Setenv("BELEGAPP_MAIL_PASSWORD", "app-password")
 	t.Setenv("BELEGAPP_MAIL_TLS", "false")
 	t.Setenv("BELEGAPP_MAIL_STARTTLS", "true")
 	cfg, err := Load()
@@ -323,6 +348,64 @@ func TestLoadMailPasswordFile(t *testing.T) {
 	_, err = Load()
 	if err == nil || !strings.Contains(err.Error(), "both set") {
 		t.Fatalf("got %v, want both-set error", err)
+	}
+}
+
+// The required-password check has to run after applySecretFiles, or the
+// documented secret-file setup would be rejected as a setup without a password.
+func TestLoadMailPasswordFromFileSatisfiesTheRequirement(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BELEGAPP_MAIL_ENABLED", "true")
+	t.Setenv("BELEGAPP_MAIL_HOST", "imap.example.de")
+	t.Setenv("BELEGAPP_MAIL_USERNAME", "belege@example.de")
+	path := filepath.Join(t.TempDir(), "imap_password")
+	if err := os.WriteFile(path, []byte("app-password-from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BELEGAPP_MAIL_PASSWORD_FILE", path)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.MailConfigured() {
+		t.Fatal("mail intake is not configured from a secret file")
+	}
+	if cfg.MailPassword != "app-password-from-file" {
+		t.Fatalf("mail password %q", cfg.MailPassword)
+	}
+}
+
+// A secret file that is empty or only whitespace leaves nothing set, and that is
+// the same misconfiguration as no password at all.
+func TestLoadMailPasswordFileWithBlankBodyIsRefused(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BELEGAPP_MAIL_ENABLED", "true")
+	t.Setenv("BELEGAPP_MAIL_HOST", "imap.example.de")
+	t.Setenv("BELEGAPP_MAIL_USERNAME", "belege@example.de")
+	path := filepath.Join(t.TempDir(), "imap_password")
+	if err := os.WriteFile(path, []byte("\n \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BELEGAPP_MAIL_PASSWORD_FILE", path)
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "BELEGAPP_MAIL_PASSWORD") {
+		t.Fatalf("got %v, want the missing-password error", err)
+	}
+}
+
+// Mail switched off with no password anywhere is the default of an instance that
+// does not use the intake, so it must keep loading.
+func TestLoadMailDisabledNeedsNoPassword(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BELEGAPP_MAIL_HOST", "imap.example.de")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MailConfigured() {
+		t.Fatal("mail intake is configured while it is switched off")
 	}
 }
 

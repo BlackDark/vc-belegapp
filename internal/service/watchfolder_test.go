@@ -691,21 +691,22 @@ func TestPollWatchFolderEnqueuesOnEveryTick(t *testing.T) {
 		svc.PollWatchFolder(ctx)
 		close(done)
 	}()
-	time.Sleep(400 * time.Millisecond)
+	// The file is only read once it has been unchanged across two consecutive
+	// polls, so the image — not a job row — is what ends the wait. It also
+	// proves the polls really ran and took the file, where a fixed sleep only
+	// hoped they had and fails on a loaded CI box.
+	waitFor(t, 10*time.Second, "the watched file to become an image", func() bool {
+		return countBilder(t, svc) == 1
+	})
+	if n := countJobs(t, svc, "watch"); n < 2 {
+		t.Fatalf("watch jobs %d, want at least 2", n)
+	}
 	cancel()
 	<-done
 	<-queueDone
 
-	var n int
-	if err := svc.DB.Read.QueryRow(`SELECT COUNT(*) FROM jobs WHERE typ = 'watch'`).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	if n < 2 {
-		t.Fatalf("watch jobs %d after 400ms at a 30ms interval", n)
-	}
-	// The polls actually ran and took the file.
-	if countBilder(t, svc) != 1 {
-		t.Fatalf("images %d after the ticker ran", countBilder(t, svc))
+	if got := countBilder(t, svc); got != 1 {
+		t.Fatalf("images %d after the ticker ran", got)
 	}
 }
 
@@ -725,17 +726,10 @@ func TestPollWatchFolderSkipsTickWhileAJobIsOpen(t *testing.T) {
 		svc.PollWatchFolder(poller)
 		close(done)
 	}()
-	time.Sleep(300 * time.Millisecond)
+	// Wait for the first row, then watch five whole intervals for a second one.
+	jobsStayAt(t, svc, "watch", 1, svc.WatchInterval)
 	cancel()
 	<-done
-
-	var n int
-	if err := svc.DB.Read.QueryRow(`SELECT COUNT(*) FROM jobs WHERE typ = 'watch'`).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	if n != 1 {
-		t.Fatalf("watch jobs %d while one was open, want 1", n)
-	}
 }
 
 // The stable/forget pair has to be race-free: the poll runs on a job worker

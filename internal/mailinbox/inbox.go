@@ -64,9 +64,15 @@ const (
 	KindPermanent = "permanent"
 )
 
-// Error is a mailbox failure with a retry class and a short German text. The
-// text reaches the log and the job row; it never carries the password, the
-// server response body, or a mail body.
+// Error is a mailbox failure with a retry class and a short German text.
+//
+// Error() returns Text and nothing else. That text reaches the log and the
+// jobs.fehler column, and the wrapped transport error names what it names:
+// net.OpError carries "dial tcp imap.example.de:993", and an *imap.Error
+// carries the server response verbatim. Neither belongs in a row that outlives
+// the process, and internal/notify already refuses exactly this for the webhook
+// address (RedactURL, asError). The cause stays reachable through Unwrap for
+// errors.Is and errors.As; it is deliberately absent from the printed form.
 type Error struct {
 	Kind string
 	Text string
@@ -78,13 +84,11 @@ func (e *Error) Error() string {
 	if e == nil {
 		return ""
 	}
-	if e.Err != nil {
-		return e.Text + ": " + e.Err.Error()
-	}
 	return e.Text
 }
 
-// Unwrap exposes the underlying transport error.
+// Unwrap exposes the underlying transport error to errors.Is and errors.As.
+// Nothing prints it: the job row and the log see Error(), which is Text alone.
 func (e *Error) Unwrap() error { return e.Err }
 
 // RetryKind is what the job queue reads to decide between another attempt and

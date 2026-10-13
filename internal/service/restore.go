@@ -113,7 +113,7 @@ func (s *Service) withRestore(ctx context.Context, fn func() (ImportResult, erro
 	s.importing.Store(true)
 	defer s.importing.Store(false)
 	// Stop workers before the safety snapshot so the copy matches the file we replace.
-	s.stopJobs()
+	s.stopJobsForRestore()
 	defer s.startJobs()
 	return fn()
 }

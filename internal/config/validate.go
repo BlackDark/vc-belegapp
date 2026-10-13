@@ -105,6 +105,9 @@ func (c *Config) validate() error {
 	if c.JobWorkers < 1 {
 		return fmt.Errorf("BELEGAPP_JOB_WORKERS must be at least 1")
 	}
+	if c.JobTimeout <= 0 {
+		return fmt.Errorf("BELEGAPP_JOB_TIMEOUT must be positive")
+	}
 	if c.UploadMaxBytes < 1 {
 		return fmt.Errorf("BELEGAPP_UPLOAD_MAX_BYTES must be at least 1")
 	}
@@ -232,6 +235,15 @@ func (c *Config) validateLLM() error {
 // have to be complete and the transport has to be encrypted — this application
 // has no plaintext mode, because the password would otherwise cross the network
 // in the clear.
+//
+// The password is checked here and not where the variable is read, because
+// Load runs applySecretFiles first: by the time this runs, BELEGAPP_MAIL_PASSWORD
+// already holds the trimmed contents of BELEGAPP_MAIL_PASSWORD_FILE, so a file
+// based setup passes exactly like an inline one. An empty password is a
+// startup error rather than a runtime one — the server would answer
+// AUTHENTICATIONFAILED, which classifies as a terminal auth failure, and the
+// queue would grow one permanently failed job per interval without ever saying
+// that nothing had been set at all.
 func (c *Config) validateMail() error {
 	c.MailAllowedSender = splitList(c.MailSendersRaw)
 	if c.MailInterval <= 0 {
@@ -257,6 +269,9 @@ func (c *Config) validateMail() error {
 	}
 	if strings.TrimSpace(c.MailUsername) == "" {
 		return fmt.Errorf("BELEGAPP_MAIL_USERNAME is required when BELEGAPP_MAIL_ENABLED is true")
+	}
+	if strings.TrimSpace(c.MailPassword) == "" {
+		return fmt.Errorf("BELEGAPP_MAIL_PASSWORD (oder BELEGAPP_MAIL_PASSWORD_FILE) ist erforderlich, wenn BELEGAPP_MAIL_ENABLED gesetzt ist; ohne Passwort lehnt der Postfachserver jede Anmeldung ab und der Abruf scheitert dauerhaft")
 	}
 	if c.MailTLS && c.MailStartTLS {
 		return fmt.Errorf("BELEGAPP_MAIL_TLS and BELEGAPP_MAIL_STARTTLS must not both be true")

@@ -39,6 +39,8 @@ services:
       # Receipt intake by e-mail, off unless BELEGAPP_MAIL_ENABLED is true.
       # Create the `imap_password` secret and uncomment the three lines below to
       # turn it on; a dedicated account with an app password is the right setup.
+      # The password is required while the intake is on — the process refuses
+      # to start without it.
       # BELEGAPP_MAIL_ENABLED: "true"
       # BELEGAPP_MAIL_HOST: imap.example.de
       # BELEGAPP_MAIL_USERNAME: belege@example.de

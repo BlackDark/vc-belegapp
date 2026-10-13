@@ -58,7 +58,7 @@ Gemäß ADR 0001–0006:
 PWA (SolidJS, eingebettet) ─HTTPS─ Reverse Proxy ─ belegapp (Go, :8080, UID 65532)
                                                    ├─ SQLite /data/belegapp.db (WAL)
                                                    ├─ BlobStore: fs (/data/blobs) | s3
-                                                   ├─ Job-Worker (Belegerkennung, Datenexport)
+                                                   ├─ Job-Worker (Belegerkennung, IMAP-Abruf, überwachter Ordner, Prüfbenachrichtigung, Datenexport)
                                                    ├─ typst (PDF/A-2b)
                                                    ├─ LLM (OpenAI-kompatibel, extern/lokal)
                                                    └─ OIDC-Provider (optional, primärer Login)
@@ -77,7 +77,8 @@ internal/rules           Jahresregeln, Validierung, amtliche Voreinstellungen
 internal/holidays        Feiertagskalender (Wrapper um rickar/cal/v2/de + Eigene Feiertage)
 internal/storage         BlobStore-Interface, fs, s3
 internal/recognition      ReceiptExtractor-Interface, openaicompat, fake
-internal/notify           ausgehender Webhook (Prüfbenachrichtigung), Retry-Klassen
+internal/mailinbox        IMAP-Quelle (Fetch/MarkIngested/Move), Fehlerklassen ohne Host und Servertext
+internal/notify           ausgehender Webhook (Prüfbenachrichtigung), Retry-Klassen, Redaktion der Adresse
 internal/imaging         Decode, Orientierung, Resize, JPEG-Encode, Thumbnail
 internal/pdf             PDFRenderer-Interface, typstcli, Templates + Fonts (embed)
 internal/export          Monatsexport (PDF/CSV/ZIP), Datenexport/-import
@@ -303,6 +304,12 @@ Trigger `BEFORE UPDATE` und `BEFORE DELETE` → `RAISE(ABORT, 'append-only')`. K
 | erstellt_am, geaendert_am | TEXT NOT NULL | |
 
 Beim Start werden Jobs im Status `laeuft` auf `wartend` zurückgesetzt. Worker-Parallelität: `BELEGAPP_JOB_WORKERS`.
+
+Alle fünf Job-Typen teilen sich denselben FIFO-Pool. Damit kein Hintergrundjob die sichtbare Belegerkennung verdrängen kann, laufen `mail`, `watch`, `notify` und `datenexport` **je Typ höchstens ein Job gleichzeitig**; `erkennung` bleibt unbeschränkt. Ein Job, dessen Typ die Grenze erreicht hat, wartet nicht auf einen Slot, sondern wird unangetastet zurückgestellt (`versuche` unverändert, `naechster_versuch_am` kurz vorgezogen), damit der nächste wartende Job sofort geholt werden kann. Die Zurückstellung wird auch während des Herunterfahrens geschrieben: ein in `laeuft` stehengebliebener Job zählt für die Abrufe als „ein Auftrag ist offen“ (`CountOpenJobsByPayload` zählt `wartend` **und** `laeuft`) und würde den Eingang sonst bis zum nächsten Start stilllegen.
+
+Die Frist `BELEGAPP_JOB_TIMEOUT` gilt für die drei **Hintergrundannahmen** `mail`, `watch` und `notify`. Läuft einer dieser Jobs darüber, endet er mit `Zeitüberschreitung` im `fehler`-Feld und wird wie jeder andere vorübergehende Fehler höchstens dreimal versucht. **`erkennung` und `datenexport` bekommen keine Frist aus der Queue.** Die Erkennung begrenzt ihren Modellaufruf bereits durch `BELEGAPP_LLM_TIMEOUT`. Der Datenexport dagegen ist **nicht** eine Hintergrundannahme, sondern vom Benutzer ausgelöst: jemand hat den Knopf gedrückt und wartet auf den Download. Ein vollständiger Export snapshotted die Datenbank, rendert jedes Belegbild und zippt alles — das dauert bei einer großen Datenmenge legitim länger als jede sinnvolle Obergrenze, und eine Frist dort ergäbe drei Versuche und einen dauerhaft fehlgeschlagenen Download. Er bleibt von der Parallelitätsgrenze erfasst (höchstens ein Export gleichzeitig); eine Frist je Typ gibt es nicht, `BELEGAPP_JOB_TIMEOUT` setzt eine Zahl für die drei Eingänge und sonst nichts.
+
+Eine Frist beendet keine blockierende Dateisystem-I/O. Ein `watch`-Job auf einem hängenden NFS-/SMB-Mount kehrt erst zurück, wenn der Mount antwortet, und behält bis dahin seinen Worker. Genau deshalb gilt die Parallelitätsgrenze: sie begrenzt, wie viele Jobs eines Typs gleichzeitig festhängen können. Hängen mehrere Typen gleichzeitig fest, kann der Pool trotzdem voll sein. Ein geordnetes Herunterfahren wartet deshalb höchstens 15 Sekunden auf die Worker und protokolliert, wenn sie nicht enden; die von ihnen gehaltenen Jobs setzt der nächste Start ohnehin auf `wartend` zurück. Ein laufender Datenimport wartet dagegen unbegrenzt, weil er gleich die Datenbankdatei ersetzt.
 
 **`system`** (Key/Value): `secret_key` (32 Byte, beim ersten Start erzeugt, falls `BELEGAPP_SECRET_KEY` leer), `instanz_id`.
 
@@ -543,7 +550,9 @@ Die Monatsansicht prüft `P_BILDER_VOLLSTAENDIG` per Stat (Blob vorhanden, Grö�
 | POST | `/datenimport` | `{import_token, bestaetigung: "ERSETZEN"}` → `200`, alle Sitzungen beendet |
 | POST | `/erkennung/test` | Testaufruf mit eingebautem Beispielbild → `{ok, modell, dauer_ms, fehler?}` |
 | GET | `/werte` | amtliche Referenzwerte aus `internal/rules`: `{sachbezugswerte: [{jahr, fruehstueck_cent, mittag_cent, abend_cent, status}], kirchensteuer: [{land, satz_bp}], bundeslaender: [code], mahlzeiten: [{code, label}], bezugsorte: [{code, label}]}` (Listen in fester Reihenfolge) |
-| GET | `/system/info` | `{version, commit, build_datum, storage_backend, erkennung_konfiguriert, oidc, typst_version}` |
+| GET | `/system/info` | `{version, commit, build_datum, storage_backend, erkennung_konfiguriert, erkennung_problem, oidc, typst_version, llm_model, llm_base_url, llm_enabled, mail_aktiv, notify_aktiv, watch_aktiv}` |
+
+`mail_aktiv`, `notify_aktiv` und `watch_aktiv` sagen je **nur**, ob der betreffende Eingang läuft — also ob `MailConfigured()`, `NotifyConfigured()` bzw. `WatchConfigured()` zutreffen, also ob ein Ticker läuft und eine Jobzeile entsteht. Ohne sie kann ein Betreiber einen gepollten von einem defekten Eingang nicht unterscheiden. Sie sind **ausschließlich boolesch**: Postfach-Host, Port, Ordner, Webhook-Adresse und Token gehören nicht in diese Antwort, und die Abfrage enthält für keinen der drei Werte ein Feld, in dem sie stehen könnten.
 
 ### 8.2.1 IMAP-Abruf (kein Endpunkt)
 
@@ -556,6 +565,12 @@ Ablauf je Nachricht, in dieser Reihenfolge:
 3. Bildanhänge (JPEG, PNG, WebP) laufen einzeln durch `SaveBild`, das Größengrenze, Formatliste und den `erkennung`-Job übernimmt. PDF und andere Typen werden übersprungen und protokolliert; es gibt keinen Rasterizer (siehe 1.2).
 4. Erst danach wird die Nachricht abgeschlossen: `\Seen` plus Marker `$Belegapp`, bei gesetztem `BELEGAPP_MAIL_DONE_FOLDER` zusätzlich `MOVE`. **Es wird nie `\Deleted` gesetzt und nie expungiert**; ein Server ohne `MOVE` liefert für den Ordner ein `permanent`, die Bilder sind trotzdem gespeichert.
 5. Ein Fehler vor Schritt 4 lässt die Nachricht unmarkiert, der nächste Abruf wiederholt sie. Dadurch entstehen bei einem Abbruch oder Retry keine Dubletten.
+
+**Das Passwort ist Pflicht, sobald der Abruf eingeschaltet ist** (`BELEGAPP_MAIL_PASSWORD` oder `BELEGAPP_MAIL_PASSWORD_FILE`; die Datei wird vor der Prüfung gelesen, beide Wege sind gleichwertig). Ohne Passwort antwortet der Server auf jede Anmeldung mit `AUTHENTICATIONFAILED`, das ist ein `auth` und damit ein Endfehler — die Queue legte dann im Takt von `BELEGAPP_MAIL_INTERVAL` dauerhaft eine endgültig fehlgeschlagene Jobzeile an und spräche von *abgelehnten* statt von *nicht gesetzten* Zugangsdaten. Der Start bricht stattdessen ab.
+
+**Die Bilder sind unzugewiesene Belegbilder, und `BELEGAPP_UNASSIGNED_IMAGE_TTL` (Vorgabe `24h`) räumt sie ungeprüft ab.** Dieser Eingang erzeugt genau die Bildart, die die Kehrseite trifft. Damit ist **der Webhook die einzige Benachrichtigung, die ein Betreiber über einen per E-Mail eingegangenen Beleg bekommt**: ohne `BELEGAPP_NOTIFY_WEBHOOK_URL` verschwindet das Bild, ohne dass irgendwo etwas gesagt hätte — spätestens `BELEGAPP_UNASSIGNED_IMAGE_TTL` plus eine Stunde, weil `Sweep` stündlich läuft und ein Bild nie vor Ablauf der TTL, aber bis zu einer Stunde danach entfernt wird (bei der Vorgabe `24h` also nach 24 bis 25 Stunden). Die weitergeleitete Nachricht bleibt zwar im Postfach (sie wird markiert und verschoben, nie gelöscht), aber die gespeicherten Bilder sind die Arbeitskopien — und die sind weg.
+
+Der Fehlertext eines Abrufs nennt **weder Postfach-Host noch Adresse noch die Serverantwort**; er ist ein fester deutscher Satz und trägt nur die Retry-Klasse (`internal/notify` verfährt für die Webhook-Adresse genauso). Postfach-Host und -Ordner stehen im Log des Abrufs, nicht in `jobs.fehler`.
 
 ### 8.2.2 Prüfbenachrichtigung (kein Endpunkt)
 
@@ -924,7 +939,8 @@ Alle Variablen mit Präfix `BELEGAPP_`; für Geheimnisse zusätzlich `<NAME>_FIL
 | `BELEGAPP_LLM_REASONING_EFFORT` | `` | z. B. `low`; leer = nicht senden |
 | `BELEGAPP_LLM_TIMEOUT` | `60s` | |
 | `BELEGAPP_LLM_MAX_IMAGE_PX` | `1600` | |
-| `BELEGAPP_JOB_WORKERS` | `2` | |
+| `BELEGAPP_JOB_WORKERS` | `2` | Worker-Pool für alle Job-Typen |
+| `BELEGAPP_JOB_TIMEOUT` | `10m` | Frist für einen Job der Hintergrundannahme (`mail`, `watch`, `notify`); nicht für `erkennung` (eigene `BELEGAPP_LLM_TIMEOUT`) und nicht für `datenexport` (vom Benutzer ausgelöst) |
 | `BELEGAPP_UPLOAD_MAX_BYTES` | `15728640` | 15 MiB |
 | `BELEGAPP_IMPORT_MAX_BYTES` | `4294967296` | 4 GiB (Datenimport) |
 | `BELEGAPP_UNASSIGNED_IMAGE_TTL` | `24h` | |
@@ -936,7 +952,7 @@ Alle Variablen mit Präfix `BELEGAPP_`; für Geheimnisse zusätzlich `<NAME>_FIL
 | `BELEGAPP_MAIL_HOST` | `` | Pflicht bei aktivem Abruf |
 | `BELEGAPP_MAIL_PORT` | `993` | `993` = implizites TLS, `143` mit STARTTLS |
 | `BELEGAPP_MAIL_USERNAME` | `` | Pflicht bei aktivem Abruf |
-| `BELEGAPP_MAIL_PASSWORD(_FILE)` | `` | App-Passwort eines eigenen Postfach-Kontos; nie im Log |
+| `BELEGAPP_MAIL_PASSWORD(_FILE)` | `` | App-Passwort eines eigenen Postfach-Kontos; Pflicht bei aktivem Abruf, aus beiden Quellen gleichwertig; nie im Log |
 | `BELEGAPP_MAIL_TLS` | `true` | Implizites TLS. Genau eines von `BELEGAPP_MAIL_TLS` und `BELEGAPP_MAIL_STARTTLS` muss gesetzt sein; Klartext-IMAP wird abgelehnt |
 | `BELEGAPP_MAIL_STARTTLS` | `false` | STARTTLS auf Port `143` |
 | `BELEGAPP_MAIL_INBOX` | `INBOX` | abgefragter Ordner, idealerweise nur für Belege |

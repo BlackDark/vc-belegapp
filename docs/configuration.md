@@ -46,7 +46,8 @@ Every variable uses the prefix `BELEGAPP_`. A secret may be set as `BELEGAPP_<NA
 | `BELEGAPP_LLM_REASONING_EFFORT` | empty | Sent only when set, for example `low` |
 | `BELEGAPP_LLM_TIMEOUT` | `60s` | Recognition request timeout |
 | `BELEGAPP_LLM_MAX_IMAGE_PX` | `1600` | Long edge of the JPEG sent to the model |
-| `BELEGAPP_JOB_WORKERS` | `2` | Parallel recognition jobs |
+| `BELEGAPP_JOB_WORKERS` | `2` | Parallel jobs in the worker pool. Each of `mail`, `watch`, `notify` and `datenexport` still runs at most one job at a time, so the recognition keeps the rest |
+| `BELEGAPP_JOB_TIMEOUT` | `10m` | Deadline for one background intake job: `mail`, `watch`, `notify`. A job that runs past it fails with `Zeitüberschreitung`. It does not interrupt blocking filesystem I/O. Not applied to `erkennung`, which bounds its own model call with `BELEGAPP_LLM_TIMEOUT`, and not to `datenexport`, which a person is waiting for |
 | `BELEGAPP_UPLOAD_MAX_BYTES` | `15728640` | Image upload limit, 15 MiB |
 | `BELEGAPP_IMPORT_MAX_BYTES` | `4294967296` | Datenimport limit, 4 GiB |
 | `BELEGAPP_UNASSIGNED_IMAGE_TTL` | `24h` | Delete unassigned Belegbilder, then blobs nothing still references |
@@ -58,7 +59,7 @@ Every variable uses the prefix `BELEGAPP_`. A secret may be set as `BELEGAPP_<NA
 | `BELEGAPP_MAIL_HOST` | empty | IMAP host, for example `imap.example.de`. Required when the intake is on |
 | `BELEGAPP_MAIL_PORT` | `993` | IMAP port. `993` is implicit TLS, `143` with `BELEGAPP_MAIL_STARTTLS` |
 | `BELEGAPP_MAIL_USERNAME` | empty | Login name. Required when the intake is on |
-| `BELEGAPP_MAIL_PASSWORD`, `BELEGAPP_MAIL_PASSWORD_FILE` | empty | App password of a dedicated mail account. Never logged |
+| `BELEGAPP_MAIL_PASSWORD`, `BELEGAPP_MAIL_PASSWORD_FILE` | empty | App password of a dedicated mail account. Required when the intake is on, from either source. Never logged |
 | `BELEGAPP_MAIL_TLS` | `true` | Implicit TLS. Exactly one of `BELEGAPP_MAIL_TLS` and `BELEGAPP_MAIL_STARTTLS` has to be true; plaintext IMAP is refused |
 | `BELEGAPP_MAIL_STARTTLS` | `false` | Upgrade a plain connection with STARTTLS. Then use port `143` |
 | `BELEGAPP_MAIL_INBOX` | `INBOX` | Polled folder, ideally one only receipts are forwarded to |
@@ -76,6 +77,17 @@ Every variable uses the prefix `BELEGAPP_`. A secret may be set as `BELEGAPP_<NA
 <!-- config-env-end -->
 
 `serve` requires `BELEGAPP_AUTH_PASSWORD_HASH` or `BELEGAPP_OIDC_ISSUER_URL`. OIDC also needs a client id and at least one allowlist (`sub` or verified email). Incomplete OIDC or S3 configuration is a startup error. `migrate` does not need authentication. Discovery retries in the background; until it succeeds, `/api/v1/auth/config` reports OIDC as off and the process still serves password login. Redirect URI, allowlists, and the reverse proxy are in [deployment.md](deployment.md).
+
+## The job queue
+
+All five job types share one FIFO pool of `BELEGAPP_JOB_WORKERS` workers. Two rules keep a job from taking the pool away from the recognition, which is the work a user waits for:
+
+- Each of `mail`, `watch`, `notify` and `datenexport` runs at most one job at a time. A second job of the same type waits in the queue instead of taking a second worker; `erkennung` is not capped and always has the pool.
+- `BELEGAPP_JOB_TIMEOUT` is the deadline for the three **background intakes** — `mail`, `watch`, `notify`. A job that runs past it fails with `Zeitüberschreitung` and is retried like any other transient failure — three attempts, then `fehler`.
+
+The data export is deliberately outside that deadline. It is **user-initiated**: somebody pressed the button in the UI and is waiting for the download. A full export snapshots the database, renders every Belegbild and zips the lot, which on a large dataset legitimately runs past any ceiling an operator would call generous — and a deadline there would fail the export three times over and leave a permanently failed download behind. There is **no per-type override**: `BELEGAPP_JOB_TIMEOUT` sets one number for the three intake types and nothing else, so it cannot be raised for `datenexport`. The only things bounding that job are the one-job cap, the storage it writes to, and the shutdown context.
+
+What the deadline does **not** do: interrupt blocking filesystem I/O. On a hung NFS or SMB mount a `watch` job stays inside its read until the mount answers, and it keeps the one worker it claimed. That is why the cap exists: a stuck intake can occupy at most one worker per type, so a stuck `watch` still leaves the rest of the pool to `erkennung`. Several types stuck at once — a hung mount and, say, a webhook server that accepts connections and never answers — can still fill the pool. Restarting does not help either: the job is re-queued and hangs again. Take the intake offline (`BELEGAPP_WATCH_FOLDER=` to disable the folder poll) until the mount is back. The same applies to a data export on a slow mount: it keeps its one worker, and a stop waits at most 15 seconds for it before logging that the workers did not end.
 
 ## Ollama
 
@@ -118,6 +130,16 @@ One poll reads at most `BELEGAPP_MAIL_MAX_MESSAGES_PER_POLL` messages; the rest 
 The two flags serve one purpose and are written together: `\Seen` is what the operator sees in their own client, and `$Belegapp` is what the poll searches on. The keyword is authoritative because a phone mail client marks a receipt read when it previews the picture, and that must not hide it from the intake. A server that keeps no keywords answers `BAD` to the probe, and the poll then searches on `\Seen` alone. A server that searches on the keyword but refuses to store it is downgraded to `\Seen` for the rest of the process, and the poll reports the failed store instead of claiming a success that did not happen.
 
 Transport: `BELEGAPP_MAIL_TLS` (implicit TLS, the default) or `BELEGAPP_MAIL_STARTTLS` on port `143`. Exactly one of the two must be set — there is no plaintext mode, because the password would cross the network in the clear.
+
+`BELEGAPP_MAIL_PASSWORD` is required while `BELEGAPP_MAIL_ENABLED` is `true`, either inline or through `BELEGAPP_MAIL_PASSWORD_FILE`; the file is read before the check, so the secret-file setup passes exactly like an inline one. Without it the server answers `AUTHENTICATIONFAILED` on every attempt, which counts as a permanent error: the job queue would then add one permanently failed job per `BELEGAPP_MAIL_INTERVAL`, forever, with a message about credentials being *refused* rather than none being *set*. The process refuses to start instead.
+
+### What happens to the images afterwards
+
+`BELEGAPP_UNASSIGNED_IMAGE_TTL` (default `24h`) deletes an unassigned Belegbild that was never reviewed. Mail is not exempt from it: this intake produces exactly the kind of image it sweeps — a receipt that arrives as an unassigned Belegbild and waits in *Offene Bilder*.
+
+That makes the **review webhook the only notice an operator gets that a receipt arrived by mail**. With `BELEGAPP_NOTIFY_WEBHOOK_URL` unset, an image e-mailed in is destroyed by the sweep and nothing anywhere said it was there. Not exactly after the TTL: `Sweep` runs **hourly**, so an image survives at least the TTL and at most the TTL plus one hour. With the default `24h` that is somewhere between 24 and 25 hours. Set the webhook, or lower the TTL, or watch *Offene Bilder* — the mail intake moves the message out of the folder, so the mail client is no longer a second copy to fall back on.
+
+The forwarded message stays in the mailbox in any case: it is flagged, never deleted, and moved to `BELEGAPP_MAIL_DONE_FOLDER` when that is set.
 
 ## Receipt intake from a watched folder
 

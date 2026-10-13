@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/emersion/go-imap/v2/imapserver"
 	"github.com/emersion/go-imap/v2/imapserver/imapmemserver"
+	"github.com/emersion/go-message/mail"
 )
 
 // memServer is go-imap's own in-memory server reached over an in-process
@@ -586,12 +588,14 @@ func TestIMAPWrongPasswordIsAuth(t *testing.T) {
 	}
 }
 
-// A server that is not there is transient, so the queue tries again.
+// A server that is not there is transient, so the queue tries again. The
+// address the dial failed on is not part of that answer: it would be stored in
+// the job row and printed in the log.
 func TestIMAPDialFailureIsTransient(t *testing.T) {
 	ctx := context.Background()
-	src := New(Options{Host: "pipe", Port: 993, Username: "belege", Password: "x", Timeout: 50 * time.Millisecond})
+	src := New(Options{Host: "imap.example.de", Port: 993, Username: "belege", Password: "x", Timeout: 50 * time.Millisecond})
 	src.dial = func(string, *imapclient.Options) (*imapclient.Client, error) {
-		return nil, &net.OpError{Op: "dial", Err: fmt.Errorf("connection refused")}
+		return nil, &net.OpError{Op: "dial", Err: fmt.Errorf("dial tcp imap.example.de:993: connection refused")}
 	}
 	_, err := src.Fetch(ctx, 10)
 	var call *Error
@@ -600,6 +604,9 @@ func TestIMAPDialFailureIsTransient(t *testing.T) {
 	}
 	if call.RetryKind() != KindTransient {
 		t.Fatalf("retry kind %q, want %q", call.RetryKind(), KindTransient)
+	}
+	if strings.Contains(err.Error(), "imap.example.de") {
+		t.Fatalf("the error repeats the mailbox address: %s", err.Error())
 	}
 }
 
@@ -843,6 +850,283 @@ func TestClassify(t *testing.T) {
 	}
 	if classify(nil) != nil {
 		t.Fatal("a nil error must stay nil")
+	}
+}
+
+// The printed form of a mailbox failure is what the job row and the log get, so
+// it must name neither the mailbox nor anything the server sent back. The
+// retry class is the part an operator and the queue actually need, and it is
+// asserted here on the class rather than on the text.
+func TestClassifyRedactsHostAndServerText(t *testing.T) {
+	const host = "imap.example.de"
+	const secret = "app-password"
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			// What a dial failure actually looks like: net.OpError names the
+			// address it could not reach.
+			name: "connection failure",
+			err: &net.OpError{
+				Op: "dial", Net: "tcp",
+				Addr: &net.TCPAddr{IP: net.IPv4(203, 0, 113, 9), Port: 993},
+				Err:  &net.DNSError{Err: "i/o timeout", Name: host},
+			},
+			want: KindTransient,
+		},
+		{
+			// The login is refused; the server explains itself in Text.
+			name: "auth failure",
+			err:  &imap.Error{Type: imap.StatusResponseTypeNo, Code: imap.ResponseCodeAuthenticationFailed, Text: "[" + secret + "] Invalid credentials"},
+			want: KindAuth,
+		},
+	}
+	needles := []string{host, "203.0.113.9", ":993", secret, "Invalid credentials"}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := classify(tt.err)
+			var call *Error
+			if !asError(got, &call) {
+				t.Fatalf("error %v carries no retry class", got)
+			}
+			if call.RetryKind() != tt.want {
+				t.Fatalf("retry kind %q, want %q", call.RetryKind(), tt.want)
+			}
+			text := got.Error()
+			for _, needle := range needles {
+				if strings.Contains(text, needle) {
+					t.Errorf("error text carries %q: %s", needle, text)
+				}
+			}
+			if text == "" {
+				t.Error("the error text is empty; the operator learns nothing")
+			}
+		})
+	}
+	// The cause stays reachable for errors.Is and errors.As, so the wrapping is
+	// a redaction of the printed form rather than a loss of the failure.
+	wrapped := classify(context.DeadlineExceeded)
+	if !errors.Is(wrapped, context.DeadlineExceeded) {
+		t.Errorf("the cause is no longer reachable: %v", wrapped)
+	}
+}
+
+// The needles every redacted mailbox failure must not carry: the host and port
+// the connection was made to, the address it came from, the password, and the
+// server's own words.
+var leakNeedles = []string{
+	"imap.example.de", "203.0.113.9", ":993", "app-password",
+	"tk_geheim", "Cannot store", "PRIVACYREQUIRED", "mailbox is locked",
+}
+
+// The STORE path is the one the redaction was first added for and then missed
+// twice: probeKeyword classifies, the two warns next to sess.store did not.
+// A server that answers BAD says plenty in that response — the account, the
+// connection, sometimes the flag — and *imap.Error.Error() prints it verbatim.
+// The three sites on the path are asserted together here, because the failure
+// mode is a site somebody adds and forgets.
+func TestIMAPStoreFailureLogsNoServerText(t *testing.T) {
+	const password = "app-password"
+	tests := []struct {
+		name string
+		wrap func(imapserver.Session) imapserver.Session
+		// fails reports whether MarkIngested is expected to report a failure.
+		// With a server that searches the keyword and refuses to store it,
+		// neither marker lands and the poll has to say so.
+		fails bool
+	}{
+		{
+			// The probe said the keyword works and the store contradicts it:
+			// the warn right before the \Seen fallback.
+			name:  "searches the keyword, refuses to store it",
+			wrap:  leakyKeywordStoreOnly,
+			fails: true,
+		},
+		{
+			// The probe already said the server keeps no keyword. The store
+			// still carries one, fails, and warns on the other branch.
+			name:  "keeps no keyword at all",
+			wrap:  leakyServerWithoutKeywords,
+			fails: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			ms := newMemServerWith(t, "belege", password, nil, tt.wrap)
+			ms.createMailbox(t, "INBOX")
+			uid := ms.appendMessage(t, "INBOX", messageWithImage(
+				"kasse@example.de", "Bon", pngBytes(), "image/png", "b.png", nil))
+
+			var buf bytes.Buffer
+			src := ms.source(t, Options{Password: password, Log: slog.New(slog.NewJSONHandler(&buf, nil))})
+			messages, err := src.Fetch(ctx, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(messages) != 1 {
+				t.Fatalf("fetched %d messages", len(messages))
+			}
+
+			err = src.MarkIngested(ctx, []imap.UID{uid})
+			if tt.fails {
+				var call *Error
+				if !asError(err, &call) {
+					t.Fatalf("error %v carries no retry class", err)
+				}
+				if call.RetryKind() != KindTransient {
+					t.Fatalf("retry kind %q, want %q", call.RetryKind(), KindTransient)
+				}
+			} else if err != nil {
+				t.Fatalf("the \\Seen fallback has to carry the poll: %v", err)
+			}
+			assertNoLeak(t, "the log", buf.String())
+			if err != nil {
+				assertNoLeak(t, "the error", err.Error())
+			}
+			// The operator still learns that something happened: the warnings are
+			// the only place this shows up at all.
+			if !strings.Contains(buf.String(), "mail server") {
+				t.Errorf("the failed store was not reported at all: %s", buf.String())
+			}
+		})
+	}
+}
+
+// leakyKeywordStoreOnly searches the keyword happily and refuses to store one,
+// the way an inconsistent server behaves, and says far too much when it does.
+func leakyKeywordStoreOnly(session imapserver.Session) imapserver.Session {
+	return leakyStore{Session: session, searchKeyword: true}
+}
+
+// leakyServerWithoutKeywords also refuses to search on a keyword, which is the
+// branch where the poll warns after the store rather than before the fallback.
+func leakyServerWithoutKeywords(session imapserver.Session) imapserver.Session {
+	return leakyStore{Session: session, searchKeyword: false}
+}
+
+type leakyStore struct {
+	imapserver.Session
+	searchKeyword bool
+}
+
+func (s leakyStore) Search(kind imapserver.NumKind, criteria *imap.SearchCriteria, options *imap.SearchOptions) (*imap.SearchData, error) {
+	if !s.searchKeyword {
+		for _, flag := range append(append([]imap.Flag{}, criteria.Flag...), criteria.NotFlag...) {
+			if !strings.HasPrefix(string(flag), `\`) {
+				return nil, &imap.Error{
+					Type: imap.StatusResponseTypeBad,
+					Text: "Unsupported search key FLAG for mailbox is locked at imap.example.de:993",
+				}
+			}
+		}
+	}
+	return s.Session.Search(kind, criteria, options)
+}
+
+func (s leakyStore) Store(w *imapserver.FetchWriter, numSet imap.NumSet, flags *imap.StoreFlags, options *imap.StoreOptions) error {
+	for _, flag := range flags.Flags {
+		if !strings.HasPrefix(string(flag), `\`) {
+			return &imap.Error{
+				Type: imap.StatusResponseTypeBad,
+				Code: "PRIVACYREQUIRED",
+				Text: fmt.Sprintf("Cannot store %s: mailbox is locked at imap.example.de:993 from 203.0.113.9 (tk_geheim)", flag),
+			}
+		}
+	}
+	return s.Session.Store(w, numSet, flags, options)
+}
+
+// The same guarantee for the other path that reaches a warning with a raw
+// error: a message this poll could not read. The parser quotes the offending
+// header line back, and the header line is attacker-controlled mail content, so
+// the warning has to be the fixed sentence instead.
+func TestIMAPSkippedMessageLogsNoMailBody(t *testing.T) {
+	ctx := context.Background()
+	ms := newMemServer(t, "belege", "app-password", nil)
+	ms.createMailbox(t, "INBOX")
+	// The second line has no colon, so ReadHeader refuses the whole message and
+	// names the line in its complaint. Everything a leak would carry is on it.
+	ms.appendMessage(t, "INBOX", []byte(
+		"From: kasse@example.de\r\n"+
+			"betreff imap.example.de:993 app-password tk_geheim 203.0.113.9\r\n"+
+			"Subject: Bon\r\n\r\n"+
+			"Beleg im Anhang.\r\n"))
+
+	var buf bytes.Buffer
+	src := ms.source(t, Options{Log: slog.New(slog.NewJSONHandler(&buf, nil))})
+	messages, err := src.Fetch(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("an unreadable message was ingested: %+v", messages)
+	}
+	assertNoLeak(t, "the log", buf.String())
+	if !strings.Contains(buf.String(), "mail message skipped") {
+		t.Errorf("the skipped message was not reported: %s", buf.String())
+	}
+}
+
+// A broken attachment read reaches the log through internal/service/mailbox.go,
+// so Attachment.Err is printed there and has to be redacted at the source: a
+// read that died inside the literal reports the connection it died on.
+func TestReadAttachmentRedactsTheTransferFailure(t *testing.T) {
+	raw := messageWithImage("kasse@example.de", "Bon", pngBytes(), "image/png", "b.png", nil)
+	header := attachmentHeader(t, raw)
+
+	att := readAttachment(header, failedTransfer{}, 1<<20)
+	if att.Err == nil {
+		t.Fatal("a transfer that failed has to be reported")
+	}
+	assertNoLeak(t, "the attachment error", att.Err.Error())
+	// The cause stays reachable, so the redaction costs no diagnosis.
+	var opErr *net.OpError
+	if !errors.As(att.Err, &opErr) {
+		t.Errorf("the cause is no longer reachable: %v", att.Err)
+	}
+}
+
+// attachmentHeader pulls the one attachment out of a multipart message.
+func attachmentHeader(t *testing.T, raw []byte) *mail.AttachmentHeader {
+	t.Helper()
+	reader, err := mail.CreateReader(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			t.Fatal("the message has no attachment")
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if header, ok := part.Header.(*mail.AttachmentHeader); ok {
+			return header
+		}
+	}
+}
+
+// failedTransfer is what the connection does halfway through a literal.
+type failedTransfer struct{}
+
+func (failedTransfer) Read([]byte) (int, error) {
+	return 0, &net.OpError{
+		Op: "read", Net: "tcp",
+		Addr: &net.TCPAddr{IP: net.IPv4(203, 0, 113, 9), Port: 993},
+		Err:  fmt.Errorf("use of closed network connection at imap.example.de:993"),
+	}
+}
+
+func assertNoLeak(t *testing.T, what, text string) {
+	t.Helper()
+	for _, needle := range leakNeedles {
+		if strings.Contains(text, needle) {
+			t.Errorf("%s carries %q: %s", what, needle, text)
+		}
 	}
 }
 

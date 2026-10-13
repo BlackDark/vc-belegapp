@@ -21,6 +21,11 @@ import (
 )
 
 // Info is static process metadata for /system/info.
+//
+// The three intake switches are booleans and nothing more. An operator has to
+// be able to tell a polling instance from a broken one, and a host name, a
+// folder path or a webhook address would turn this endpoint into a place where
+// operator infrastructure leaks into anything that can call it.
 type Info struct {
 	Version               string
 	Commit                string
@@ -31,6 +36,9 @@ type Info struct {
 	LLMBaseURL            string
 	LLMEnabled            bool
 	TypstVersion          string
+	MailEnabled           bool
+	NotifyEnabled         bool
+	WatchEnabled          bool
 }
 
 // API serves authenticated JSON endpoints.
@@ -298,6 +306,12 @@ func (a *API) systemInfo(w http.ResponseWriter, r *http.Request) {
 		"llm_model":              a.Info.LLMModel,
 		"llm_base_url":           a.Info.LLMBaseURL,
 		"llm_enabled":            a.Info.LLMEnabled,
+		// The three intake switches. Booleans only: no host, no folder, no
+		// webhook address, no token — those would say more about the operator
+		// than an operator needs from this endpoint.
+		"mail_aktiv":   a.Info.MailEnabled,
+		"notify_aktiv": a.Info.NotifyEnabled,
+		"watch_aktiv":  a.Info.WatchEnabled,
 	})
 }
 

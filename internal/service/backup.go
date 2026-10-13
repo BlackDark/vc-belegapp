@@ -100,12 +100,67 @@ func (s *Service) startJobs() {
 	}()
 }
 
-func (s *Service) stopJobs() {
+// jobShutdownTimeout is how long a graceful stop waits for the workers before
+// it gives up on them.
+//
+// A handler that notices its context ends promptly — in milliseconds, because
+// the same context already cancelled the IMAP command or the HTTP request it is
+// waiting on. What it cannot be interrupted is blocking filesystem I/O, which is
+// the whole reason the per-type concurrency cap in internal/jobs exists. One
+// hung read per type is therefore enough to hold a worker past any reasonable
+// shutdown, and an operator who stops the process deserves to see it stop.
+//
+// Fifteen seconds is comfortably longer than a handler that honours its context
+// needs and comfortably shorter than the stop grace period a container
+// orchestrator gives the process, so the warning below is actually seen before
+// the runtime sends SIGKILL. Nothing is lost by going early: the job the stuck
+// worker held stays in laeuft and the next start resets it to wartend, where it
+// starts over.
+const jobShutdownTimeout = 15 * time.Second
+
+// stopJobs cancels the queue and waits for the workers, but never longer than
+// the stop timeout.
+func (s *Service) stopJobs() { s.stopJobsWithin(s.stopTimeout()) }
+
+// stopTimeout is the bound stopJobs applies. It is a field only so the test can
+// shorten it; the process never sets it.
+func (s *Service) stopTimeout() time.Duration {
+	if s.jobStopTimeout > 0 {
+		return s.jobStopTimeout
+	}
+	return jobShutdownTimeout
+}
+
+// stopJobsForRestore stops the workers with no limit at all. Only the restore
+// path may use it: it is about to replace the database file underneath them, and
+// a worker still holding the old file would write into one nobody reads any
+// more. The operator asked for an import on a running instance, so waiting for
+// it is the answer and not a defect.
+func (s *Service) stopJobsForRestore() { s.stopJobsWithin(0) }
+
+func (s *Service) stopJobsWithin(limit time.Duration) {
 	if s.jobCancel == nil {
 		return
 	}
 	s.jobCancel()
-	s.jobWG.Wait()
+	if limit <= 0 {
+		s.jobWG.Wait()
+		s.jobCancel = nil
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		s.jobWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(limit):
+		if s.Log != nil {
+			s.Log.Warn("job workers did not stop in time; the jobs they hold are reset on the next start",
+				"wartezeit_s", int(limit.Seconds()))
+		}
+	}
 	s.jobCancel = nil
 }
 

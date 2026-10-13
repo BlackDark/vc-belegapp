@@ -16,6 +16,7 @@ import (
 
 	"github.com/emersion/go-imap/v2"
 
+	"github.com/BlackDark/vc-belegapp/internal/db"
 	"github.com/BlackDark/vc-belegapp/internal/jobs"
 	"github.com/BlackDark/vc-belegapp/internal/mailinbox"
 	"github.com/BlackDark/vc-belegapp/internal/recognition"
@@ -761,18 +762,14 @@ func TestPollMailboxEnqueuesOnEveryTick(t *testing.T) {
 		svc.PollMailbox(ctx)
 		close(done)
 	}()
-	time.Sleep(250 * time.Millisecond)
+	// Waiting for the second row ends the test when the ticker has done what it
+	// is about; a fixed sleep only hoped it had, and fails on a loaded CI box.
+	waitFor(t, 10*time.Second, "a second mail job", func() bool {
+		return countJobs(t, svc, "mail") >= 2
+	})
 	cancel()
 	<-done
 	<-queueDone
-
-	var n int
-	if err := svc.DB.Read.QueryRow(`SELECT COUNT(*) FROM jobs WHERE typ = 'mail'`).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	if n < 2 {
-		t.Fatalf("mail jobs %d after 250ms at a 30ms interval", n)
-	}
 }
 
 // An open mail job makes the next tick a no-op. Without that a server outage
@@ -791,17 +788,10 @@ func TestPollMailboxSkipsTickWhileAJobIsOpen(t *testing.T) {
 		svc.PollMailbox(poller)
 		close(done)
 	}()
-	time.Sleep(200 * time.Millisecond)
+	// Wait for the first row, then watch five whole intervals for a second one.
+	jobsStayAt(t, svc, "mail", 1, svc.MailInterval)
 	cancel()
 	<-done
-
-	var n int
-	if err := svc.DB.Read.QueryRow(`SELECT COUNT(*) FROM jobs WHERE typ = 'mail'`).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	if n != 1 {
-		t.Fatalf("mail jobs %d over 200ms with one open job", n)
-	}
 }
 
 // SaveBild enqueues the recognition job itself, so the intake must not do it a
@@ -838,6 +828,74 @@ func TestIngestMailboxDoesNotEnqueueRecognitionTwice(t *testing.T) {
 // attachment, or the decoded message as a whole, only the fields listed below.
 // (The password is asserted where it actually lives, in the IMAP source, by
 // TestIMAPWrongPasswordIsAuth.)
+// The job row outlives the process and is the one place a mailbox failure is
+// stored as text. The source classifies before it returns, so what the queue
+// writes is the fixed German sentence — the server's own words, the host, the
+// port and the password stay behind Error.Unwrap where nothing prints them.
+// This asserts the end of that chain on the row itself, not on the error value.
+func TestMailJobRowCarriesNoServerText(t *testing.T) {
+	// The shape a real poll produces: a classified *Error around the raw
+	// *imap.Error, whose Text is the server response verbatim.
+	box := &mailinbox.Fake{FetchErr: &mailinbox.Error{
+		Kind: mailinbox.KindTransient,
+		Text: "Der Mailserver antwortet mit einem Fehler",
+		Err: &imap.Error{
+			Type: imap.StatusResponseTypeNo,
+			Text: "mailbox is locked [PRIVACYREQUIRED] at imap.example.de:993 " +
+				"from 203.0.113.9 (app-password, tk_geheim)",
+		},
+	}}
+	svc := openService(t, recognition.Fake{})
+	svc.Mail = box
+	var buf syncBuffer
+	svc.Log = slog.New(slog.NewJSONHandler(&buf, nil))
+	startJobs(t, svc)
+
+	id, err := svc.Jobs.Enqueue(context.Background(), "mail", mailJobPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := waitJobStatus(t, svc, id, "fehler")
+	reason, _ := row.Fehler.(string)
+	needles := []string{
+		"imap.example.de", "203.0.113.9", ":993", "app-password",
+		"tk_geheim", "mailbox is locked", "PRIVACYREQUIRED",
+	}
+	for _, needle := range needles {
+		if strings.Contains(reason, needle) {
+			t.Errorf("jobs.fehler carries %q: %s", needle, reason)
+		}
+		if strings.Contains(buf.String(), needle) {
+			t.Errorf("the log carries %q: %s", needle, buf.String())
+		}
+	}
+	// The operator still gets something to read: a row with an empty reason
+	// would say nothing at all about why the poll failed.
+	if strings.TrimSpace(reason) == "" {
+		t.Errorf("jobs.fehler is empty; the operator learns nothing")
+	}
+}
+
+// waitJobStatus blocks until the job row reaches status and returns it.
+func waitJobStatus(t *testing.T, svc *Service, id, status string) db.Job {
+	t.Helper()
+	deadline := time.Now().Add(4 * time.Second)
+	var last db.Job
+	for time.Now().Before(deadline) {
+		row, err := db.New(svc.DB.Read).GetJob(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		last = row
+		if row.Status == status {
+			return row
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	t.Fatalf("job status %q, want %q (%v)", last.Status, status, last.Fehler)
+	return last
+}
+
 func TestIngestMailboxLogCarriesSenderAndUIDOnly(t *testing.T) {
 	ctx := context.Background()
 	var buf syncBuffer

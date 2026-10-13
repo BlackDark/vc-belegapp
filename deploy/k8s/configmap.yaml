@@ -9,8 +9,9 @@ data:
   BELEGAPP_STORAGE_BACKEND: fs
   BELEGAPP_COOKIE_SECURE: "true"
   # Receipt intake by e-mail. Uncomment together with BELEGAPP_MAIL_PASSWORD in
-  # the belegapp secret; without BELEGAPP_MAIL_ENABLED no ticker runs and no
-  # mail job is created. Use a dedicated account with an app password.
+  # the belegapp secret; the password is required while the intake is on and the
+  # process refuses to start without it. Without BELEGAPP_MAIL_ENABLED no ticker
+  # runs and no mail job is created. Use a dedicated account with an app password.
   # BELEGAPP_MAIL_ENABLED: "true"
   # BELEGAPP_MAIL_HOST: imap.example.de
   # BELEGAPP_MAIL_USERNAME: belege@example.de

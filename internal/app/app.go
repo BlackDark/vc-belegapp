@@ -169,6 +169,10 @@ func Serve(ctx context.Context, opt Options) error {
 		DB:      database,
 		Workers: opt.Config.JobWorkers,
 		Log:     opt.Log,
+		// All five job types share this pool, so the policy is what keeps a
+		// stuck folder poll or mailbox poll from taking both workers away from
+		// the recognition.
+		Policy:  jobs.DefaultPolicy(opt.Config.JobTimeout),
 		Handle:  svc.HandleJob,
 		OnRetry: svc.JobRetry,
 		OnFail:  svc.JobFail,
@@ -226,17 +230,12 @@ func Serve(ctx context.Context, opt Options) error {
 		Trusted:      opt.Config.TrustedProxies,
 		UploadMax:    opt.Config.UploadMaxBytes,
 		ImportMax:    opt.Config.ImportMaxBytes,
-		Info: api.Info{
-			Version:               opt.Version.Version,
-			Commit:                opt.Version.Commit,
-			BuildDatum:            opt.Version.Date,
-			StorageBackend:        opt.Config.StorageBackend,
-			ErkennungKonfiguriert: opt.Config.LLMEnabled && !opt.Config.OpenAIKeyMissing(),
-			LLMModel:              opt.Config.LLMModel,
-			LLMBaseURL:            opt.Config.LLMBaseURL,
-			LLMEnabled:            opt.Config.LLMEnabled,
-			TypstVersion:          typst.Version,
-		},
+		Info: api.NewInfo(opt.Config, api.Build{
+			Version:      opt.Version.Version,
+			Commit:       opt.Version.Commit,
+			BuildDatum:   opt.Version.Date,
+			TypstVersion: typst.Version,
+		}),
 	}
 
 	var metricsReg *prometheus.Registry

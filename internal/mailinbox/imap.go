@@ -3,7 +3,6 @@ package mailinbox
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"io"
 	"log/slog"
 	"mime"
@@ -181,11 +180,17 @@ func (s *session) probeKeyword() {
 		s.keyword = true
 		return
 	}
-	switch retryKind(err) {
+	// classify first: the raw error is an *imap.Error and carries the server
+	// response verbatim, which warn promises never to log. The retry class it
+	// picks is the same one a plain caller reads, because classify maps an
+	// unrecognised server answer to transient — what retryKind returns for the
+	// raw error too.
+	failure := classify(err)
+	switch retryKind(failure) {
 	case KindPermanent, KindAuth:
-		s.src.warn("mail server keeps no keyword flag; the poll falls back to \\Seen", "err", err)
+		s.src.warn("mail server keeps no keyword flag; the poll falls back to \\Seen", "err", failure)
 	default:
-		s.src.warn("mail server does not answer the keyword probe", "err", err)
+		s.src.warn("mail server does not answer the keyword probe", "err", failure)
 	}
 }
 
@@ -259,7 +264,13 @@ func (s *session) read(uids []imap.UID) ([]Message, error) {
 		}
 		parsed, err := s.parseMessage(msg)
 		if err != nil {
-			s.src.warn("mail message skipped", "err", err)
+			// classify first, for the same reason as probeKeyword: the MIME
+			// parser quotes the line of the mail body that tripped it, and a
+			// literal reader that dies mid-transfer reports a net.OpError
+			// naming host and port. parseMessage itself already answers with a
+			// fixed German sentence, so this only makes the guarantee hold at
+			// the log site itself rather than at the producer.
+			s.src.warn("mail message skipped", "err", classify(err))
 			continue
 		}
 		out = append(out, parsed)
@@ -270,6 +281,12 @@ func (s *session) read(uids []imap.UID) ([]Message, error) {
 // parseMessage reads the sender and the attachments out of one FETCH response.
 // The subject is read for the log line only; it is never stored and never sent
 // anywhere but the local log.
+//
+// Every error it returns is an *Error, which means the printed form is a fixed
+// German sentence and never anything the mail or the server sent: the MIME
+// parser quotes the offending line back, and a literal that dies mid-transfer
+// reports a net.OpError with host and port in it. The cause stays reachable
+// through Unwrap for errors.Is and errors.As.
 //
 // The body section arrives as a live stream that is only valid until the next
 // item is pulled, so the message is parsed inside the item loop rather than
@@ -294,26 +311,27 @@ func (s *session) parseMessage(msg *imapclient.FetchMessageData) (Message, error
 		}
 	}
 	if out.UID == 0 {
-		return out, fmt.Errorf("FETCH returned no UID")
+		return out, transient("Der Abruf lieferte keine Nachrichtennummer", nil)
 	}
 	if !seen {
-		return out, fmt.Errorf("FETCH returned no body")
+		return out, transient("Der Abruf lieferte keinen Nachrichtentext", nil)
 	}
 	if out.From == "" {
-		return out, fmt.Errorf("mail has no From header")
+		return out, transient("Die Nachricht hat keinen Absender", nil)
 	}
 	return out, nil
 }
 
-// readBody fills the sender and the attachments from one message body.
+// readBody fills the sender and the attachments from one message body. Every
+// error it returns is an *Error for the reason parseMessage gives.
 func readBody(out *Message, literal io.Reader, maxBytes int64) error {
 	reader, err := mail.CreateReader(literal)
 	if err != nil {
-		return fmt.Errorf("mail body is not readable: %w", err)
+		return transient("Der Nachrichtentext ist nicht lesbar", err)
 	}
 	from, err := reader.Header.AddressList("From")
 	if err != nil || len(from) == 0 {
-		return fmt.Errorf("mail has no From header")
+		return transient("Die Nachricht hat keinen lesbaren Absender", err)
 	}
 	out.From = from[0].Address
 	if subject, err := reader.Header.Text("Subject"); err == nil {
@@ -325,7 +343,7 @@ func readBody(out *Message, literal io.Reader, maxBytes int64) error {
 			return nil
 		}
 		if err != nil {
-			return fmt.Errorf("mail part is not readable: %w", err)
+			return transient("Ein Nachrichtenteil ist nicht lesbar", err)
 		}
 		header, ok := part.Header.(*mail.AttachmentHeader)
 		if !ok {
@@ -363,7 +381,10 @@ func readAttachment(header *mail.AttachmentHeader, body io.Reader, limit int64) 
 	}
 	data, err := io.ReadAll(io.LimitReader(body, limit+1))
 	if err != nil {
-		out.Err = fmt.Errorf("attachment is not readable: %w", err)
+		// The same rule as every other failure on this path: the caller logs
+		// this one (internal/service/mailbox.go), and a read that died inside
+		// the literal reports the connection it died on.
+		out.Err = transient("Der Anhang ist nicht lesbar", err)
 		return out
 	}
 	out.Data = data
@@ -444,7 +465,10 @@ func (s *IMAP) MarkIngested(ctx context.Context, uids []imap.UID) error {
 		}
 		if sess.keyword {
 			sess.src.keywordUnusable = true
-			sess.src.warn("mail server refuses to store the keyword flag although it searches on it; the poll falls back to \\Seen for the rest of this process", "err", err)
+			// classify first: this is an *imap.Error straight out of sess.store
+			// and its Error() is "Type Code: Text", the server response
+			// verbatim. The warn below promises that never reaches the log.
+			sess.src.warn("mail server refuses to store the keyword flag although it searches on it; the poll falls back to \\Seen for the rest of this process", "err", classify(err))
 			if fallback := sess.store(uids, []imap.Flag{imap.FlagSeen}); fallback != nil {
 				return classify(fallback)
 			}
@@ -452,8 +476,9 @@ func (s *IMAP) MarkIngested(ctx context.Context, uids []imap.UID) error {
 		}
 		// The server will not keep the keyword. Fall back to \Seen, which is
 		// then also what the next poll searches on, so the message is not
-		// re-ingested forever.
-		sess.src.warn("mail server refused the keyword flag; only \\Seen is set", "err", err)
+		// re-ingested forever. classify first, as above: the raw error is the
+		// server response.
+		sess.src.warn("mail server refused the keyword flag; only \\Seen is set", "err", classify(err))
 		return classify(sess.store(uids, []imap.Flag{imap.FlagSeen}))
 	})
 }
