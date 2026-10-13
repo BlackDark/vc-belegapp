@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/BlackDark/vc-belegapp/internal/export"
 )
 
 func TestLoadDefaults(t *testing.T) {
@@ -153,6 +155,226 @@ func TestLoadIdleLongerThanAbsolute(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+// A Datenexport download is served from the job row, so the prune must not
+// delete that row while the file is still being offered. Retention below the
+// download window is a configuration that works until a user presses the export
+// button, which is why it is refused at startup instead of documented.
+//
+// The boundary is the other half: exactly the download window is the shortest
+// window in which no download can outlive its job, so it has to load.
+func TestLoadRejectsRetentionBelowDownloadTTL(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		retention string
+		wantLoad  bool
+	}{
+		{"default", "", true},
+		{"one second short", "23h59m59s", false},
+		{"an hour short", "23h", false},
+		{"the boundary", export.DownloadTTL.String(), true},
+		{"longer", "30h", true},
+		{"the documented default", "168h", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			clearEnv(t)
+			if tt.retention != "" {
+				t.Setenv("BELEGAPP_JOB_RETENTION", tt.retention)
+			}
+			cfg, err := Load()
+			if !tt.wantLoad {
+				if err == nil {
+					t.Fatalf("retention %s loaded, want refusal", tt.retention)
+				}
+				// The message has to name the variable and the reason: this
+				// text is what an operator reads in the container log, and the
+				// reason is not the obvious one. German, like the rest.
+				for _, want := range []string{"BELEGAPP_JOB_RETENTION", "Download-Frist", export.DownloadTTL.String()} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("error %q does not mention %q", err, want)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("retention %s refused: %v", tt.retention, err)
+			}
+			if tt.retention != "" {
+				want, err := time.ParseDuration(tt.retention)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if cfg.JobRetention != want {
+					t.Errorf("retention %s, want %s", cfg.JobRetention, want)
+				}
+			}
+		})
+	}
+}
+
+// The retention is checked against the same constant the archive is written and
+// swept with. If that ever becomes configurable, this test is the one that has
+// to be reworked — and it should be, because then the two are not one number
+// any more.
+func TestRetentionIsCheckedAgainstTheArchiveLifetime(t *testing.T) {
+	if export.DownloadTTL != 24*time.Hour {
+		t.Fatalf("export.DownloadTTL is %s; the documentation and the tests say 24h", export.DownloadTTL)
+	}
+	clearEnv(t)
+	// One nanosecond below the lifetime is the shortest refusal there is.
+	t.Setenv("BELEGAPP_JOB_RETENTION", (export.DownloadTTL - time.Nanosecond).String())
+	if _, err := Load(); err == nil {
+		t.Fatal("retention one nanosecond below the download window loaded")
+	}
+	t.Setenv("BELEGAPP_JOB_RETENTION", export.DownloadTTL.String())
+	if _, err := Load(); err != nil {
+		t.Fatalf("retention at the download window refused: %v", err)
+	}
+}
+
+// The per-type deadline has one property the global variable cannot have: an
+// explicit 0 must reach the policy as 0 and mean "no deadline", rather than
+// being read as "nothing was set" and falling back to BELEGAPP_JOB_TIMEOUT.
+// That is why Config holds a pointer and JobTimeoutOverrides keeps the entry.
+func TestLoadPerTypeJobTimeout(t *testing.T) {
+	t.Run("unset leaves the global alone", func(t *testing.T) {
+		clearEnv(t)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.JobTimeout != 10*time.Minute {
+			t.Fatalf("global timeout %s", cfg.JobTimeout)
+		}
+		overrides := cfg.JobTimeoutOverrides()
+		if len(overrides) != 0 {
+			t.Fatalf("overrides %v, want none", overrides)
+		}
+	})
+
+	t.Run("a value reaches the policy", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv("BELEGAPP_JOB_TIMEOUT_DATAEXPORT", "30m")
+		t.Setenv("BELEGAPP_JOB_TIMEOUT_WATCH", "90s")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		overrides := cfg.JobTimeoutOverrides()
+		if got := overrides["datenexport"]; got != 30*time.Minute {
+			t.Errorf("datenexport %s, want 30m", got)
+		}
+		if got := overrides["watch"]; got != 90*time.Second {
+			t.Errorf("watch %s, want 90s", got)
+		}
+		// A type nobody named is not in the map at all, so the policy gives it
+		// the global default rather than a zero.
+		if _, ok := overrides["mail"]; ok {
+			t.Error("mail is in the override map although nothing was set")
+		}
+		if cfg.JobTimeout != 10*time.Minute {
+			t.Errorf("global timeout %s, want the untouched 10m", cfg.JobTimeout)
+		}
+	})
+
+	t.Run("zero survives as an entry", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv("BELEGAPP_JOB_TIMEOUT_MAIL", "0")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		overrides := cfg.JobTimeoutOverrides()
+		value, ok := overrides["mail"]
+		if !ok {
+			t.Fatal("mail is missing from the override map; a 0 would fall back to the global")
+		}
+		if value != 0 {
+			t.Errorf("mail %s, want 0", value)
+		}
+	})
+
+	t.Run("every type has a variable", func(t *testing.T) {
+		if len(JobTimeoutTypes()) != len(jobTimeoutTypes) {
+			t.Fatalf("types %v, vars %v", JobTimeoutTypes(), jobTimeoutTypes)
+		}
+		for _, entry := range jobTimeoutTypes {
+			clearEnv(t)
+			t.Setenv(entry.name, "5m")
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("%s: %v", entry.name, err)
+			}
+			if got := cfg.JobTimeoutOverrides()[entry.typ]; got != 5*time.Minute {
+				t.Errorf("%s landed on %s as %s, want 5m", entry.name, entry.typ, got)
+			}
+		}
+	})
+}
+
+// A variable that names no job type has no field to land in, so env parsing
+// passes over it in silence. That is a typo the operator would only learn about
+// from a deadline that is not the one they set, so it is refused by name.
+func TestLoadRejectsBadPerTypeJobTimeout(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+		val  string
+		want string
+	}{
+		{"unknown type", "BELEGAPP_JOB_TIMEOUT_FOO", "5m", "BELEGAPP_JOB_TIMEOUT_FOO"},
+		{"misspelled type", "BELEGAPP_JOB_TIMEOUT_WATC", "5m", "BELEGAPP_JOB_TIMEOUT_WATC"},
+		{"trailing underscore", "BELEGAPP_JOB_TIMEOUT_", "5m", "BELEGAPP_JOB_TIMEOUT_"},
+		{"secret file form", "BELEGAPP_JOB_TIMEOUT_MAIL_FILE", "/run/secrets/deadline", "BELEGAPP_JOB_TIMEOUT_MAIL_FILE"},
+		{"unparseable duration", "BELEGAPP_JOB_TIMEOUT_MAIL", "bald", "BELEGAPP_JOB_TIMEOUT_MAIL"},
+		{"negative", "BELEGAPP_JOB_TIMEOUT_MAIL", "-1m", "BELEGAPP_JOB_TIMEOUT_MAIL"},
+		{"negative on a free type", "BELEGAPP_JOB_TIMEOUT_DATAEXPORT", "-30m", "BELEGAPP_JOB_TIMEOUT_DATAEXPORT"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv(tt.key, tt.val)
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("got %v, want substring %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// The message for an unknown type lists the types that exist: the name was what
+// was wrong, so the fix is a name.
+func TestUnknownTypeMessageListsTheTypes(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BELEGAPP_JOB_TIMEOUT_POST", "5m")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	for _, want := range []string{"MAIL", "WATCH", "NOTIFY", "ERKENNUNG", "DATAEXPORT"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not list %s", err, want)
+		}
+	}
+}
+
+// The scan of the environment catches BELEGAPP_JOB_TIMEOUT_<TYPE>_FILE, which is
+// the shape every other secret in this package takes. Refusing it is the right
+// answer — a duration is not a secret — but an operator who tried it has to be
+// told why, or the next thing they try is a value in the wrong place.
+func TestUnknownTypeMessageExplainsTheFileForm(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BELEGAPP_JOB_TIMEOUT_MAIL_FILE", "/run/secrets/deadline")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	for _, want := range []string{"BELEGAPP_JOB_TIMEOUT_MAIL_FILE", "no BELEGAPP_JOB_TIMEOUT__FILE form", "not a secret"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not say %q", err, want)
+		}
 	}
 }
 

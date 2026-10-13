@@ -5,9 +5,12 @@ package config
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net"
 	"os"
+	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -78,24 +81,37 @@ type Config struct {
 	// blocking filesystem I/O; the concurrency cap in internal/jobs is what
 	// bounds how many stuck jobs can hold the pool.
 	//
-	// Two job types are outside it and there is no per-type override to change
-	// that: the recognition, which bounds its own model call with
-	// BELEGAPP_LLM_TIMEOUT, and the data export, which a person is waiting for
-	// — it renders every Belegbild and zips the lot, and a ceiling there would
-	// fail a slow export on a large dataset three times and leave a permanently
-	// failed download behind.
+	// Two job types are outside it and only an operator can change that: the
+	// recognition, which bounds its own model call with BELEGAPP_LLM_TIMEOUT,
+	// and the data export, which a person is waiting for — it renders every
+	// Belegbild and zips the lot, and a ceiling there would fail a slow export
+	// on a large dataset three times and leave a failed job with no download
+	// behind. The five variables below name one job type each and override this
+	// one for it.
 	JobTimeout time.Duration `env:"BELEGAPP_JOB_TIMEOUT" envDefault:"10m"`
+	// The per-type deadlines. A pointer, not a duration, because an explicit 0
+	// has to survive the trip: 0 means "no deadline for this type" and is not
+	// the same answer as "nothing was configured", which falls back to
+	// JobTimeout. nil is the second one.
+	JobTimeoutErkennung   *time.Duration `env:"BELEGAPP_JOB_TIMEOUT_ERKENNUNG"`
+	JobTimeoutDatenexport *time.Duration `env:"BELEGAPP_JOB_TIMEOUT_DATAEXPORT"`
+	JobTimeoutMail        *time.Duration `env:"BELEGAPP_JOB_TIMEOUT_MAIL"`
+	JobTimeoutNotify      *time.Duration `env:"BELEGAPP_JOB_TIMEOUT_NOTIFY"`
+	JobTimeoutWatch       *time.Duration `env:"BELEGAPP_JOB_TIMEOUT_WATCH"`
 	// JobRetention is how long a finished queue row — fertig or fehler —
 	// stays in the jobs table. Rows that still owe work (wartend, laeuft) are
 	// never touched, whatever their age.
 	//
 	// The default is a week. It has to clear the two things a user can still
-	// be looking at: a Datenexport download is good for 24 h, and a job the
-	// UI polls while it waits stays readable for as long as it waits — a
-	// window shorter than that would turn "still running" into "Job nicht
-	// gefunden" for a slow export. A week is also short enough to matter: at
-	// the default 30 s watched-folder interval the queue would otherwise hold
-	// about a million rows a year, and this holds about twenty thousand.
+	// be looking at: a Datenexport download is good for export.DownloadTTL
+	// (24 h), and a job the UI polls while it waits stays readable for as
+	// long as it waits — a window shorter than that would turn "still running"
+	// into "Job nicht gefunden" for a slow export. That first constraint is
+	// enforced at startup rather than left as advice, because the export job
+	// row is where the download is served from.
+	// A week is also short enough to matter: at the default 30 s watched-folder
+	// interval the queue would otherwise hold about a million rows a year, and
+	// this holds about twenty thousand.
 	JobRetention         time.Duration `env:"BELEGAPP_JOB_RETENTION" envDefault:"168h"`
 	UploadMaxBytes       int64         `env:"BELEGAPP_UPLOAD_MAX_BYTES" envDefault:"15728640"`
 	ImportMaxBytes       int64         `env:"BELEGAPP_IMPORT_MAX_BYTES" envDefault:"4294967296"`
@@ -148,7 +164,7 @@ type Config struct {
 func Load() (Config, error) {
 	var cfg Config
 	if err := env.Parse(&cfg); err != nil {
-		return Config{}, fmt.Errorf("parse environment: %w", err)
+		return Config{}, fmt.Errorf("parse environment: %w", nameEnvFields(err))
 	}
 	if err := applySecretFiles(&cfg); err != nil {
 		return Config{}, err
@@ -157,6 +173,176 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// nameEnvFields rewrites the Go field names in an env parse error into the
+// environment variables they belong to.
+//
+// The library reports the field — "unable to parse duration ... on field
+// \"JobTimeoutMail\"" — but nobody sets a field, they set a variable, and the
+// operator has to be told which line of their compose file to fix. Every other
+// error in this package names the variable, so this one does too.
+func nameEnvFields(err error) error {
+	text := err.Error()
+	for _, field := range reflect.VisibleFields(reflect.TypeOf(Config{})) {
+		name := field.Tag.Get("env")
+		if name == "" {
+			continue
+		}
+		text = strings.ReplaceAll(text, `field "`+field.Name+`"`, `field "`+field.Name+`" (`+name+`)`)
+	}
+	return errors.New(text)
+}
+
+// jobTimeoutEnvPrefix is what a per-type deadline variable starts with. The
+// global BELEGAPP_JOB_TIMEOUT does not match it: that one carries no type and
+// stays the default for every type below.
+const jobTimeoutEnvPrefix = "BELEGAPP_JOB_TIMEOUT_"
+
+// jobTimeoutTypes are the job types a per-type deadline may name, in the order
+// the documentation lists them.
+//
+// The type strings are the values of jobs.typ, so they are written out here
+// rather than taken from internal/jobs: config is the leaf of the dependency
+// graph and the queue reads its values from here, never the other way round.
+// The cost is that the two lists could drift, and that is what the guard in
+// internal/jobs is for: its jobTypes slice is the one place a new type has to
+// be added on that side, and the test there walks that slice rather than a
+// literal of its own, so a type it knows and this table does not is caught.
+// A type this table names and the queue does not run is harmless — the entry
+// is only ever read as a map lookup — so drift in that direction needs no
+// guard.
+var jobTimeoutTypes = []struct {
+	typ  string
+	name string
+	// field reads the override out of a Config. A pointer, so "not set" and
+	// "set to zero" stay apart all the way to the policy.
+	field func(*Config) *time.Duration
+}{
+	{"erkennung", "BELEGAPP_JOB_TIMEOUT_ERKENNUNG", func(c *Config) *time.Duration { return c.JobTimeoutErkennung }},
+	{"datenexport", "BELEGAPP_JOB_TIMEOUT_DATAEXPORT", func(c *Config) *time.Duration { return c.JobTimeoutDatenexport }},
+	{"mail", "BELEGAPP_JOB_TIMEOUT_MAIL", func(c *Config) *time.Duration { return c.JobTimeoutMail }},
+	{"notify", "BELEGAPP_JOB_TIMEOUT_NOTIFY", func(c *Config) *time.Duration { return c.JobTimeoutNotify }},
+	{"watch", "BELEGAPP_JOB_TIMEOUT_WATCH", func(c *Config) *time.Duration { return c.JobTimeoutWatch }},
+}
+
+// JobTimeoutTypes are the job types BELEGAPP_JOB_TIMEOUT_<TYPE> may name, in
+// the order the documentation lists them.
+func JobTimeoutTypes() []string {
+	names := make([]string, 0, len(jobTimeoutTypes))
+	for _, entry := range jobTimeoutTypes {
+		names = append(names, entry.typ)
+	}
+	return names
+}
+
+// JobTimeoutVar is the per-type deadline variable for a job type, and whether
+// this package knows that type at all.
+//
+// internal/jobs uses it to check that every type it runs has a variable: the
+// type strings are written out here rather than imported from there, because
+// config is the leaf of the dependency graph. This lookup is how the two sides
+// are compared without either of them re-deriving the other's spelling.
+func JobTimeoutVar(typ string) (string, bool) {
+	for _, entry := range jobTimeoutTypes {
+		if entry.typ == typ {
+			return entry.name, true
+		}
+	}
+	return "", false
+}
+
+// JobTimeoutOverrides is the per-type deadline the job policy is built from.
+//
+// Only the types an operator actually named are in it, and an entry is there
+// even when its value is zero. That is what makes "0" mean "no deadline for
+// this type": the policy gives a listed type its own number and falls back to
+// the global one only for a type nobody named, so an explicit 0 cannot fall
+// through to JobTimeout. A nil map and an empty one mean the same thing.
+func (c Config) JobTimeoutOverrides() map[string]time.Duration {
+	overrides := make(map[string]time.Duration, len(jobTimeoutTypes))
+	for _, entry := range jobTimeoutTypes {
+		if value := entry.field(&c); value != nil {
+			overrides[entry.typ] = *value
+		}
+	}
+	return overrides
+}
+
+// validateJobTimeouts refuses a per-type deadline that is not one.
+//
+// A negative value is refused rather than read as "unbounded": a deadline below
+// zero is not a number of seconds, and the queue would silently treat it as no
+// deadline at all, which is the one answer an operator setting a negative value
+// did not ask for.
+//
+// An unknown type is refused rather than ignored. Every field of this struct is
+// read from a fixed variable name, so BELEGAPP_JOB_TIMEOUT_FOO has no field and
+// would otherwise be a typo that costs the operator a deadline they believed
+// they had set, with nothing anywhere saying so. The message names the types
+// that exist, because the name is the thing that was wrong.
+func (c *Config) validateJobTimeouts() error {
+	for _, entry := range jobTimeoutTypes {
+		if value := entry.field(c); value != nil && *value < 0 {
+			return fmt.Errorf("%s must not be negative, got %s", entry.name, *value)
+		}
+	}
+	known := make(map[string]bool, len(jobTimeoutTypes))
+	for _, entry := range jobTimeoutTypes {
+		known[strings.TrimPrefix(entry.name, jobTimeoutEnvPrefix)] = true
+	}
+	for _, name := range unknownJobTimeoutVars(known) {
+		return fmt.Errorf("%s names no job type; use BELEGAPP_JOB_TIMEOUT_<TYPE> with one of %s"+
+			" — there is no %s_FILE form, a deadline is not a secret",
+			name, strings.Join(jobTimeoutVarNames(), ", "), jobTimeoutEnvPrefix)
+	}
+	return nil
+}
+
+// jobTimeoutVarNames returns the part of each variable name after the prefix, in
+// the order the documentation lists them. It is what the error message offers,
+// so that it names variables the process actually reads.
+//
+// It is read off the declared name rather than derived from the type, because
+// the two do not always agree: the data export is BELEGAPP_JOB_TIMEOUT_DATAEXPORT
+// while its type is "datenexport". Deriving the suffix would send the operator
+// to a variable this process never reads.
+func jobTimeoutVarNames() []string {
+	names := make([]string, 0, len(jobTimeoutTypes))
+	for _, entry := range jobTimeoutTypes {
+		names = append(names, strings.TrimPrefix(entry.name, jobTimeoutEnvPrefix))
+	}
+	return names
+}
+
+// unknownJobTimeoutVars returns the first BELEGAPP_JOB_TIMEOUT_<X> in the
+// environment whose X is not a known job type.
+//
+// It reads the environment rather than the struct because the struct cannot see
+// a variable it has no field for — that absence is the whole problem. The
+// comparison is case sensitive on purpose: a variable name is one string, and
+// BELEGAPP_JOB_TIMEOUT_mail is a different variable from the one this reads.
+//
+// The scan also catches BELEGAPP_JOB_TIMEOUT_<TYPE>_FILE, which is refused on
+// purpose. Every other _FILE in this package exists so a secret can be handed
+// in from a mounted secret file, and a duration is not a secret: a deadline in
+// a file would be a second way to spell one the operator has to keep in sync
+// with their compose file, read by nobody. Refusing it says so in the message
+// rather than letting an operator who tried it wonder why their file was
+// ignored.
+func unknownJobTimeoutVars(known map[string]bool) []string {
+	var unknown []string
+	for _, entry := range os.Environ() {
+		name, _, ok := strings.Cut(entry, "=")
+		if !ok || !strings.HasPrefix(name, jobTimeoutEnvPrefix) {
+			continue
+		}
+		if !known[strings.TrimPrefix(name, jobTimeoutEnvPrefix)] {
+			unknown = append(unknown, name)
+		}
+	}
+	sort.Strings(unknown)
+	return unknown
 }
 
 // AuthConfigured reports whether password login or OIDC is configured.

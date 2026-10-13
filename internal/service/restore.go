@@ -352,7 +352,8 @@ func (s *Service) fetchBlob(ctx context.Context, key string) (string, error) {
 	return copyToTemp("belegapp-fetch-*.zip", rc)
 }
 
-// SweepExports deletes download archives older than 24h and staged imports older than 30min.
+// SweepExports deletes download archives past their download window
+// (export.DownloadTTL) and staged imports older than importTTL.
 func (s *Service) SweepExports(ctx context.Context) {
 	if s == nil || s.Store == nil {
 		return
@@ -362,7 +363,7 @@ func (s *Service) SweepExports(ctx context.Context) {
 		if strings.Contains(info.Key, "vor-import-") {
 			return nil
 		}
-		if info.ModTime.IsZero() || now.Sub(info.ModTime) > exportTTL {
+		if info.ModTime.IsZero() || now.Sub(info.ModTime) > export.DownloadTTL {
 			_ = s.Store.Delete(ctx, info.Key)
 		}
 		return nil

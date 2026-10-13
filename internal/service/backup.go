@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	exportTTL = 24 * time.Hour
+	// importTTL is how long a staged import archive waits to be restored.
 	importTTL = 30 * time.Minute
 )
 
@@ -210,7 +210,7 @@ func (s *Service) runDatenexport(ctx context.Context, job jobs.Job) (string, err
 	}
 	raw, err := json.Marshal(map[string]string{
 		"download_url": "/api/v1/datenexport/" + job.ID + "/datei",
-		"ablauf_am":    s.now().UTC().Add(exportTTL).Format(time.RFC3339),
+		"ablauf_am":    s.now().UTC().Add(export.DownloadTTL).Format(time.RFC3339),
 		"blob_key":     key,
 	})
 	if err != nil {
@@ -219,7 +219,8 @@ func (s *Service) runDatenexport(ctx context.Context, job jobs.Job) (string, err
 	return string(raw), nil
 }
 
-// OpenDatenexport opens a finished export that is still inside the 24h window.
+// OpenDatenexport opens a finished export that is still inside its download
+// window, export.DownloadTTL.
 func (s *Service) OpenDatenexport(ctx context.Context, jobID string) (Download, error) {
 	row, err := db.New(s.DB.Read).GetJob(ctx, jobID)
 	if isNoRows(err) {

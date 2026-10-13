@@ -171,8 +171,10 @@ func Serve(ctx context.Context, opt Options) error {
 		Log:     opt.Log,
 		// All five job types share this pool, so the policy is what keeps a
 		// stuck folder poll or mailbox poll from taking both workers away from
-		// the recognition.
-		Policy:  jobs.DefaultPolicy(opt.Config.JobTimeout),
+		// the recognition. The second argument is the per-type override, which
+		// config validated and kept separate from "unset" — an empty map leaves
+		// the defaults exactly as they were.
+		Policy:  jobs.DefaultPolicy(opt.Config.JobTimeout, opt.Config.JobTimeoutOverrides()),
 		Handle:  svc.HandleJob,
 		OnRetry: svc.JobRetry,
 		OnFail:  svc.JobFail,

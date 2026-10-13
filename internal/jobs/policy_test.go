@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BlackDark/vc-belegapp/internal/config"
 	"github.com/BlackDark/vc-belegapp/internal/db"
 )
 
@@ -213,7 +214,7 @@ func TestQueueLeavesErkennungWithoutADeadline(t *testing.T) {
 		time.Sleep(120 * time.Millisecond)
 		return 0.12, "", nil
 	})
-	q.Policy = DefaultPolicy(30 * time.Millisecond)
+	q.Policy = DefaultPolicy(30*time.Millisecond, nil)
 	runQueue(t, q)
 
 	id, err := q.Enqueue(context.Background(), "erkennung", `{"bild_id":"b"}`)
@@ -229,7 +230,7 @@ func TestQueueLeavesErkennungWithoutADeadline(t *testing.T) {
 // data export have no deadline — see DefaultPolicy for why the second one
 // matters.
 func TestDefaultPolicy(t *testing.T) {
-	p := DefaultPolicy(7 * time.Minute)
+	p := DefaultPolicy(7*time.Minute, nil)
 	for _, typ := range cappedTypes {
 		if got := p.limit(typ); got != 1 {
 			t.Errorf("%s limit %d, want 1", typ, got)
@@ -280,7 +281,7 @@ func TestDataExportKeepsNoDeadline(t *testing.T) {
 	})
 	// The same operator deadline the recognition test above is measured
 	// against, only three seconds longer than the export sleeps.
-	q.Policy = DefaultPolicy(100 * time.Millisecond)
+	q.Policy = DefaultPolicy(100*time.Millisecond, nil)
 	// Two workers, so the export that sleeps for ten seconds does not keep the
 	// mail job behind it out of the queue: the point is the deadline, not the
 	// cap.
@@ -311,6 +312,193 @@ func TestDataExportKeepsNoDeadline(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("the data export never started")
+}
+
+// A per-type override is the operator's way to bound one type without touching
+// the other four, including the two that have no deadline by default. A named
+// type gets its own number; a type nobody named keeps the global one.
+func TestDefaultPolicyPerTypeOverride(t *testing.T) {
+	p := DefaultPolicy(10*time.Minute, map[string]time.Duration{
+		"datenexport": 30 * time.Minute,
+		"erkennung":   2 * time.Minute,
+	})
+	if got := p.timeout("datenexport"); got != 30*time.Minute {
+		t.Errorf("datenexport %s, want the override 30m", got)
+	}
+	// Giving the recognition a deadline is the other direction of the same
+	// switch: it overwrites the zero that DefaultPolicy lists it with.
+	if got := p.timeout("erkennung"); got != 2*time.Minute {
+		t.Errorf("erkennung %s, want the override 2m", got)
+	}
+	// An override is per type and changes nothing else.
+	for _, typ := range []string{"mail", "watch", "notify"} {
+		if got := p.timeout(typ); got != 10*time.Minute {
+			t.Errorf("%s %s, want the global 10m", typ, got)
+		}
+	}
+	if got := p.limit("datenexport"); got != 1 {
+		t.Errorf("datenexport limit %d, want the cap of 1 unchanged by an override", got)
+	}
+}
+
+// An explicit 0 is the whole reason a listed type is different from an unlisted
+// one: it must genuinely switch the deadline off rather than fall through to
+// the default. That is a real difference from "not configured", and the bug it
+// avoids is an operator setting 0 and getting the global deadline anyway.
+func TestDefaultPolicyZeroOverrideDisablesTheDeadline(t *testing.T) {
+	p := DefaultPolicy(10*time.Minute, map[string]time.Duration{
+		typMail: 0,
+		// The export is listed as zero by default already; an operator
+		// putting it back must get the same answer.
+		typDatenexport: 0,
+	})
+	// Both named types are in the map, with a zero, so neither falls through
+	// to the default.
+	for _, typ := range []string{typMail, typDatenexport} {
+		budget, ok := p.Timeout[typ]
+		if !ok {
+			t.Errorf("%s is not in the timeout map, so it falls back to the default", typ)
+			continue
+		}
+		if budget != 0 {
+			t.Errorf("%s %s, want 0", typ, budget)
+		}
+		if got := p.timeout(typ); got != 0 {
+			t.Errorf("%s timeout %s, want none", typ, got)
+		}
+	}
+	// The types nobody named still get the global number. erkennung keeps its
+	// own zero here: it is one of the two the default leaves off, which is a
+	// separate switch from the one this test is about.
+	for _, typ := range []string{typWatch, typNotify, "ein_neuer_typ"} {
+		if got := p.timeout(typ); got != 10*time.Minute {
+			t.Errorf("%s %s, want the global 10m", typ, got)
+		}
+	}
+	if got := p.timeout(typErkennung); got != 0 {
+		t.Errorf("erkennung %s, want none", got)
+	}
+}
+
+// Without an override the two user-facing types keep no deadline at all. The
+// tests above cover giving them one; this covers the default not having
+// changed underneath the operator who sets nothing.
+func TestDefaultPolicyLeavesFreeTypesUnbounded(t *testing.T) {
+	p := DefaultPolicy(10*time.Minute, nil)
+	for _, typ := range deadlineFreeTypes {
+		if got := p.timeout(typ); got != 0 {
+			t.Errorf("%s %s, want no deadline by default", typ, got)
+		}
+	}
+	// A nil map is the same answer as an empty one.
+	empty := DefaultPolicy(10*time.Minute, map[string]time.Duration{})
+	for _, typ := range deadlineFreeTypes {
+		if got := empty.timeout(typ); got != 0 {
+			t.Errorf("%s with an empty override map %s, want no deadline", typ, got)
+		}
+	}
+}
+
+// An override has to survive the trip through the queue, not just the map: a
+// mail job with its deadline removed runs past the global number that would
+// otherwise have failed it.
+func TestQueuePerTypeOverrideRunsPastTheGlobalTimeout(t *testing.T) {
+	database := openQueueDB(t)
+	q := testQueue(database, func(ctx context.Context, _ Job) (float64, string, error) {
+		select {
+		case <-ctx.Done():
+			return 0, "", ctx.Err()
+		case <-time.After(10 * time.Second):
+			return 0.1, "", nil
+		}
+	})
+	// The global deadline is short enough to fail a mail job on its own; the
+	// override takes it off the type the job below has.
+	q.Policy = DefaultPolicy(50*time.Millisecond, map[string]time.Duration{typMail: 0})
+	// Two workers, so the control job can start while the mail job sleeps. The
+	// point is the deadline, not the cap.
+	q.Workers = 2
+	runQueue(t, q)
+
+	ctx := context.Background()
+	mail, err := q.Enqueue(ctx, typMail, "{}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The control job keeps the global deadline and fails on it, which is what
+	// says the override is scoped to the one type.
+	notify, err := q.Enqueue(ctx, typNotify, "{}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, database, notify, "fehler")
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		row := jobRow(t, database, mail)
+		if row.Status == "fehler" {
+			t.Fatalf("the mail job hit the global deadline: %v", row.Fehler)
+		}
+		if row.Status == "laeuft" {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("the mail job never started")
+}
+
+// internal/config holds the environment variable names, and the type strings
+// are duplicated over there because config is the leaf of the dependency graph.
+// The cost of that duplication is a type the queue runs and the table does not
+// name, and this is the test that shows it: such a type silently keeps the
+// global deadline and no operator could ever set one.
+//
+// It walks jobTypes, the package's own list, rather than a literal written out
+// here. A literal would be a third copy to keep in step: a sixth type added to
+// the constants, to the policy lists and to the jobs.typ CHECK would slip past
+// it, and the guard would pass for a type no operator could name.
+func TestEveryJobTypeHasATimeoutVariable(t *testing.T) {
+	for _, typ := range jobTypes {
+		name, ok := config.JobTimeoutVar(typ)
+		if !ok {
+			t.Errorf("job type %q has no BELEGAPP_JOB_TIMEOUT_<TYPE>", typ)
+			continue
+		}
+		if !strings.HasPrefix(name, "BELEGAPP_JOB_TIMEOUT_") {
+			t.Errorf("job type %q maps to %q, which is not a per-type deadline", typ, name)
+		}
+	}
+	// A type nobody knows must not be answered from the table: that is what
+	// makes the check above a real boundary rather than a tautology.
+	if _, ok := config.JobTimeoutVar("ein_neuer_typ"); ok {
+		t.Error("an unknown job type got a timeout variable")
+	}
+	if got := config.JobTimeoutTypes(); len(got) != len(jobTypes) {
+		t.Errorf("config knows %d job types, the queue runs %d", len(got), len(jobTypes))
+	}
+}
+
+// jobTypes is where a type is added on this side, so the two policy subsets
+// that decide what a type is allowed to do must stay subsets of it. A type in
+// either of them that jobTypes does not name would slip past the drift guard
+// above, because that guard only walks jobTypes.
+func TestPolicyListsAreSubsetsOfJobTypes(t *testing.T) {
+	known := make(map[string]bool, len(jobTypes))
+	for _, typ := range jobTypes {
+		known[typ] = true
+	}
+	for _, list := range []struct {
+		name  string
+		types []string
+	}{
+		{"cappedTypes", cappedTypes},
+		{"deadlineFreeTypes", deadlineFreeTypes},
+	} {
+		for _, typ := range list.types {
+			if !known[typ] {
+				t.Errorf("%s holds %q, which jobTypes does not name", list.name, typ)
+			}
+		}
+	}
 }
 
 func jobRow(t *testing.T, database *db.DB, id string) db.Job {

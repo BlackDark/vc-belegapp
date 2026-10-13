@@ -17,13 +17,29 @@ const (
 	typWatch       = "watch"
 )
 
+// jobTypes is every type the queue knows, in the order the documentation lists
+// them. It is the one place a type is added on this side, so the two subsets
+// below cannot name one it does not contain and the drift test has a single
+// list to walk instead of a literal that could fall behind a sixth type.
+var jobTypes = []string{typErkennung, typDatenexport, typMail, typNotify, typWatch}
+
 // cappedTypes are the job types the queue runs at most one job of at a time:
 // the three background intakes and the data export. They may not take the whole
 // pool away from the recognition, which is the work a user waits for.
 //
-// It is deliberately not the same set as the types the deadline applies to —
-// see DefaultPolicy, where the data export is capped but not bounded in time.
+// It is deliberately not the same set as deadlineFreeTypes — see DefaultPolicy,
+// where the data export is capped but not bounded in time.
 var cappedTypes = []string{typMail, typWatch, typNotify, typDatenexport}
+
+// deadlineFreeTypes are the types DefaultPolicy leaves off the deadline: the
+// recognition, which bounds its own model call with BELEGAPP_LLM_TIMEOUT, and
+// the data export, which a person is waiting for. Listing a type here at all is
+// what excludes it from DefaultTimeout, so this is a list of exclusions and not
+// a list of ceilings.
+//
+// An operator can undo that: a per-type override wins over the entry below, in
+// both directions.
+var deadlineFreeTypes = []string{typErkennung, typDatenexport}
 
 // deferDelay is how long a claimed job stays out of the queue after its type
 // turned out to be at its concurrency cap.
@@ -74,29 +90,42 @@ type Policy struct {
 //     snapshots the database, renders every Belegbild and zips the lot, which
 //     on a large dataset legitimately runs past any ceiling an operator would
 //     call generous. A deadline there would turn a slow export into three
-//     attempts and a permanently failed download, and the failure would land on
-//     the person waiting for it. It is still capped to one job at a time, so a
-//     slow export cannot crowd the recognition out.
+//     attempts and a failed job with no download behind it, and the failure
+//     would land on the person waiting for it. It is still capped to one job
+//     at a time, so a slow export cannot crowd the recognition out.
 //
-// There is no per-type environment override: BELEGAPP_JOB_TIMEOUT sets one
-// number for the three intake types and nothing else, so it cannot be raised
-// for the data export. The only thing bounding that job is the shutdown
-// context, plus the storage it writes to.
+// There is a per-type environment override for every type, including these two:
+// BELEGAPP_JOB_TIMEOUT_<TYPE> — BELEGAPP_JOB_TIMEOUT_DATAEXPORT=30m, or =0 to
+// take the type off the deadline altogether. internal/config reads them, refuses
+// a name that is not a job type, and hands them over as the second argument, so
+// this function stays free of the environment. With no override the export is
+// bounded by nothing but its one-job cap, the storage it writes to, and the
+// shutdown context — that is the default, not the only reachable state.
 //
 // The deadline bounds a job that notices it. It does not interrupt blocking
 // filesystem I/O, which is why the concurrency cap exists next to it: the cap
 // limits how many jobs can be stuck at once, the deadline limits how long a job
 // that does notice is allowed to take.
-func DefaultPolicy(intakeTimeout time.Duration) Policy {
+func DefaultPolicy(intakeTimeout time.Duration, perType map[string]time.Duration) Policy {
 	concurrency := make(map[string]int, len(cappedTypes))
 	for _, typ := range cappedTypes {
 		concurrency[typ] = 1
 	}
+	// The zero entries are deliberate, see above. Listing a type here at all is
+	// what excludes it from DefaultTimeout, and an override is a listing too —
+	// including an override of zero, which is how an operator takes a type off
+	// the deadline. So the loop below writes over the zero rather than skipping
+	// types that already have one.
+	timeout := make(map[string]time.Duration, len(deadlineFreeTypes)+len(perType))
+	for _, typ := range deadlineFreeTypes {
+		timeout[typ] = 0
+	}
+	for typ, budget := range perType {
+		timeout[typ] = budget
+	}
 	return Policy{
-		Concurrency: concurrency,
-		// The zero entries are deliberate, see above. Listing a type here at
-		// all is what excludes it from DefaultTimeout.
-		Timeout:        map[string]time.Duration{typErkennung: 0, typDatenexport: 0},
+		Concurrency:    concurrency,
+		Timeout:        timeout,
 		DefaultTimeout: intakeTimeout,
 	}
 }

@@ -19,6 +19,22 @@ const (
 	// FormatVersion is the archive layout documented in docs/data-export.md.
 	FormatVersion = 1
 
+	// DownloadTTL is how long a stored data-export archive stays downloadable.
+	//
+	// It is a fixed property of the archive and deliberately has no
+	// environment variable: a download that is offered for a stated time and
+	// then withdrawn is part of what a Datenexport is, and the two places that
+	// have to agree — the ablauf_am written into the job result and the sweep
+	// that deletes the blob — would drift the moment a variable entered the
+	// picture.
+	//
+	// It lives here rather than in internal/service because internal/config
+	// needs the same number to check BELEGAPP_JOB_RETENTION against: a retention
+	// shorter than this deletes the job row while somebody is still waiting for
+	// the file, and the UI then reports the job as missing. This package imports
+	// nothing of the application's own, so both can read one number.
+	DownloadTTL = 24 * time.Hour
+
 	pathDB       = "db/belegapp.sqlite"
 	pathCSV      = "csv/belege.csv"
 	pathManifest = "manifest.json"

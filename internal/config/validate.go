@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/BlackDark/vc-belegapp/internal/export"
 )
 
 var argon2idPHC = regexp.MustCompile(`^\$argon2id\$v=19\$m=[1-9][0-9]*,t=[1-9][0-9]*,p=[1-9][0-9]*\$[A-Za-z0-9+/]+={0,2}\$[A-Za-z0-9+/]+={0,2}$`)
@@ -105,15 +107,8 @@ func (c *Config) validate() error {
 	if c.JobWorkers < 1 {
 		return fmt.Errorf("BELEGAPP_JOB_WORKERS must be at least 1")
 	}
-	if c.JobTimeout <= 0 {
-		return fmt.Errorf("BELEGAPP_JOB_TIMEOUT must be positive")
-	}
-	if c.JobRetention <= 0 {
-		// Zero is not "keep everything": a prune without a window would have
-		// to guess which finished rows are old enough, and the only guess it
-		// could make would be the one that deletes a download somebody is
-		// waiting for. Refusing at startup names the variable instead.
-		return fmt.Errorf("BELEGAPP_JOB_RETENTION must be positive")
+	if err := c.validateJobs(); err != nil {
+		return err
 	}
 	if c.UploadMaxBytes < 1 {
 		return fmt.Errorf("BELEGAPP_UPLOAD_MAX_BYTES must be at least 1")
@@ -134,6 +129,35 @@ func (c *Config) validate() error {
 		return fmt.Errorf("BELEGAPP_PDF_TIMEOUT must be positive")
 	}
 	return nil
+}
+
+// validateJobs checks the three job variables that describe how the queue is
+// bounded. They are grouped because they check each other: the retention has to
+// clear the download window of a Datenexport, and the per-type deadlines have to
+// be either a real number or nothing at all.
+func (c *Config) validateJobs() error {
+	if c.JobTimeout <= 0 {
+		return fmt.Errorf("BELEGAPP_JOB_TIMEOUT must be positive")
+	}
+	if c.JobRetention <= 0 {
+		// Zero is not "keep everything": a prune without a window would have
+		// to guess which finished rows are old enough, and the only guess it
+		// could make would be the one that deletes a download somebody is
+		// waiting for. Refusing at startup names the variable instead.
+		return fmt.Errorf("BELEGAPP_JOB_RETENTION must be positive")
+	}
+	if c.JobRetention < export.DownloadTTL {
+		// The prune deletes finished rows, and the row a Datenexport finished
+		// on is the row the download is served from — OpenDatenexport reads
+		// the expiry out of it. Below the download window the two disagree:
+		// the file is still offered for its full lifetime while the job behind
+		// it is already gone, and the UI reports a run that worked as "Job
+		// nicht gefunden". The two windows have one boundary, so they are
+		// checked against each other here rather than trusted to stay in step.
+		return fmt.Errorf("BELEGAPP_JOB_RETENTION (%s) muss mindestens so lang sein wie die Download-Frist eines Datenexports (%s); eine kürzere Frist löscht die Job-Zeile, während jemand noch auf den Download wartet",
+			c.JobRetention, export.DownloadTTL)
+	}
+	return c.validateJobTimeouts()
 }
 
 func (c *Config) validateBaseURL() error {
