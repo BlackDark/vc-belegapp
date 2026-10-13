@@ -36,7 +36,14 @@ const pruneWriteTimeout = 15 * time.Second
 // at worst, which is the whole point of not doing it all at once.
 const pruneReclaimPages = 1024
 
-// Pruner deletes finished queue rows once an hour.
+// analyzeTimeout is the ceiling on the ANALYZE the prune ends with. It is the
+// same kind of bound as pruneWriteTimeout and for the same reason: the write
+// pool has one connection, and a statement that runs away with it delays every
+// claim behind it.
+const analyzeTimeout = 15 * time.Second
+
+// Pruner deletes finished queue rows once an hour, hands the freed pages back
+// to the filesystem and refreshes the planner statistics.
 //
 // It is deliberately not part of the Queue. The queue's whole job is to run
 // work; a sweep that deletes history runs on its own goroutine, on its own
@@ -44,6 +51,11 @@ const pruneReclaimPages = 1024
 // can be started, stopped and tested without a Queue existing at all, which is
 // the property that makes "it does not delay job execution" a thing the tests
 // can check rather than a claim in a comment.
+//
+// The statistics are part of the same pass for the same reason: an ANALYZE is
+// real work on the one write connection, and one hourly slot that already
+// spends that connection on bounded statements is a better place for it than
+// a second timer that competes with the first.
 //
 // Only rows that reached a final status are ever removed. A job that is
 // wartend or laeuft still owes work, and no age makes that go away, so the
@@ -59,10 +71,13 @@ type Pruner struct {
 	Now       func() time.Time
 	Log       *slog.Logger
 
-	// Every and Batch exist for tests. The zero value means pruneEvery and
-	// pruneBatch; nothing else overrides them.
+	// Every, Batch and AnalyzeBudget exist for tests. The zero value means
+	// pruneEvery, pruneBatch and analyzeTimeout; nothing else overrides them.
 	Every time.Duration
 	Batch int
+	// AnalyzeBudget is the ceiling on the ANALYZE the pass ends with, the same
+	// kind of bound pruneWriteTimeout is for a delete batch.
+	AnalyzeBudget time.Duration
 }
 
 // Run prunes once immediately and then on its ticker until ctx ends.
@@ -91,12 +106,14 @@ func (p *Pruner) Run(ctx context.Context) {
 }
 
 // Prune deletes one batch of finished rows at a time until the backlog is gone
-// or ctx ends, then hands the freed pages back to the filesystem.
+// or ctx ends, then hands the freed pages back to the filesystem and refreshes
+// the planner statistics.
 //
 // It returns the number of rows it deleted. A single batch error ends the run
 // with that error: the rows are still there, the next hour tries again, and
 // swallowing it would leave nobody the chance to notice that the prune has
-// been failing for weeks.
+// been failing for weeks. The ANALYZE that ends the pass is the one exception:
+// it has nothing to do with the rows and cannot report one.
 func (p *Pruner) Prune(ctx context.Context) (int64, error) {
 	if p == nil || p.DB == nil || p.DB.Write == nil {
 		return 0, errors.New("job prune: database is closed")
@@ -129,12 +146,52 @@ func (p *Pruner) Prune(ctx context.Context) (int64, error) {
 	if err != nil {
 		return deleted, err
 	}
+	// Last, and deliberately not fatal: a database that could not be analysed
+	// is a database whose plans are stale, not one whose queue is broken. The
+	// rows are already deleted and the pages already given back by the time
+	// this runs, so the prune has done its work; failing here would report a
+	// maintenance pass as a failed one and hide the real result from the log.
+	p.analyze(ctx)
 	if deleted > 0 && p.Log != nil {
 		// The message is German because it is what an operator reads to
 		// answer "why is the database smaller today".
 		p.Log.Info("Löschung abgeschlossener Jobs", "geloescht", deleted, "freigegeben_seiten", freed)
 	}
 	return deleted, nil
+}
+
+// analyze refreshes the statistics SQLite's planner chooses query plans with.
+//
+// It is here, in the prune, rather than on a ticker of its own: the prune
+// already runs hourly on an idle-ish schedule, already bounds its statements
+// and already checks ctx between them, and a fresh install has no statistics at
+// all until something runs this.
+//
+// The dependency also runs the other way, which is why the indexes of migration
+// 00009 land with it rather than after it: measured, with statistics but
+// without these indexes, CountBlobKey is a SCAN of belegbilder and
+// CountOpenJobsByPayload is a SCAN of jobs. An index the planner never chooses
+// is a write cost with no read to show for it.
+//
+// The timeout is the same bound the delete batches carry: this runs on the one
+// write connection the queue claims through, so a statistics pass that runs
+// away must not hold it for longer than a batch would.
+func (p *Pruner) analyze(ctx context.Context) {
+	if p.DB == nil || p.DB.Write == nil {
+		return
+	}
+	if err := ctx.Err(); err != nil {
+		return
+	}
+	analyzeCtx, cancel := context.WithTimeout(ctx, p.analyzeBudget())
+	defer cancel()
+	if _, err := p.DB.Write.ExecContext(analyzeCtx, "ANALYZE"); err != nil {
+		if p.Log != nil && ctx.Err() == nil {
+			// German like every other message an operator reads here, and only
+			// worth a line: the next pass runs an hour later.
+			p.Log.Warn("Statistiken der Datenbank nicht erneuert", "err", err)
+		}
+	}
 }
 
 // deleteBatch removes at most batch rows and reports how many that was. The
@@ -177,4 +234,11 @@ func (p *Pruner) batch() int {
 		return p.Batch
 	}
 	return pruneBatch
+}
+
+func (p *Pruner) analyzeBudget() time.Duration {
+	if p.AnalyzeBudget > 0 {
+		return p.AnalyzeBudget
+	}
+	return analyzeTimeout
 }

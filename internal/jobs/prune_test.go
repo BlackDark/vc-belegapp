@@ -444,6 +444,127 @@ func jobID(i int) string {
 	return fmt.Sprintf("job-%06d", i)
 }
 
+// statRows reads sqlite_stat1, the table ANALYZE fills. A database that has
+// never been analysed does not have that table at all, and "no table" is the
+// same answer as "no statistics" — so it counts as zero rather than failing,
+// and statTableExists is there for the one test that needs the difference.
+func statRows(t *testing.T, database *db.DB) int {
+	t.Helper()
+	if !statTableExists(t, database) {
+		return 0
+	}
+	var n int
+	if err := database.Read.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM sqlite_stat1`).Scan(&n); err != nil {
+		t.Fatalf("sqlite_stat1: %v", err)
+	}
+	return n
+}
+
+func statTableExists(t *testing.T, database *db.DB) bool {
+	t.Helper()
+	var n int
+	if err := database.Read.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n == 1
+}
+
+// TestPruneAnalysesTheDatabase is the claim behind migration 00009: the
+// indexes the prune's own neighbours rely on are only chosen by the planner if
+// something runs ANALYZE, and nothing else in this application does.
+//
+// Measured on the schema before 00009, ANALYZE takes CountOpenJobsByPayload
+// from a seek over the waiting rows to a scan of the whole jobs table, because
+// the statistics say the open-job rows are a small share and the planner trusts
+// them. So the pass has to end with ANALYZE, and the test is that the table
+// SQLite keeps its statistics in is populated once a prune has run — against a
+// database that starts without it.
+func TestPruneAnalysesTheDatabase(t *testing.T) {
+	database := openQueueDB(t)
+	ctx := context.Background()
+	old := testNow.Add(-30 * 24 * time.Hour)
+	seedJob(t, database, "fertig-alt", "fertig", old)
+	seedJob(t, database, "fehler-alt", "fehler", old)
+	seedJob(t, database, "wartend-alt", "wartend", old)
+	seedJob(t, database, "laeuft-alt", "laeuft", old)
+
+	if got := statRows(t, database); got != 0 {
+		t.Fatalf("a freshly migrated database already holds %d statistics; "+
+			"this test would pass without the prune doing anything", got)
+	}
+
+	deleted, err := testPruner(database, 24*time.Hour).Prune(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 2 {
+		t.Fatalf("deleted %d, want the two old finished rows", deleted)
+	}
+	rows := statRows(t, database)
+	if rows == 0 {
+		t.Fatal("no statistics after the prune: the ANALYZE did not run")
+	}
+	// The indexes of the tables the queue reads have to be among them, or the
+	// pass analysed something the planner will never consult.
+	var jobs int
+	if err := database.Read.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl = 'jobs'`).Scan(&jobs); err != nil {
+		t.Fatal(err)
+	}
+	if jobs == 0 {
+		t.Error("sqlite_stat1 holds nothing for jobs")
+	}
+}
+
+// TestPruneSurvivesAFailingAnalyze is the other half of putting a maintenance
+// statement at the end of the prune: an ANALYZE that cannot run is a database
+// with stale plans, not a queue with lost rows, and it must not be reported as
+// a failed pass.
+//
+// The budget is shortened to a nanosecond, so the statement is refused before
+// it starts rather than being made slow by a large database — the failure is
+// deterministic and the assertion is about the prune, not about timing.
+func TestPruneSurvivesAFailingAnalyze(t *testing.T) {
+	database := openQueueDB(t)
+	ctx := context.Background()
+	old := testNow.Add(-30 * 24 * time.Hour)
+	seedJob(t, database, "fertig-alt", "fertig", old)
+	seedJob(t, database, "wartend-alt", "wartend", old)
+
+	p := testPruner(database, 24*time.Hour)
+	p.AnalyzeBudget = time.Nanosecond
+	deleted, err := p.Prune(ctx)
+	if err != nil {
+		t.Fatalf("a failed ANALYZE failed the prune: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted %d, want the one old finished row", deleted)
+	}
+	if _, err := db.New(database.Read).GetJob(ctx, "fertig-alt"); err == nil {
+		t.Fatal("the finished row survived a prune whose ANALYZE failed")
+	}
+	if got := statRows(t, database); got != 0 {
+		t.Fatalf("%d statistics after an ANALYZE that never ran; the failure path is not the one under test", got)
+	}
+}
+
+// TestPruneSkipsAnalyzeOnACancelledContext: a shutdown in progress is not the
+// moment to start real work on the write connection, and the ANALYZE has to
+// notice the same cancelled context the delete batches do.
+func TestPruneSkipsAnalyzeOnACancelledContext(t *testing.T) {
+	database := openQueueDB(t)
+	seedJob(t, database, "fertig-alt", "fertig", testNow.Add(-30*24*time.Hour))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	testPruner(database, 24*time.Hour).analyze(ctx)
+	if got := statRows(t, database); got != 0 {
+		t.Fatalf("%d statistics after an ANALYZE on a cancelled context", got)
+	}
+}
+
 func waitFor(t *testing.T, within time.Duration, cond func() bool, msg string) {
 	t.Helper()
 	deadline := time.Now().Add(within)

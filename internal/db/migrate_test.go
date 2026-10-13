@@ -508,3 +508,130 @@ func db2Count(t *testing.T, database *DB, query string, args ...any) (int, error
 	err := database.Read.QueryRow(query, args...).Scan(&n)
 	return n, err
 }
+
+// lookupIndexNames are the indexes 00009 adds. Every one of them has to come
+// back from the Down and go away with it, or the rollback leaves a database in
+// a state nobody can reach again — the aborted attempt at this migration
+// dropped an index the Up had already removed, so its Down failed and the
+// version was marked applied anyway.
+var lookupIndexNames = []string{
+	"belegbilder_blob_key",
+	"belegbilder_thumb_blob_key",
+	"jobs_offen_typ_payload",
+}
+
+// TestLookupIndexMigrationAppliesAndRollsBack walks 00009 through the whole
+// cycle on a database that holds rows, because an index migration is only
+// interesting in both directions: up, down, up again.
+//
+// The rows are seeded before the migration so the rollback is checked against a
+// table with data in it — the prune deletes such rows every hour, and an index
+// that was rebuilt wrong would only show up there.
+func TestLookupIndexMigrationAppliesAndRollsBack(t *testing.T) {
+	ctx := context.Background()
+	database, err := Open(filepath.Join(t.TempDir(), "belegapp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	// Migrate only as far as 00008, the last migration before the indexes.
+	upToEight, err := provider(database.Write)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := upToEight.UpTo(ctx, 8); err != nil {
+		t.Fatal(err)
+	}
+	if got := presentIndexes(t, database, lookupIndexNames); len(got) != 0 {
+		t.Fatalf("00009 already applied before Migrate: %v", got)
+	}
+	seedPlanBelegbilder(t, database, 50, false)
+	seedPlanJobs(t, database, 50, "wartend")
+
+	if err := Migrate(ctx, database.Write); err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrationsCurrent(ctx, database.Write); err != nil {
+		t.Fatal(err)
+	}
+	if got := missingIndexes(t, database, lookupIndexNames); len(got) != 0 {
+		t.Fatalf("00009 did not create %v", got)
+	}
+	// The indexes are on existing rows, so the row counts have to be untouched.
+	// belegbilder_beleg from 00002 stays as well: 00009 deliberately does not
+	// drop it, see the migration.
+	if got := missingIndexes(t, database, []string{"belegbilder_beleg"}); len(got) != 0 {
+		t.Errorf("00009 removed %v; the migration says it leaves it alone", got)
+	}
+
+	// Down, then Up again: a Down that leaves the version marked as applied
+	// cannot be run twice, and this is the second run.
+	downProvider, err := provider(database.Write)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := downProvider.DownTo(ctx, 8); err != nil {
+		t.Fatalf("rolling 00009 back: %v", err)
+	}
+	if got := presentIndexes(t, database, lookupIndexNames); len(got) != 0 {
+		t.Fatalf("the Down of 00009 left %v behind", got)
+	}
+	if err := Migrate(ctx, database.Write); err != nil {
+		t.Fatalf("re-applying 00009 after the Down: %v", err)
+	}
+	if got := missingIndexes(t, database, lookupIndexNames); len(got) != 0 {
+		t.Fatalf("the second Up of 00009 did not create %v", got)
+	}
+	rows, err := db2Count(t, database, "SELECT COUNT(*) FROM belegbilder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows != 50 {
+		t.Fatalf("belegbilder rows after the cycle %d, want the seeded 50", rows)
+	}
+}
+
+// presentIndexes returns the wanted names that exist, missingIndexes the ones
+// that do not. Both name what is missing, so a failure reads as the index it is
+// about rather than as a boolean.
+func presentIndexes(t *testing.T, database *DB, names []string) []string {
+	t.Helper()
+	var have []string
+	for _, name := range names {
+		n, err := indexCount(t, database, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n == 1 {
+			have = append(have, name)
+		}
+	}
+	return have
+}
+
+func missingIndexes(t *testing.T, database *DB, names []string) []string {
+	t.Helper()
+	var missing []string
+	for _, name := range names {
+		n, err := indexCount(t, database, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n == 0 {
+			missing = append(missing, name)
+		}
+	}
+	return missing
+}
+
+func indexCount(t *testing.T, database *DB, name string) (int, error) {
+	t.Helper()
+	// The write pool, for the same reason planDetails uses it: a read
+	// connection that prepared a statement before the index was created or
+	// dropped keeps the schema it loaded.
+	var n int
+	err := database.Write.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, name).Scan(&n)
+	return n, err
+}
