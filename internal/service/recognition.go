@@ -65,6 +65,9 @@ func (s *Service) HandleJob(ctx context.Context, job jobs.Job) (float64, string,
 	case "notify":
 		result, err := s.runNotify(ctx, job.Payload)
 		return time.Since(start).Seconds(), result, err
+	case "watch":
+		result, err := s.runWatch(ctx)
+		return time.Since(start).Seconds(), result, err
 	default:
 		err := &recognition.CallError{Kind: recognition.KindPermanent, Text: "Unbekannter Job"}
 		return time.Since(start).Seconds(), "", err

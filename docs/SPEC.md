@@ -294,7 +294,7 @@ Trigger `BEFORE UPDATE` und `BEFORE DELETE` → `RAISE(ABORT, 'append-only')`. K
 | Spalte | Typ | |
 |---|---|---|
 | id | TEXT PK | |
-| typ | TEXT NOT NULL | 'erkennung' \| 'datenexport' |
+| typ | TEXT NOT NULL | 'erkennung' \| 'datenexport' \| 'mail' \| 'notify' \| 'watch' |
 | payload | TEXT NOT NULL | JSON |
 | status | TEXT NOT NULL | 'wartend','laeuft','fertig','fehler' |
 | versuche | INTEGER NOT NULL | 0 |
@@ -572,6 +572,25 @@ Ablauf:
 Ergebnisklassifikation wie bei der Erkennung (10.6): `2xx` ist zugestellt; `5xx`, `408`, `429`, Zeitüberschreitung und Verbindungsfehler sind `transient` und werden mit dem Queue-Backoff wiederholt; jeder andere `4xx` ist `permanent` und wird nicht wiederholt. Der Antwortinhalt wird nicht ausgewertet.
 
 Das Dokument trägt **keine** Bilddaten: keine Bytes, keinen Blob-Key, keine SHA-256, weder Postfach-Host noch -Ordner, keine Zugangsdaten. Es nennt die Bild-ID, den Zeitpunkt, die Quelle und einen Deep Link in den Prüf-Dialog. `JobRetry` und `JobFail` wirken nur auf `erkennung`-Jobs: der `notify`-Payload nennt ebenfalls eine Bild-ID und würde sonst den Erkennungsstatus eines völlig gesunden Bildes überschreiben.
+
+### 8.2.3 Überwachter Ordner (kein Endpunkt)
+
+Der dritte Eingang ist ein lokaler Ordner: Scanner, Download-Verzeichnis oder das Ziel eines Telefon-Sync-Clients. Wie IMAP und Webhook ist auch das kein HTTP-Endpunkt, sondern ein Hintergrundjob. `app.go` startet neben `Sweep` einen `time.Ticker` (`BELEGAPP_WATCH_INTERVAL`, Vorgabe `30s`), der einen Job vom Typ `watch` einreiht; ohne `BELEGAPP_WATCH_FOLDER` läuft kein Ticker und es entsteht keine Jobzeile.
+
+Ablauf je Datei, in dieser Reihenfolge:
+
+1. **Der Name wird gefiltert.** Unterverzeichnisse, Symlinks, Punktdateien (einschließlich der beiden von diesem Verfahren selbst angelegten Ordner) und die Endungen `.tmp`, `.part`, `.crdownload`, `.partial` werden nicht geöffnet. Eine Datei mit falscher Endung (`.pdf`, `.heic`) ist kein Fehler, sondern kein Eingangskandidat.
+2. **Stabilität.** Gelesen wird nur, wer über zwei aufeinanderfolgende Abrufe hinweg gleiche Größe und gleiche Änderungszeit hat. Ein Sync-Client, der in place schreibt, erzeugt eine Datei, deren Stempel sich bewegt; sie zu lesen würde ein halb kopiertes JPEG speichern — und genau diese abgeschnittenen Bytes würde der Duplikatsschutz später wiedererkennen.
+3. **Die Bytes laufen durch `SaveBildFrom`** mit der Quelle `watch`, das die Größengrenze, die Formatliste und **beide** Jobs (`erkennung` und `notify`) übernimmt. Dieser Weg reiht nichts zusätzlich ein.
+4. **Die Datei wird verschoben**, nicht gelöscht: nach erfolgreichem Store nach `<Ordner>/.processed/`, bei inhaltlicher Ablehnung (`E_BILD_FORMAT`, `E_BILD_ZU_GROSS`) nach `<Ordner>/.abgelehnt/`.
+
+**Schritt 4 nach Schritt 3, nie umgekehrt.** Ein Vorab-Verschieben ginge bei einem fehlgeschlagenen Store verloren: die Datei läge abgelegt und würde nie geprüft. Das Verschieben selbst kann aber fehlschlagen (schreibgeschützter Mount, volle Platte), und dann steht die Datei beim nächsten Abruf erneut im Ordner. Genau dagegen arbeitet der Duplikatsschutz: vor dem Store wird `upload_sha256` der Bytes gegen `belegbilder.upload_sha256` geprüft — ein indizierter Punktzugriff, der die Frage „sind diese Bytes schon gespeichert?" beantwortet. `FindDuplicateBild` kann das nicht: die Abfrage joint `belege` und sieht ein Bild, das noch in *Offene Bilder* liegt, also genau die Bildart, die nur dieser Eingang erzeugt. Die Prüfung liegt in der Datenbank und übersteht damit einen Neustart; der instanzige Merksatz für die Stabilität entscheidet nur, *wann* gelesen wird, nie, *ob* schon gespeichert wurde.
+
+Die Abfrage ist bewusst unscoped: sie trifft jedes Belegbild mit diesen Bytes, unabhängig davon, ob es noch unzugewiesen, bereits einem Beleg zugeordnet oder vor Monaten gespeichert wurde. Eine Datei, deren Bytes einmal gespeichert waren, wird deshalb ohne zweites Belegbild nach `.processed/` verschoben — bytegleich heißt mit ziemlicher Sicherheit derselbe Beleg, und nur so verlässt eine wiederholt abgelegte Datei den Ordner überhaupt. Das ist nicht still: ein **WARN** (`watched file already stored; filed without a second image`, mit Dateiname und Trefferzahl) und ein eigener Zähler `bereits_gespeichert` in der Abrufsumme, getrennt vom gewöhnlichen `verschoben`, damit eine Datei, die aus dem Eingangsordner verschwindet, ohne dass ein Bild entsteht, nie unerklärt bleibt.
+
+**Es wird nie gelöscht.** `BELEGAPP_UNASSIGNED_IMAGE_TTL` (Vorgabe `24h`) entfernt ein nie geprüftes, unzugewiesenes Belegbild — die Quelle zu löschen hieße, die einzige Kopie zu vernichten. Nach dem Verschieben ist `.processed/` diese Kopie. Ein wiederholter Name wird unter `beleg-2.jpg`, `beleg-3.jpg` abgelegt; die erste Kopie wird nie überschrieben. Symlinks werden nicht aufgelöst: ein Link könnte eine beliebige Datei des Hosts in den Speicher ziehen, und das Verschieben beträfe den Link statt der gemeinten Datei.
+
+Ein Ordner, der fehlt oder nicht lesbar ist (nicht gemountetes Telefon-Volume), beendet den Abruf als Fehler: der Job wird mit dem üblichen Backoff wiederholt und ist in der Jobliste sichtbar. Der Eingang hält nicht stillschweigend an.
 
 ### 8.3 Ressourcen (Beispiele)
 **Belegbild**
@@ -928,6 +947,8 @@ Alle Variablen mit Präfix `BELEGAPP_`; für Geheimnisse zusätzlich `<NAME>_FIL
 | `BELEGAPP_NOTIFY_WEBHOOK_URL` | `` | absolute http(s)-Adresse für die Prüfbenachrichtigung (8.2.2). Leer = aus: keine Jobzeile, kein Versand |
 | `BELEGAPP_NOTIFY_WEBHOOK_TOKEN(_FILE)` | `` | `Authorization: Bearer …`; nie im Log, nie im Payload. Steht nicht in der URL — die steht im Startprotokoll |
 | `BELEGAPP_NOTIFY_TIMEOUT` | `10s` | Frist für einen Zustellversuch, Verbindungsaufbau bis Antwort |
+| `BELEGAPP_WATCH_FOLDER` | `` | überwachter Ordner für Belegbilder, z. B. `/watch`. Leer = aus: kein Ticker, kein Job |
+| `BELEGAPP_WATCH_INTERVAL` | `30s` | Abtasttakt |
 
 CLI: `belegapp serve` (Default) · `hash-password` · `healthcheck [--url]` · `migrate` · `backup --out <zip>` · `restore <zip> --yes` · `verify-audit` · `version`.
 
@@ -1055,7 +1076,7 @@ Coverage-Ziel: `internal/calc` 100 %, Backend gesamt ≥ 70 %.
 | **M2 Belegerkennung** | Job-Queue, `openaicompat` + `fake`, Schema, Nachverarbeitung, Korrekturvorschlag, Retry/Fallback, UI-Polling, „Verbindung testen“ | Mit `gpt-5-mini` werden Datum/Händler/Betrag vorausgefüllt (NF-1); Fehlerfälle 10.6 per Contract-Test; manuelle Erfassung bei LLM-Ausfall unverändert möglich; Wechsel auf Ollama nur per Env |
 | **M3 Monatsexport & Sperre** | Typst-Template, PDFRenderer, Vorschau (ENTWURF), finaler Export, Prüfpunkte, Arbeitnehmererklärung, CSV/ZIP, Monatsstatus, Änderungsgrund, Exportversionen mit Änderungsabschnitt | Golden-PDF M1 entspricht 12.2; PDF/A-2b-Validierung bestanden; nach Export ist Bearbeiten ohne Änderungsgrund unmöglich; Version 2 listet Änderungen; NF-2 erfüllt |
 | **M4 Datenexport/-import & Release v1.0** | Datenexport/-import (UI + CLI), Backend-Wechsel per Import, PWA (Manifest, Icons, Update-Prompt), GoReleaser + GHCR + Signatur + SBOM, release-please, Compose- und K8s-Beispiele, README/Betriebsdoku | Roundtrip-Test grün; Restore auf frischem Host ergibt identische Summen und gültige Hash-Kette; `v1.0.0`-Release mit Binaries und multi-arch Image (signiert); App auf iOS/Android installierbar; Kustomize-Beispiel läuft in Kind |
-| M5 (optional) | IMAP-Abruf (umgesetzt, siehe 8.2.1), Web Share Target, Prüfbenachrichtigung als Webhook (umgesetzt, siehe 8.2.2), Litestream-Doku, geplanter automatischer Datenexport, PDF-Belege als Eingabe, Regelperioden innerhalb eines Jahres | nach Bedarf |
+| M5 (optional) | IMAP-Abruf (umgesetzt, siehe 8.2.1), überwachter Ordner (umgesetzt, siehe 8.2.3), Web Share Target, Prüfbenachrichtigung als Webhook (umgesetzt, siehe 8.2.2), Litestream-Doku, geplanter automatischer Datenexport, PDF-Belege als Eingabe, Regelperioden innerhalb eines Jahres | nach Bedarf |
 
 ---
 
@@ -1076,7 +1097,7 @@ Coverage-Ziel: `internal/calc` 100 %, Backend gesamt ≥ 70 %.
 - ⚠️ 2027-Sachbezugswerte nach Bundesrat-Beschluss aktualisieren (Release vor Januar 2027).
 - ⚠️ Rundung der pauschalen Lohnsteuer (kaufmännisch angenommen) mit Lohnabrechnung abgleichen.
 - Teilbelege (mehrere Kassenzettel für eine Mahlzeit, steuerlich zulässig) – in v1 bewusst nicht unterstützt.
-- PDF-/E-Mail-Belege (Lieferdienste) als Eingabe. Das Konzept **„braucht Prüfung"** ist als Sichtbarkeit explizit: `GET /belegbilder/offen` plus der Screen **Offene Bilder** listen jedes hochgeladene Bild ohne Beleg. Der **IMAP-Abruf (8.2.1) legt seine Bildanhänge genau dort ab** und profitiert von derselben Liste; die **Prüfbenachrichtigung (8.2.2)** meldet jeden Eingang dorthin. Offen bleibt: die Markierung eines Belegs als ungeprüft, PDF-Anhänge (kein Rasterizer), und das PWA-Web-Share-Target (ROADMAP).
+- PDF-/E-Mail-Belege (Lieferdienste) als Eingabe. Das Konzept **„braucht Prüfung"** ist als Sichtbarkeit explizit: `GET /belegbilder/offen` plus der Screen **Offene Bilder** listen jedes hochgeladene Bild ohne Beleg. Der **IMAP-Abruf (8.2.1)** und der **überwachte Ordner (8.2.3)** legen ihre Bildanhänge genau dort ab und profitieren von derselben Liste; die **Prüfbenachrichtigung (8.2.2)** meldet jeden Eingang dorthin. Offen bleibt: die Markierung eines Belegs als ungeprüft, PDF-Anhänge (kein Rasterizer), WebDAV als Eingang (ROADMAP), und das PWA-Web-Share-Target (ROADMAP).
 - Unterjährige Regeländerungen (z. B. Zuschusserhöhung zum 1.7.) – v1 nur pro Kalenderjahr.
 - Modellnamen/Preise (`gpt-5-mini`, Gemini Flash) vor M2 verifizieren; Eval-Set aufbauen.
 - solid-ui-Tokens auf Tailwind v4 portieren; Solid-2.0-Migration nach stabilem Release und Kobalte-Unterstützung.

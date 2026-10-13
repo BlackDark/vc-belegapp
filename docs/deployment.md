@@ -46,6 +46,43 @@ kubectl apply -k deploy/k8s
 
 A ReadWriteOnce volume often cannot be mounted by the CronJob while the Deployment holds it. Use a storage class that allows a second mount on the same node, or run the backup on the host against the data directory. See [backup.md](backup.md).
 
+## Watched folder
+
+`BELEGAPP_WATCH_FOLDER` points the intake at a local folder. It has to be **readable and writable** by the process: the poll *moves* each ingested file into `<folder>/.processed/`, which a read-only mount refuses. Nothing is ever deleted (see [configuration](configuration.md)), so the folder is also the operator's archive.
+
+**Docker Compose.** Bind-mount the folder and create it first with the right owner, exactly like `./data`:
+
+```yaml
+volumes:
+  - "./data:/data"
+  - "./watch:/watch" # mkdir -p watch && chown 65532:65532 watch
+environment:
+  BELEGAPP_WATCH_FOLDER: /watch
+```
+
+The process runs read-only with a read-only root filesystem, but that does not affect a bind mount: `/watch` is writable as long as the host directory is owned by UID 65532.
+
+**Kubernetes.** Mount a volume at the folder and point the variable at it. A `subPath` keeps the app's two subfolders (`.processed`, `.abgelehnt`) on the same volume as the data:
+
+```yaml
+volumeMounts:
+  - name: watch
+    mountPath: /watch
+  - name: data
+    mountPath: /data
+volumes:
+  - name: watch
+    persistentVolumeClaim:
+      claimName: belegapp-watch
+  - name: data
+    persistentVolumeClaim:
+      claimName: belegapp-data
+```
+
+Without a `subPath` the mount point is the volume root, which is fine for a dedicated volume and wrong for a shared one — it would hide whatever else is on it. With `subPath: watch` under the data PVC, `/watch` is a directory inside `/data`; pick one or the other, not both. A `ReadWriteOnce` watch PVC is the simplest choice: one pod, one node.
+
+A PVC that is not mounted yet makes the folder unreadable, and the poll then fails the job rather than silently doing nothing — that is the intended signal, not a crash.
+
 ## Binary
 
 Go 1.27.2, Node 24.21.0 (`.nvmrc`), pnpm 12.10.1 (`packageManager` in `web/package.json`). Typst 0.15.1 must be on `PATH` for PDFs and `/readyz` ([scripts/install-typst.sh](../scripts/install-typst.sh)).

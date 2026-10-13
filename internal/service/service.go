@@ -62,6 +62,15 @@ type Service struct {
 	// feature never builds a payload or writes a queue row.
 	Notify *notify.Webhook
 
+	// Watch is the watched-folder intake. WatchFolder is the switch: empty
+	// means PollWatchFolder returns at once and IngestWatchFolder is a no-op,
+	// so an instance that does not use the feature never grows a queue row.
+	// WatchInterval is the poll period. watchSeen is the in-memory stability
+	// memory and is not operator configuration.
+	WatchFolder   string
+	WatchInterval time.Duration
+	watch         watchSeen
+
 	exportMu  sync.Mutex
 	exporting map[string]struct{}
 

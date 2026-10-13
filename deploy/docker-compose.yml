@@ -18,6 +18,13 @@ services:
     cpus: 1
     ports: ["127.0.0.1:8080:8080"]
     volumes: ["./data:/data"] # chown -R 65532:65532 ./data beforehand
+    # Receipt intake from a watched folder, off unless BELEGAPP_WATCH_FOLDER is
+    # set. Uncomment both lines below and create the directory with the same
+    # ownership as ./data: the poll MOVES each file into ./watch/.processed/
+    # after storing it, so a read-only mount makes every move fail.
+    #   mkdir -p watch && chown 65532:65532 watch
+    # volumes:
+    #   - "./watch:/watch"
     environment:
       BELEGAPP_BASE_URL: ${BELEGAPP_BASE_URL:?set BELEGAPP_BASE_URL}
       BELEGAPP_TRUSTED_PROXIES: ${BELEGAPP_TRUSTED_PROXIES:-172.16.0.0/12}
@@ -47,6 +54,12 @@ services:
       # BELEGAPP_NOTIFY_WEBHOOK_URL: https://ntfy.sh/belegapp-pruefen
       # BELEGAPP_NOTIFY_WEBHOOK_TOKEN_FILE: /run/secrets/notify_token
       # BELEGAPP_NOTIFY_TIMEOUT: 10s
+      # Receipt intake from a watched folder (scanner, download directory,
+      # phone sync client). Off unless BELEGAPP_WATCH_FOLDER is set. The
+      # folder must be writable: files are moved into .processed/ after
+      # ingest and never deleted.
+      # BELEGAPP_WATCH_FOLDER: /watch
+      # BELEGAPP_WATCH_INTERVAL: 30s
     secrets: [oidc_secret, pw_hash, openai_key, imap_password]
     healthcheck:
       test: ["CMD", "/belegapp", "healthcheck"]

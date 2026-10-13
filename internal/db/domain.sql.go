@@ -25,6 +25,25 @@ func (q *Queries) AssignBelegbild(ctx context.Context, arg AssignBelegbildParams
 	return err
 }
 
+const countBelegbildByUploadSha = `-- name: CountBelegbildByUploadSha :one
+SELECT COUNT(*) FROM belegbilder WHERE upload_sha256 = ?
+`
+
+// FindDuplicateBild joins belege, so it cannot see an image that is still
+// waiting in *Offene Bilder*, which is the only kind of image the watched
+// folder creates. That intake needs exactly the question FindDuplicateBild
+// cannot answer: are these uploaded bytes already stored? A file whose store
+// succeeded but whose move into .processed failed stays in the folder and
+// would otherwise be stored again on every poll. upload_sha256 is the hash of
+// the uploaded bytes and is indexed, so this is a point lookup rather than a
+// table scan.
+func (q *Queries) CountBelegbildByUploadSha(ctx context.Context, uploadSha256 string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countBelegbildByUploadSha, uploadSha256)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countBlobKey = `-- name: CountBlobKey :one
 SELECT COUNT(*) FROM belegbilder WHERE blob_key = ? OR thumb_blob_key = ?
 `

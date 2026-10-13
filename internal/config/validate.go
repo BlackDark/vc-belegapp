@@ -98,6 +98,9 @@ func (c *Config) validate() error {
 	if err := c.validateNotify(); err != nil {
 		return err
 	}
+	if err := c.validateWatch(); err != nil {
+		return err
+	}
 
 	if c.JobWorkers < 1 {
 		return fmt.Errorf("BELEGAPP_JOB_WORKERS must be at least 1")
@@ -302,6 +305,33 @@ func (c *Config) validateNotify() error {
 	// Private and loopback hosts stay allowed, for the same reason as
 	// BELEGAPP_LLM_BASE_URL: this is operator config, and ntfy or a relay on
 	// the home network is a supported setup. No web request supplies it.
+	return nil
+}
+
+// validateWatch checks the watched-folder intake. An empty path is the feature
+// switched off, but the interval is checked either way: a value that could
+// never be right should not sit unnoticed in the environment until the day
+// somebody sets the folder, and the order of the two checks below is what
+// decides that. With a path set it is cleaned the same way BELEGAPP_DATA_DIR
+// is, so "/data/inbox/" and "/data/inbox" name the same folder and the poll
+// cannot straddle two of them.
+//
+// The path is not checked for existence. This process validates, it does not
+// create an operator's directory: a mount that has not arrived yet is a
+// normal state for a phone sync volume, and refusing to start over it would
+// turn a missing bind mount into an outage. The poll reports a folder it
+// cannot read as a failed job instead.
+func (c *Config) validateWatch() error {
+	if c.WatchInterval <= 0 {
+		return fmt.Errorf("BELEGAPP_WATCH_INTERVAL must be positive")
+	}
+	if !c.WatchConfigured() {
+		return nil
+	}
+	c.WatchFolder = filepath.Clean(strings.TrimSpace(c.WatchFolder))
+	if c.WatchFolder == "" || c.WatchFolder == "." {
+		return fmt.Errorf("BELEGAPP_WATCH_FOLDER is empty")
+	}
 	return nil
 }
 

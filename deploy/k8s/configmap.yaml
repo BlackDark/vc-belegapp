@@ -25,3 +25,9 @@ data:
   # BELEGAPP_NOTIFY_WEBHOOK_URL: https://ntfy.sh/belegapp-pruefen
   # BELEGAPP_NOTIFY_WEBHOOK_TOKEN_FILE: /run/secrets/notify_token
   # BELEGAPP_NOTIFY_TIMEOUT: 10s
+  # Receipt intake from a watched folder (scanner, download directory, phone
+  # sync client). Without this path no ticker runs and no watch job is
+  # created. The volume has to be writable: files are moved into
+  # <folder>/.processed/ after ingest and never deleted.
+  # BELEGAPP_WATCH_FOLDER: /watch
+  # BELEGAPP_WATCH_INTERVAL: 30s

@@ -136,6 +136,14 @@ func Serve(ctx context.Context, opt Options) error {
 		svc.MailAllowedSenders = opt.Config.MailAllowedSender
 		opt.Log.Info("mail intake enabled", "host", opt.Config.MailHost, "ordner", opt.Config.MailInbox, "abgelegt_in", opt.Config.MailDoneFolder)
 	}
+	if opt.Config.WatchConfigured() {
+		svc.WatchFolder = opt.Config.WatchFolder
+		svc.WatchInterval = opt.Config.WatchInterval
+		// Only the path is logged. It is operator config and the operator can
+		// see it in the environment; there is no secret in it.
+		opt.Log.Info("watched folder intake enabled",
+			"ordner", opt.Config.WatchFolder, "intervall", opt.Config.WatchInterval)
+	}
 	if opt.Config.NotifyConfigured() {
 		// The address is operator config and nothing else, so there is no
 		// request that can move it. The token is never logged and never leaves
@@ -178,6 +186,10 @@ func Serve(ctx context.Context, opt Options) error {
 	// No mailbox configured means no ticker and no mail job, ever.
 	if svc.Mail != nil {
 		background.Go(func() { svc.PollMailbox(runCtx) })
+	}
+	// Same for the watched folder: no path, no ticker and no watch job.
+	if svc.WatchFolder != "" {
+		background.Go(func() { svc.PollWatchFolder(runCtx) })
 	}
 	svc.StartJobs(runCtx)
 	defer func() {

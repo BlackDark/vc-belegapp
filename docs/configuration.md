@@ -70,6 +70,8 @@ Every variable uses the prefix `BELEGAPP_`. A secret may be set as `BELEGAPP_<NA
 | `BELEGAPP_NOTIFY_WEBHOOK_URL` | empty | Absolute http(s) address that is told when an image waits for review. Empty is the switch: no job is created and nothing is sent |
 | `BELEGAPP_NOTIFY_WEBHOOK_TOKEN`, `BELEGAPP_NOTIFY_WEBHOOK_TOKEN_FILE` | empty | Sent as `Authorization: Bearer …` when set. Never logged, never part of the payload |
 | `BELEGAPP_NOTIFY_TIMEOUT` | `10s` | Deadline for one webhook delivery, connect to answer |
+| `BELEGAPP_WATCH_FOLDER` | empty | Local folder polled for receipt images, for example `/watch`. Empty is the switch: no ticker runs and no watch job is created |
+| `BELEGAPP_WATCH_INTERVAL` | `30s` | Poll period. Must be positive |
 
 <!-- config-env-end -->
 
@@ -116,6 +118,65 @@ One poll reads at most `BELEGAPP_MAIL_MAX_MESSAGES_PER_POLL` messages; the rest 
 The two flags serve one purpose and are written together: `\Seen` is what the operator sees in their own client, and `$Belegapp` is what the poll searches on. The keyword is authoritative because a phone mail client marks a receipt read when it previews the picture, and that must not hide it from the intake. A server that keeps no keywords answers `BAD` to the probe, and the poll then searches on `\Seen` alone. A server that searches on the keyword but refuses to store it is downgraded to `\Seen` for the rest of the process, and the poll reports the failed store instead of claiming a success that did not happen.
 
 Transport: `BELEGAPP_MAIL_TLS` (implicit TLS, the default) or `BELEGAPP_MAIL_STARTTLS` on port `143`. Exactly one of the two must be set — there is no plaintext mode, because the password would cross the network in the clear.
+
+## Receipt intake from a watched folder
+
+Point the application at a local folder and every picture that appears in it becomes an unassigned Belegbild in *Offene Bilder*, exactly like a phone upload. That is the scanner, the download directory, and the folder a phone sync client writes into. It is off unless `BELEGAPP_WATCH_FOLDER` is set; without it no ticker runs and no watch job is created, so the other variable can stay in place.
+
+```bash
+BELEGAPP_WATCH_FOLDER=/watch
+BELEGAPP_WATCH_INTERVAL=30s
+```
+
+The folder must be readable **and writable** by the process (UID 65532 in the image). The poll moves files out of it, which a read-only bind mount refuses; see [deployment.md](deployment.md) for the mount and the Kubernetes `subPath` example.
+
+### What is read
+
+JPEG, PNG, and WebP (SPEC §1.2). The extension decides whether a file is looked at; the bytes decide whether it is stored, so a `.jpg` that is not an image is refused rather than mangled. A PDF or anything else in the folder is not an error — it is simply not an intake candidate and is left where it is.
+
+Skipped without being opened:
+
+| Skipped | Why |
+| --- | --- |
+| `.processed/`, `.abgelehnt/` and other dotfiles | The two folders this application creates itself, and the `._` sidecars a macOS sync client writes next to every file |
+| `.tmp`, `.part`, `.crdownload`, `.partial` | The writer is not finished |
+| A symlink | See below |
+| A subdirectory | Only the top level is polled |
+
+**A file is read only after it has been unchanged across two consecutive polls.** Its size and modification time are compared with what the previous poll saw. A sync client that writes in place produces a file whose stamp moves, and reading that would store a half-copied JPEG — and the truncated bytes are what the duplicate check would then remember, so the mistake would also suppress the real file later. The cost is one interval of waiting.
+
+### Where the file ends up
+
+**Files are moved, never deleted.** There is no code path in this intake that removes a file.
+
+| Folder | What is in it |
+| --- | --- |
+| `<folder>/.processed/` | Pictures whose image is stored. This is where the source goes, and it is the only copy once the stored image is swept |
+| `<folder>/.abgelehnt/` | Files this application will never store: a `.jpg` that is not an image, or one over `BELEGAPP_UPLOAD_MAX_BYTES`. The reason is in the log |
+
+Moving is deliberate. `BELEGAPP_UNASSIGNED_IMAGE_TTL` (default `24h`) deletes an unassigned Belegbild that was never reviewed — so deleting the source would destroy the only copy of a receipt the user still has in hand. After the move, `.processed/` is that copy and it stays there until the operator removes it.
+
+A repeated name is filed under `beleg.jpg`, then `beleg-2.jpg`, `beleg-3.jpg`. The first copy is never overwritten.
+
+A file in `.abgelehnt/` is only refused for as long as the reason holds: raise `BELEGAPP_UPLOAD_MAX_BYTES` above the file's size (or fix a broken scan) and move the file back into the watched folder by hand, and the next polls take it from there.
+
+### The move can fail, and it still does not duplicate
+
+If the image is stored and the move then fails — a read-only mount, a full disk — the file is still in the folder and the next poll would read it again. The next poll does not store it again: it hashes the bytes and looks up `belegbilder.upload_sha256`, an indexed point lookup that answers "are these exact bytes already stored?". On a hit it only retries the move.
+
+The lookup is not scoped: it matches every Belegbild that holds these bytes, whether it is still waiting in *Offene Bilder*, already assigned to a Beleg, or stored months ago. So a file whose bytes were ever stored is filed into `.processed/` without a second Belegbild — byte-identical means almost certainly the same receipt, and this is also the only way a repeated drop ever leaves the inbox. Such a file is logged at **WARN** (`watched file already stored; filed without a second image`, with the file name and the number of matching images) and the poll summary counts it as `bereits_gespeichert`, not as an ordinary `verschoben`, so a file that disappears from the inbox without producing an image is never silent.
+
+This is a database question, not an in-memory set, which is why it survives a restart. `FindDuplicateBild` cannot answer it: that query joins `belege`, so it never sees an image that is still waiting in *Offene Bilder* — the only kind of image this intake creates.
+
+The dedupe and the TTL sweep meet at one point: if the stored image is swept while the source file is still in the folder — a move failure that lasted a day, say — there is nothing left to match, and every poll stores the bytes again as a new Belegbild until the move finally succeeds.
+
+### Symlinks are not followed
+
+A symlink in the watched folder is skipped. Following it would let a link pull an arbitrary file from elsewhere on the host into the store, and the move afterwards would move the link rather than the file it names. Ordinary copies and hard links — what a sync client actually produces — are ingested normally.
+
+### When the folder cannot be read
+
+A missing folder (an unmounted phone volume) or one the process may not read fails the poll, so the job is retried with the usual backoff and shows up in the job list. The intake does not silently stop.
 
 ## Review notifications
 

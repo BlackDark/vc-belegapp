@@ -44,6 +44,13 @@ spec:
               mountPath: /data
             - name: tmp
               mountPath: /tmp
+            # Receipt intake from a watched folder. Uncomment together with
+            # BELEGAPP_WATCH_FOLDER in the ConfigMap and the watch volume
+            # below. The mount must be writable: files are moved into
+            # .processed/ after ingest and never deleted. A ReadWriteOnce
+            # PVC keeps it to one node, which matches replicas: 1.
+            # - name: watch
+            #   mountPath: /watch
           readinessProbe:
             httpGet:
               path: /readyz
@@ -74,3 +81,14 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 1Gi
+        # The watched-folder volume. Uncomment together with the mount above.
+        # It is omitted from the default kustomization: an instance that does
+        # not use the intake should not carry a second volume. Alternatively
+        # drop this block and mount a subPath of belegapp-data instead:
+        #   - name: data            # mountPath: /data
+        #     subPath: watch        # mountPath: /watch
+        # That keeps .processed/ and .abgelehnt/ on the data volume, so a
+        # backup of /data contains the archived sources as well.
+        # - name: watch
+        #   persistentVolumeClaim:
+        #     claimName: belegapp-watch

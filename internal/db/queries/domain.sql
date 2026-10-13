@@ -149,6 +149,17 @@ DELETE FROM belegbilder WHERE id = ? AND beleg_id IS NULL;
 -- name: CountBlobKey :one
 SELECT COUNT(*) FROM belegbilder WHERE blob_key = ? OR thumb_blob_key = ?;
 
+-- FindDuplicateBild joins belege, so it cannot see an image that is still
+-- waiting in *Offene Bilder*, which is the only kind of image the watched
+-- folder creates. That intake needs exactly the question FindDuplicateBild
+-- cannot answer: are these uploaded bytes already stored? A file whose store
+-- succeeded but whose move into .processed failed stays in the folder and
+-- would otherwise be stored again on every poll. upload_sha256 is the hash of
+-- the uploaded bytes and is indexed, so this is a point lookup rather than a
+-- table scan.
+-- name: CountBelegbildByUploadSha :one
+SELECT COUNT(*) FROM belegbilder WHERE upload_sha256 = ?;
+
 -- name: CountExportBlobKey :one
 SELECT COUNT(*) FROM monatsexporte
 WHERE pdf_blob_key = sqlc.arg('key')

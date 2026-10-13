@@ -108,6 +108,13 @@ type Config struct {
 	NotifyWebhookToken string        `env:"BELEGAPP_NOTIFY_WEBHOOK_TOKEN"`
 	NotifyTimeout      time.Duration `env:"BELEGAPP_NOTIFY_TIMEOUT" envDefault:"10s"`
 
+	// WatchFolder is the watched-folder intake. The path itself is the
+	// switch: empty means no ticker and no watch job, whatever WatchInterval
+	// says. It is operator config alone, like the mail host and the webhook
+	// address, and no web request can point it somewhere else.
+	WatchFolder   string        `env:"BELEGAPP_WATCH_FOLDER"`
+	WatchInterval time.Duration `env:"BELEGAPP_WATCH_INTERVAL" envDefault:"30s"`
+
 	Location *time.Location
 }
 
@@ -146,6 +153,14 @@ func (c Config) MailConfigured() bool {
 // names an address.
 func (c Config) NotifyConfigured() bool {
 	return strings.TrimSpace(c.NotifyWebhookURL) != ""
+}
+
+// WatchConfigured reports whether the watched-folder intake may run. The
+// folder path is the single gate: app.go starts no ticker and enqueues no
+// watch job when this is false, so an instance that does not use the feature
+// never grows a queue row and never creates a directory.
+func (c Config) WatchConfigured() bool {
+	return strings.TrimSpace(c.WatchFolder) != ""
 }
 
 func applySecretFiles(cfg *Config) error {

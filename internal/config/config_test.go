@@ -461,6 +461,107 @@ func TestNotifyConfigured(t *testing.T) {
 	}
 }
 
+// Without a folder the whole watched-folder intake is off and the interval
+// keeps its default, so an instance that never configures one is unaffected.
+func TestLoadWatchDefaults(t *testing.T) {
+	clearEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WatchConfigured() {
+		t.Fatal("watched folder is configured on defaults")
+	}
+	if cfg.WatchFolder != "" {
+		t.Fatalf("watch folder default %q", cfg.WatchFolder)
+	}
+	if cfg.WatchInterval != 30*time.Second {
+		t.Fatalf("watch interval %s", cfg.WatchInterval)
+	}
+}
+
+func TestLoadWatchEnabled(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BELEGAPP_WATCH_FOLDER", "/data/inbox")
+	t.Setenv("BELEGAPP_WATCH_INTERVAL", "2m")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.WatchConfigured() {
+		t.Fatal("watched folder is not configured")
+	}
+	if cfg.WatchFolder != "/data/inbox" || cfg.WatchInterval != 2*time.Minute {
+		t.Fatalf("watch config folder %q interval %s", cfg.WatchFolder, cfg.WatchInterval)
+	}
+}
+
+// The path is cleaned like BELEGAPP_DATA_DIR, so a trailing slash or a "."
+// segment cannot make the poll straddle two folders.
+func TestLoadWatchCleansTheFolder(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BELEGAPP_WATCH_FOLDER", "  /data/./inbox//  ")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WatchFolder != "/data/inbox" {
+		t.Fatalf("watch folder %q", cfg.WatchFolder)
+	}
+}
+
+func TestLoadWatchRejectsInvalid(t *testing.T) {
+	for _, tc := range []struct{ name, value string }{
+		{"zero interval", "0s"},
+		{"negative interval", "-30s"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("BELEGAPP_WATCH_FOLDER", "/data/inbox")
+			t.Setenv("BELEGAPP_WATCH_INTERVAL", tc.value)
+			if _, err := Load(); err == nil {
+				t.Fatal("invalid interval was accepted")
+			}
+		})
+	}
+	// A blank path is the feature switched off, not an error, so the rest of
+	// the environment still has to load.
+	t.Run("blank folder is off", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv("BELEGAPP_WATCH_FOLDER", "   ")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.WatchConfigured() {
+			t.Fatal("a blank folder switched the intake on")
+		}
+	})
+	// The interval is validated even with the feature off: a value that could
+	// never be right should not sit unnoticed in the environment until the
+	// day somebody sets the folder.
+	t.Run("interval is validated while off", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv("BELEGAPP_WATCH_INTERVAL", "0s")
+		if _, err := Load(); err == nil {
+			t.Fatal("a zero interval was accepted with the feature off")
+		}
+	})
+}
+
+// WatchConfigured is the single gate the application reads, so a blank path
+// must not switch the feature on.
+func TestWatchConfigured(t *testing.T) {
+	if !(Config{WatchFolder: "/data/inbox"}).WatchConfigured() {
+		t.Fatal("a named folder reported as not configured")
+	}
+	for _, folder := range []string{"", "   ", "\t"} {
+		if (Config{WatchFolder: folder}).WatchConfigured() {
+			t.Fatalf("folder %q reported as configured", folder)
+		}
+	}
+}
+
 // MailConfigured is the single gate the application reads, so each missing
 // piece has to turn it off.
 func TestMailConfigured(t *testing.T) {
