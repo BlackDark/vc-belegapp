@@ -21,6 +21,10 @@ type Job struct {
 }
 
 // Queue persists jobs in SQLite and runs them with bounded concurrency.
+//
+// Every job type shares one FIFO pool, so Policy is what keeps a background
+// intake from taking the whole pool away from the work a user waits for. See
+// DefaultPolicy.
 type Queue struct {
 	DB      *db.DB
 	Workers int
@@ -38,7 +42,16 @@ type Queue struct {
 	// counting every job of the queue as the same measurement.
 	OnResult func(typ, result string, seconds float64)
 	OnStats  func(waiting int)
-	wake     chan struct{}
+	// Policy caps how many jobs of one type run at the same time and how long a
+	// handler of that type may take. The zero value caps nothing and starts
+	// nothing; the application sets DefaultPolicy, see app.go.
+	Policy Policy
+	wake   chan struct{}
+	// slots counts the running jobs per type. It is guarded by slotsMu and only
+	// holds an entry while a capped type is below its cap, which is what lets
+	// acquire decide without a per-type semaphore to allocate.
+	slots    map[string]int
+	slotsMu  sync.Mutex
 	wakeOnce sync.Once
 }
 
@@ -126,12 +139,30 @@ func (q *Queue) loop(ctx context.Context, poll time.Duration) {
 }
 
 func (q *Queue) execute(ctx context.Context, job Job) {
+	if !q.acquire(job.Typ) {
+		q.deferClaim(ctx, job)
+		return
+	}
+	defer q.release(job.Typ)
 	if q.Handle == nil {
 		q.finishLogged(ctx, job, "fehler", q.stamp(), nil, "no handler")
 		return
 	}
-	seconds, result, err := q.Handle(ctx, job)
+	// The handler runs on a derived context carrying the deadline its type is
+	// given. Everything after this uses the worker context again: a deadline
+	// that fired must not also fail the status write.
+	budget := q.Policy.timeout(job.Typ)
+	runCtx := ctx
+	if budget > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, budget)
+		defer cancel()
+	}
+	seconds, result, err := q.Handle(runCtx, job)
 	if err == nil {
+		// A handler that ignores the deadline and returns anyway did its work,
+		// so it is recorded as done: failing it would only repeat work that has
+		// already happened — a second webhook post, a second ingest.
 		if result == "" {
 			result = `{"ok":true}`
 		}
@@ -152,6 +183,13 @@ func (q *Queue) execute(ctx context.Context, job Job) {
 		defer cancel()
 		q.finishLogged(finishCtx, job, "wartend", q.stamp(), nil, nil)
 		return
+	}
+	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		// The deadline fired. What the handler returned is then an accident of
+		// where it was interrupted, so the reason stored on the row is the one
+		// an operator can act on. The retry decision below is unchanged: a
+		// timeout is transient and gets the attempts any transient failure gets.
+		err = &TimeoutError{Typ: job.Typ, Budget: budget}
 	}
 	kind := retryKind(err)
 	if shouldRetry(kind, job.Versuche) {
@@ -177,6 +215,49 @@ func (q *Queue) execute(ctx context.Context, job Job) {
 		q.Log.Warn("job failed", "id", job.ID, "typ", job.Typ, "attempt", job.Versuche, "err", safeText(err))
 	}
 	q.stats(ctx)
+}
+
+// deferWriteTimeout is how long the undo gets when the worker context is
+// already gone. It matches what execute gives the status write it makes in the
+// same situation.
+const deferWriteTimeout = 2 * time.Second
+
+// deferClaim hands a claimed job back because its type is already at its
+// concurrency cap.
+//
+// The claim is undone completely: versuche goes back to what it was before
+// ClaimJob, so a job that had to wait for a slot carries none of the cost of
+// that wait into its retry budget. It is pushed out by deferDelay rather than
+// left eligible, which is what lets the next waiting job — an erkennung, say —
+// be claimed right now instead of waiting behind a job that cannot run.
+//
+// The write runs on a context of its own when the worker context is already
+// cancelled, which is the case that matters: a claim that is not undone leaves
+// the row in "laeuft" for the rest of this process. The intake pollers count
+// "laeuft" as "a job of mine is already open" (CountOpenJobsByPayload), so a
+// mail poll left behind would suppress every later poll as well — the intake
+// would be silently dead until a restart, which is exactly what Reset at the
+// next start was supposed to prevent it from being. For the same reason the
+// undo restores versuche here rather than leaving Reset to guess: a deferred
+// job has had no attempt, and ResetRunningJobs deliberately does not touch
+// versuche.
+func (q *Queue) deferClaim(ctx context.Context, job Job) {
+	writeCtx := ctx
+	if ctx.Err() != nil {
+		var cancel context.CancelFunc
+		writeCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), deferWriteTimeout)
+		defer cancel()
+	}
+	next := q.now().Add(deferDelay).UTC().Format(time.RFC3339)
+	err := db.New(q.DB.Write).DeferJob(writeCtx, db.DeferJobParams{
+		NaechsterVersuchAm: next,
+		GeaendertAm:        q.stamp(),
+		ID:                 job.ID,
+	})
+	if err != nil && q.Log != nil {
+		q.Log.Error("job defer failed; the job stays in laeuft and the intake that owns it stops queueing until the next start",
+			"id", job.ID, "typ", job.Typ, "err", err)
+	}
 }
 
 func (q *Queue) claim(ctx context.Context) (Job, error) {

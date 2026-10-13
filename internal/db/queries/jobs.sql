@@ -24,6 +24,18 @@ SET status = 'laeuft',
     geaendert_am = ?
 WHERE id = ? AND status = 'wartend';
 
+-- name: DeferJob :exec
+-- Undo a claim whose job type is at its concurrency cap: the job goes back to
+-- waiting, pushed out by the given time so it is not claimed again on the very
+-- next poll, and versuche returns to what it was, because a job that had to
+-- wait for a free slot has not had an attempt.
+UPDATE jobs
+SET status = 'wartend',
+    versuche = versuche - 1,
+    naechster_versuch_am = ?,
+    geaendert_am = ?
+WHERE id = ? AND status = 'laeuft';
+
 -- name: UpdateJob :exec
 UPDATE jobs
 SET status = ?,

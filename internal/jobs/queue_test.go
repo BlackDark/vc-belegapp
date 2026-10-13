@@ -153,7 +153,7 @@ func TestQueueRequeuesWhenCancelled(t *testing.T) {
 	waitStatus(t, database, id, "wartend")
 }
 
-// The queue runs four job types and the recognition metric counts one of them.
+// The queue runs five job types and the recognition metric counts one of them.
 // OnResult therefore has to name the type, or a webhook delivery — which fires
 // on every ingest — inflates a counter called belegapp_erkennung_total.
 func TestQueueOnResultNamesTheJobType(t *testing.T) {
@@ -167,7 +167,8 @@ func TestQueueOnResultNamesTheJobType(t *testing.T) {
 		results[typ] = result
 	}
 	ctx := context.Background()
-	for _, typ := range []string{"erkennung", "notify", "mail", "datenexport"} {
+	jobTypes := []string{"erkennung", "notify", "mail", "watch", "datenexport"}
+	for _, typ := range jobTypes {
 		if _, err := q.Enqueue(ctx, typ, "{}"); err != nil {
 			t.Fatal(err)
 		}
@@ -176,20 +177,21 @@ func TestQueueOnResultNamesTheJobType(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		mu.Lock()
-		done := len(results) == 4
+		done := len(results) == len(jobTypes)
 		mu.Unlock()
 		if done {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("OnResult reported %d of 4 job types", len(results))
+			t.Fatalf("OnResult reported %d of %d job types", len(results), len(jobTypes))
 		}
 		time.Sleep(15 * time.Millisecond)
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	for typ, want := range map[string]string{
-		"erkennung": "fertig", "notify": "fertig", "mail": "fertig", "datenexport": "fertig",
+		"erkennung": "fertig", "notify": "fertig", "mail": "fertig",
+		"watch": "fertig", "datenexport": "fertig",
 	} {
 		if results[typ] != want {
 			t.Errorf("job type %q reported as %q, want %q", typ, results[typ], want)
@@ -212,4 +214,72 @@ func TestQueueResetRequeuesRunning(t *testing.T) {
 	}
 	runQueue(t, q)
 	waitStatus(t, database, id, "fertig")
+}
+
+// A job whose type is at its cap is handed back, and the hand-back has to
+// happen even when the worker context is already cancelled — which is exactly
+// when it used to be skipped.
+//
+// It is not a cosmetic detail. CountOpenJobsByPayload counts "laeuft" as
+// "already open", so a poll left behind suppresses every later poll of the same
+// type as well: the mail intake would be dead for the rest of the process and
+// only a restart would bring it back. versuche has to go back with it, because
+// a deferred job has had no attempt and ResetRunningJobs leaves the counter
+// alone.
+func TestDeferredJobIsHandedBackEvenWhileTheQueueShutsDown(t *testing.T) {
+	database := openQueueDB(t)
+	q := testQueue(database, func(context.Context, Job) (float64, string, error) { return 0.2, "", nil })
+	q.Policy = Policy{Concurrency: map[string]int{"watch": 1}}
+
+	id, err := q.Enqueue(context.Background(), "watch", "{}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Claim it the way a worker does, then shut the worker context down before
+	// the hand-back.
+	if _, err := q.claim(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if row := jobRow(t, database, id); row.Status != "laeuft" || row.Versuche != 1 {
+		t.Fatalf("claimed row is %q with versuche %d", row.Status, row.Versuche)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	q.deferClaim(cancelled, Job{ID: id, Typ: "watch"})
+
+	row := jobRow(t, database, id)
+	if row.Status != "wartend" {
+		t.Errorf("status %q, want wartend; a job left in laeuft suppresses every later poll of its type", row.Status)
+	}
+	if row.Versuche != 0 {
+		t.Errorf("versuche %d, want 0; waiting for a free slot is not an attempt", row.Versuche)
+	}
+}
+
+// The intake pollers count "wartend" and "laeuft" as open, so a job stuck in
+// "laeuft" is what stops a ticker. This pins the query the safety argument in
+// deferClaim rests on: the count that suppresses a new poll includes a running
+// one, which is why leaving a job there is not a cosmetic problem.
+func TestOpenJobCountIncludesRunningJobs(t *testing.T) {
+	database := openQueueDB(t)
+	ctx := context.Background()
+	id := "job-offen"
+	if err := db.New(database.Write).InsertJob(ctx, db.InsertJobParams{
+		ID: id, Typ: "mail", Payload: "{}",
+		NaechsterVersuchAm: "2020-01-01T00:00:00Z",
+		ErstelltAm:         "2020-01-01T00:00:00Z",
+		GeaendertAm:        "2020-01-01T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	params := db.CountOpenJobsByPayloadParams{Typ: "mail", Payload: "{}"}
+	if n, err := db.New(database.Write).CountOpenJobsByPayload(ctx, params); err != nil || n != 1 {
+		t.Fatalf("open jobs %d (%v), want the waiting one", n, err)
+	}
+	if _, err := database.Write.Exec(`UPDATE jobs SET status = 'laeuft' WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := db.New(database.Write).CountOpenJobsByPayload(ctx, params); err != nil || n != 1 {
+		t.Fatalf("open jobs %d (%v), want the running one counted too", n, err)
+	}
 }

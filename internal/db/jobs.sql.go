@@ -55,6 +55,30 @@ func (q *Queries) CountOpenJobsByPayload(ctx context.Context, arg CountOpenJobsB
 	return count, err
 }
 
+const deferJob = `-- name: DeferJob :exec
+UPDATE jobs
+SET status = 'wartend',
+    versuche = versuche - 1,
+    naechster_versuch_am = ?,
+    geaendert_am = ?
+WHERE id = ? AND status = 'laeuft'
+`
+
+type DeferJobParams struct {
+	NaechsterVersuchAm string
+	GeaendertAm        string
+	ID                 string
+}
+
+// Undo a claim whose job type is at its concurrency cap: the job goes back to
+// waiting, pushed out by the given time so it is not claimed again on the very
+// next poll, and versuche returns to what it was, because a job that had to
+// wait for a free slot has not had an attempt.
+func (q *Queries) DeferJob(ctx context.Context, arg DeferJobParams) error {
+	_, err := q.db.ExecContext(ctx, deferJob, arg.NaechsterVersuchAm, arg.GeaendertAm, arg.ID)
+	return err
+}
+
 const getJob = `-- name: GetJob :one
 SELECT id, typ, payload, status, versuche, naechster_versuch_am, ergebnis, fehler, erstellt_am, geaendert_am
 FROM jobs
