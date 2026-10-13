@@ -12,3 +12,5 @@ belegapp restore /data/backups/belegapp.zip --yes
 `restore` refuses to run without `--yes`. Both commands use the same environment as `serve` (`BELEGAPP_DATA_DIR`, database path, storage backend).
 
 The Kubernetes CronJob [deploy/k8s/cronjob.yaml](../deploy/k8s/cronjob.yaml) runs `belegapp backup --out /data/backups/belegapp.zip` at 03:15. A ReadWriteOnce volume often cannot be mounted by that job while the Deployment holds it. See [Kubernetes](deployment.md#kubernetes). A volume snapshot is a useful second copy; the zip is the format that round-trips blobs and the audit chain.
+
+A backup is always smaller than the live database: the snapshot strips sessions and jobs, and `VACUUM INTO` writes a compacted copy. That is a copy, not a shrink of the live file — the live database only gets smaller when the finished job rows are pruned and the freed pages are reclaimed. See [Database size](deployment.md#database-size).

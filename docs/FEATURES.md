@@ -27,6 +27,7 @@ First release: [v1.0.0](https://github.com/BlackDark/vc-belegapp/releases/tag/v1
 - **Pauschalsteuer, Soli, KiSt:** 25 % Pauschalsteuer, Solidaritätszuschlag, and Kirchensteuer (simplified-procedure rates by Bundesland) in integer cents, checked against the SPEC §6.5 test vectors. See [calculation](calculation.md).
 - Warnings (weekend, holiday, month cap, duplicates, subsidy above the ceiling), holiday calendar per Bundesland, month view.
 - Append-only Änderungsprotokoll with a SHA-256 hash chain ([ADR 0005](adr/0005-month-lock-audit-log.md)); `belegapp verify-audit`.
+- **Queue history pruning:** finished job rows (`fertig`, `fehler`) older than `BELEGAPP_JOB_RETENTION` (default `168h`) are deleted hourly. The status filter is the rule, not the age: a job in `wartend` or `laeuft` still owes work and is never deleted, whatever its age. Four of the five job types are created by a timer rather than by a person, so without this the `jobs` table would grow by roughly a million rows a year at the default watched-folder interval. The prune is not part of the queue — own goroutine, own ticker, 1000-row batches — so it cannot delay a claim, and it runs `PRAGMA incremental_vacuum` on databases created with `auto_vacuum = INCREMENTAL` so the file actually shrinks. An existing database keeps working unchanged and needs a one-time `VACUUM` to get the space back. See [SPEC](SPEC.md) §5.2 and [configuration](configuration.md).
 
 ## M2 Belegerkennung
 

@@ -83,6 +83,21 @@ Without a `subPath` the mount point is the volume root, which is fine for a dedi
 
 A PVC that is not mounted yet makes the folder unreadable, and the poll then fails the job rather than silently doing nothing — that is the intended signal, not a crash.
 
+## Database size
+
+Everything lives in one SQLite file under `/data`. Size it for the receipts and the images, not for the queue: `BELEGAPP_JOB_RETENTION` (default `168h`) prunes finished job rows hourly, so a watched folder polling every 30 s adds about 20 000 rows a week rather than a million a year. See [configuration](configuration.md#the-jobs-table-and-the-size-of-the-database) for what is deleted and what is not.
+
+Two caveats an operator should know before sizing a volume:
+
+- **An existing database does not shrink automatically.** `auto_vacuum = INCREMENTAL` is set when a database is *created*, and SQLite ignores it on a file that already has tables. An upgraded instance keeps deleting its rows and keeps its file size. To get the space back, stop the process and run the full vacuum once — it rewrites the file and needs free disk roughly the size of the database:
+
+  ```bash
+  sqlite3 /data/belegapp.db 'PRAGMA auto_vacuum=INCREMENTAL; VACUUM;'
+  ```
+
+  During that rewrite the database is unavailable, so do it in a maintenance window rather than from a sidecar.
+- **Deleted rows never grow the file, but the file also does not shrink on a healthy database without the reclaim.** On a database created with `auto_vacuum` the hourly prune runs `PRAGMA incremental_vacuum` (4 MiB per pass), which does shrink it. Skipping that (for example by giving the data volume far more space than needed) costs nothing but disk.
+
 ## Binary
 
 Go 1.27.2, Node 24.21.0 (`.nvmrc`), pnpm 12.10.1 (`packageManager` in `web/package.json`). Typst 0.15.1 must be on `PATH` for PDFs and `/readyz` ([scripts/install-typst.sh](../scripts/install-typst.sh)).

@@ -84,7 +84,19 @@ type Config struct {
 	// — it renders every Belegbild and zips the lot, and a ceiling there would
 	// fail a slow export on a large dataset three times and leave a permanently
 	// failed download behind.
-	JobTimeout           time.Duration `env:"BELEGAPP_JOB_TIMEOUT" envDefault:"10m"`
+	JobTimeout time.Duration `env:"BELEGAPP_JOB_TIMEOUT" envDefault:"10m"`
+	// JobRetention is how long a finished queue row — fertig or fehler —
+	// stays in the jobs table. Rows that still owe work (wartend, laeuft) are
+	// never touched, whatever their age.
+	//
+	// The default is a week. It has to clear the two things a user can still
+	// be looking at: a Datenexport download is good for 24 h, and a job the
+	// UI polls while it waits stays readable for as long as it waits — a
+	// window shorter than that would turn "still running" into "Job nicht
+	// gefunden" for a slow export. A week is also short enough to matter: at
+	// the default 30 s watched-folder interval the queue would otherwise hold
+	// about a million rows a year, and this holds about twenty thousand.
+	JobRetention         time.Duration `env:"BELEGAPP_JOB_RETENTION" envDefault:"168h"`
 	UploadMaxBytes       int64         `env:"BELEGAPP_UPLOAD_MAX_BYTES" envDefault:"15728640"`
 	ImportMaxBytes       int64         `env:"BELEGAPP_IMPORT_MAX_BYTES" envDefault:"4294967296"`
 	UnassignedImageTTL   time.Duration `env:"BELEGAPP_UNASSIGNED_IMAGE_TTL" envDefault:"24h"`

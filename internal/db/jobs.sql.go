@@ -79,6 +79,35 @@ func (q *Queries) DeferJob(ctx context.Context, arg DeferJobParams) error {
 	return err
 }
 
+const deleteFinishedJobs = `-- name: DeleteFinishedJobs :execresult
+DELETE FROM jobs
+WHERE id IN (
+    SELECT id FROM jobs
+    WHERE jobs.status IN ('fertig', 'fehler') AND jobs.geaendert_am < ?
+    ORDER BY jobs.geaendert_am ASC
+    LIMIT ?
+)
+`
+
+type DeleteFinishedJobsParams struct {
+	GeaendertAm string
+	Limit       int64
+}
+
+// The prune removes history, never work: only rows that already reached a
+// final status qualify, so a job that is wartend or laeuft still owes work and
+// survives no matter how old it is. geaendert_am is the moment the row reached
+// that status, which is what the retention window is measured against.
+//
+// The rows are deleted in batches because the write pool has one connection
+// (internal/db.Open) and the queue needs it: a prune that held it for one long
+// statement would delay every claim and every status write. LIMIT is what
+// keeps each statement short, and ORDER BY lets the partial index from 00008
+// walk straight to the oldest rows.
+func (q *Queries) DeleteFinishedJobs(ctx context.Context, arg DeleteFinishedJobsParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, deleteFinishedJobs, arg.GeaendertAm, arg.Limit)
+}
+
 const getJob = `-- name: GetJob :one
 SELECT id, typ, payload, status, versuche, naechster_versuch_am, ergebnis, fehler, erstellt_am, geaendert_am
 FROM jobs

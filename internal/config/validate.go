@@ -108,6 +108,13 @@ func (c *Config) validate() error {
 	if c.JobTimeout <= 0 {
 		return fmt.Errorf("BELEGAPP_JOB_TIMEOUT must be positive")
 	}
+	if c.JobRetention <= 0 {
+		// Zero is not "keep everything": a prune without a window would have
+		// to guess which finished rows are old enough, and the only guess it
+		// could make would be the one that deletes a download somebody is
+		// waiting for. Refusing at startup names the variable instead.
+		return fmt.Errorf("BELEGAPP_JOB_RETENTION must be positive")
+	}
 	if c.UploadMaxBytes < 1 {
 		return fmt.Errorf("BELEGAPP_UPLOAD_MAX_BYTES must be at least 1")
 	}

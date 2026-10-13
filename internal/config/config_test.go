@@ -41,6 +41,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.JobTimeout != 10*time.Minute {
 		t.Fatalf("job timeout %s", cfg.JobTimeout)
 	}
+	if cfg.JobRetention != 168*time.Hour {
+		t.Fatalf("job retention %s", cfg.JobRetention)
+	}
 	if cfg.OIDCButtonLabel != "Mit SSO anmelden" || cfg.AuthConfigured() {
 		t.Fatalf("auth defaults")
 	}
@@ -67,6 +70,7 @@ func TestLoadRejectsInvalid(t *testing.T) {
 		{"llm format", "BELEGAPP_LLM_RESPONSE_FORMAT", "text", "BELEGAPP_LLM_RESPONSE_FORMAT"},
 		{"workers", "BELEGAPP_JOB_WORKERS", "0", "BELEGAPP_JOB_WORKERS"},
 		{"job timeout", "BELEGAPP_JOB_TIMEOUT", "0", "BELEGAPP_JOB_TIMEOUT"},
+		{"job retention", "BELEGAPP_JOB_RETENTION", "0", "BELEGAPP_JOB_RETENTION"},
 		{"retention", "BELEGAPP_EXPORT_RETENTION_YEARS", "0", "BELEGAPP_EXPORT_RETENTION_YEARS"},
 		{"base url path", "BELEGAPP_BASE_URL", "https://belege.example.de/app", "BELEGAPP_BASE_URL"},
 	}

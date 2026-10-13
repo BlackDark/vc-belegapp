@@ -48,6 +48,7 @@ Every variable uses the prefix `BELEGAPP_`. A secret may be set as `BELEGAPP_<NA
 | `BELEGAPP_LLM_MAX_IMAGE_PX` | `1600` | Long edge of the JPEG sent to the model |
 | `BELEGAPP_JOB_WORKERS` | `2` | Parallel jobs in the worker pool. Each of `mail`, `watch`, `notify` and `datenexport` still runs at most one job at a time, so the recognition keeps the rest |
 | `BELEGAPP_JOB_TIMEOUT` | `10m` | Deadline for one background intake job: `mail`, `watch`, `notify`. A job that runs past it fails with `Zeitüberschreitung`. It does not interrupt blocking filesystem I/O. Not applied to `erkennung`, which bounds its own model call with `BELEGAPP_LLM_TIMEOUT`, and not to `datenexport`, which a person is waiting for |
+| `BELEGAPP_JOB_RETENTION` | `168h` | How long a finished job row (`fertig`, `fehler`) stays in the `jobs` table. Rows that still owe work (`wartend`, `laeuft`) are never deleted, whatever their age. Must be positive |
 | `BELEGAPP_UPLOAD_MAX_BYTES` | `15728640` | Image upload limit, 15 MiB |
 | `BELEGAPP_IMPORT_MAX_BYTES` | `4294967296` | Datenimport limit, 4 GiB |
 | `BELEGAPP_UNASSIGNED_IMAGE_TTL` | `24h` | Delete unassigned Belegbilder, then blobs nothing still references |
@@ -88,6 +89,29 @@ All five job types share one FIFO pool of `BELEGAPP_JOB_WORKERS` workers. Two ru
 The data export is deliberately outside that deadline. It is **user-initiated**: somebody pressed the button in the UI and is waiting for the download. A full export snapshots the database, renders every Belegbild and zips the lot, which on a large dataset legitimately runs past any ceiling an operator would call generous — and a deadline there would fail the export three times over and leave a permanently failed download behind. There is **no per-type override**: `BELEGAPP_JOB_TIMEOUT` sets one number for the three intake types and nothing else, so it cannot be raised for `datenexport`. The only things bounding that job are the one-job cap, the storage it writes to, and the shutdown context.
 
 What the deadline does **not** do: interrupt blocking filesystem I/O. On a hung NFS or SMB mount a `watch` job stays inside its read until the mount answers, and it keeps the one worker it claimed. That is why the cap exists: a stuck intake can occupy at most one worker per type, so a stuck `watch` still leaves the rest of the pool to `erkennung`. Several types stuck at once — a hung mount and, say, a webhook server that accepts connections and never answers — can still fill the pool. Restarting does not help either: the job is re-queued and hangs again. Take the intake offline (`BELEGAPP_WATCH_FOLDER=` to disable the folder poll) until the mount is back. The same applies to a data export on a slow mount: it keeps its one worker, and a stop waits at most 15 seconds for it before logging that the workers did not end.
+
+### The jobs table and the size of the database
+
+Every job is one row, and four of the five types are created by a timer rather than by a person: at the default `BELEGAPP_WATCH_INTERVAL` of 30 s a watched folder writes roughly 3 000 rows a day, and a `mail` or `watch` job that fails permanently adds one row per interval, forever. Nothing deleted those rows, so the table — and the database file that holds it — only ever grew. `internal/jobs` now prunes them hourly.
+
+**What is deleted.** A row is removed once it reached a final status (`fertig` or `fehler`) and its `geaendert_am` is older than `BELEGAPP_JOB_RETENTION`. The status filter is the important half: a job in `wartend` or `laeuft` still owes work, and no age changes that, so those rows are never deleted by the prune whatever the window is. A restart does not touch them either — it moves `laeuft` back to `wartend`, and the next start tries again.
+
+**The default is `168h` (7 days).** It has to clear what a user can still be looking at: a Datenexport download is good for 24 h, and a job the UI is polling has to stay readable for as long as the UI is willing to poll — a window shorter than a slow export would turn "still running" into `Job nicht gefunden`. A week is also short enough to matter: it holds about 20 000 rows where an unpruned queue holds about a million a year. Raise it if an operator wants a longer audit trail of what the queue did; shorten it if the database file has to stay small.
+
+**It does not slow the queue down.** The prune is not part of the queue: it runs on its own goroutine and its own hourly ticker, and it deletes in batches of 1000 rows so it holds the single write connection for milliseconds at a time rather than for the whole backlog.
+
+**The file does not shrink by itself — read this before sizing a volume.** SQLite frees the pages a deleted row used, but keeps them inside the database file; only an explicit reclaim returns them. Two things make it work here:
+
+- New databases are created with `auto_vacuum = INCREMENTAL` (`internal/db/open.go`), so the freed pages become reclaimable instead of dead weight in the middle of the file.
+- The prune runs `PRAGMA incremental_vacuum` after each pass, which is what actually truncates the file. It is bounded to 4 MiB per run; whatever is left over is reclaimed by the next one.
+
+An **existing** database does not get this automatically. SQLite ignores `auto_vacuum` on a database that already has tables — silently, by design — so an upgraded instance keeps deleting its rows correctly and keeps its file size exactly as it was. Nothing breaks, and nothing gets smaller on its own. To enable reclaiming on an existing install, stop the process and run the full vacuum once; it rewrites the file and takes as long and as much free disk as the database is large:
+
+```bash
+sqlite3 /data/belegapp.db 'PRAGMA auto_vacuum=INCREMENTAL; VACUUM;'
+```
+
+A plain `VACUUM` without the pragma is not enough, and so is `PRAGMA incremental_vacuum` alone: on a database that was created without `auto_vacuum` both are no-ops. If you would rather not rewrite the file, leaving it alone is a valid choice — the prune then only keeps the *growth* down, which is the part that was unbounded.
 
 ## Ollama
 

@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -25,7 +26,22 @@ func openQueueDB(t *testing.T) *db.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = database.Close() })
+	// Closing the pools is not quite enough to make the directory removable.
+	// database/sql opens connections on a goroutine of its own, and that
+	// goroutine can still be inside sqlite3_open_v2 when Close returns: the
+	// open recreates the -wal and -shm sidecars, and they go away again only
+	// when that connection closes. Under a test that churns connections hard
+	// the recreation can land after t.TempDir has scanned the directory, and
+	// the test then fails with "directory not empty" for a reason that has
+	// nothing to do with what it asserts. Give the opener a moment, then take
+	// the leftovers with the database file.
+	t.Cleanup(func() {
+		_ = database.Close()
+		time.Sleep(10 * time.Millisecond)
+		for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+			_ = os.Remove(database.Path + suffix)
+		}
+	})
 	if err := db.Migrate(context.Background(), database.Write); err != nil {
 		t.Fatal(err)
 	}

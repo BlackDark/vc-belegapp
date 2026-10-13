@@ -184,9 +184,18 @@ func Serve(ctx context.Context, opt Options) error {
 		Absolute: opt.Config.SessionAbsoluteTimeout,
 		Secure:   opt.Config.CookieSecure,
 	}
+	// The prune runs next to the other tickers and not inside the queue: its
+	// own goroutine and its own ticker mean deleting a year of history cannot
+	// delay a claim, and runCtx ends it at shutdown like every other ticker.
+	pruner := &jobs.Pruner{
+		DB:        database,
+		Retention: opt.Config.JobRetention,
+		Log:       opt.Log,
+	}
 	var background sync.WaitGroup
 	background.Go(func() { sessions.Run(runCtx) })
 	background.Go(func() { svc.Sweep(runCtx) })
+	background.Go(func() { pruner.Run(runCtx) })
 	// No mailbox configured means no ticker and no mail job, ever.
 	if svc.Mail != nil {
 		background.Go(func() { svc.PollMailbox(runCtx) })

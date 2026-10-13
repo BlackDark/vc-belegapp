@@ -18,6 +18,13 @@ type DB struct {
 
 // Open creates or opens the SQLite database at path.
 // The write pool has a single connection. The read pool is read-only.
+//
+// Open is also where auto_vacuum is decided, and the order matters: this is the
+// first connection to the file, so on a database that does not exist yet the
+// pragma in dsn lands before the first migration creates a table. SQLite only
+// accepts auto_vacuum on a database that has no tables — on an existing one it
+// is silently ignored, which is exactly what keeps an upgrade harmless, and
+// dsn says more about what an operator can do about that.
 func Open(path string) (*DB, error) {
 	write, err := sql.Open("sqlite", dsn(path, false))
 	if err != nil {
@@ -82,5 +89,14 @@ func dsn(path string, readOnly bool) string {
 	if readOnly {
 		return "file:" + slash + "?mode=ro&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=query_only(1)"
 	}
-	return "file:" + slash + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)&_txlock=immediate"
+	// auto_vacuum=INCREMENTAL is set here and nowhere else, because it only
+	// takes effect on a database without tables. Switching an existing
+	// database over costs a full VACUUM, so this must never be done from code
+	// at runtime; it is documented as a one-time operator step instead.
+	//
+	// It is what makes a delete give space back: SQLite frees the pages for
+	// reuse straight away but keeps them inside the file, and the hourly
+	// prune only returns them with Reclaim. INCREMENTAL rather than FULL
+	// because this application chooses when to spend that work.
+	return "file:" + slash + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)&_pragma=auto_vacuum(INCREMENTAL)&_txlock=immediate"
 }
