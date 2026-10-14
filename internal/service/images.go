@@ -401,21 +401,60 @@ func (s *Service) sweepLogged(ctx context.Context) {
 // backlog to wait for an hour. Each failure is logged with the image it belongs
 // to and collected, so the pass is both complete and reported: a partial sweep
 // comes back as an error rather than as silence.
+//
+// The work is done in batches with a keyset cursor, never in one unbounded read
+// followed by one delete per row. The first run after an operator switches the
+// TTL on has to deal with every expired row there is, and it has to do it
+// through the one write connection the whole application shares; a single
+// unbounded pass would hold that connection for the length of the backlog.
 func (s *Service) sweepOnce(ctx context.Context) error {
 	if s.ImageTTL <= 0 {
 		return nil
 	}
 	cutoff := s.now().UTC().Add(-s.ImageTTL).Format(time.RFC3339)
-	rows, err := db.New(s.DB.Read).ListUnassignedBelegbilderBefore(ctx, cutoff)
-	if err != nil {
-		return err
+	page := db.ListUnassignedBelegbilderBeforePageParams{
+		Before: cutoff,
+		// The first batch has no cursor yet. It is the empty string rather
+		// than the zero value of the parameter, which is a nil interface: the
+		// comparison in the query is against '' and a NULL there would make
+		// every row fail the test and the sweep would delete nothing.
+		After: "",
+		Limit: s.sweepBatch(),
 	}
 	var failures []error
-	for _, row := range rows {
-		if err := s.DeleteBild(ctx, row.ID); err != nil {
-			s.logWarn("an expired image was not removed", "bild_id", row.ID, "err", err)
+	var swept int
+	for {
+		// A shutdown does not wait out the backlog. The context is checked
+		// between batches and not between rows: DeleteBild is already the
+		// cheapest unit of work here, and a check per row would only notice the
+		// same shutdown one batch later.
+		if err := ctx.Err(); err != nil {
 			failures = append(failures, err)
+			break
 		}
+		rows, err := db.New(s.DB.Read).ListUnassignedBelegbilderBeforePage(ctx, page)
+		if err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			break
+		}
+		for _, row := range rows {
+			if err := s.DeleteBild(ctx, row.ID); err != nil {
+				s.logWarn("an expired image was not removed", "bild_id", row.ID, "err", err)
+				failures = append(failures, err)
+			}
+		}
+		swept += len(rows)
+		// The cursor becomes the key of the last row of this batch, whether or
+		// not that row was deleted — it is the key the next page starts after,
+		// and moving past a row that failed is deliberate: it is expired and
+		// stuck, and retrying it inside the same pass would spin on it while
+		// the rows behind it wait. The next pass tries again, which is what the
+		// log line promises.
+		last := rows[len(rows)-1]
+		page.After = last.ErstelltAm
+		page.AfterID = last.ID
 	}
 	// The orphan sweep still runs after a partial one: the objects of the rows
 	// that did go are just as unreferenced as those of the rows that did not.
@@ -424,7 +463,24 @@ func (s *Service) sweepOnce(ctx context.Context) error {
 		return sweepErr
 	}
 	return fmt.Errorf("%d of %d expired images were not removed: %w",
-		len(failures), len(rows), errors.Join(append(failures, sweepErr)...))
+		len(failures), swept, errors.Join(append(failures, sweepErr)...))
+}
+
+// defaultSweepBatch is how many expired images one pass reads at a time.
+//
+// It is a bound on how long the sweep sits on the write connection without
+// letting anything else through, not a target: the loop reads another batch as
+// long as there is one. Two hundred rows is a moment of deletes — long enough
+// that the read is not the bottleneck, short enough that neither a shutdown nor
+// a waiting request is stuck behind a whole backlog.
+const defaultSweepBatch = 200
+
+// sweepBatch is the batch size of this service, or defaultSweepBatch.
+func (s *Service) sweepBatch() int64 {
+	if s.sweepBatchRows > 0 {
+		return int64(s.sweepBatchRows)
+	}
+	return defaultSweepBatch
 }
 
 // sweepOrphanBlobs removes bilder/ and thumbs/ objects that have no row and
@@ -547,25 +603,79 @@ func (s *Service) bildIDs(ctx context.Context, q *db.Queries, belegID string) ([
 	return out, nil
 }
 
+// attachBilder fills the image list of a receipt.
+//
+// The duplicate hint is decoration, so the order the caller sees is the order
+// ListBelegbilderByBeleg returned: the hint is looked up once for the whole
+// page and attached to the rows it belongs to, never reordering them.
 func (s *Service) attachBilder(ctx context.Context, q *db.Queries, beleg *Beleg) error {
 	rows, err := q.ListBelegbilderByBeleg(ctx, beleg.ID)
 	if err != nil {
 		return err
 	}
 	beleg.Bilder = make([]Bild, 0, len(rows))
+	dups := s.duplicateBilderByRow(ctx, q, beleg.ID, rows)
 	for _, row := range rows {
-		var dup *string
-		found, ferr := q.FindDuplicateBild(ctx, db.FindDuplicateBildParams{
-			ExcludeID:    beleg.ID,
-			Sha256:       row.Sha256,
-			UploadSha256: row.UploadSha256,
-		})
-		if ferr == nil {
-			dup = &found.ID
-		}
-		beleg.Bilder = append(beleg.Bilder, bildFromRow(row, dup))
+		beleg.Bilder = append(beleg.Bilder, bildFromRow(row, dups[row.ID]))
 	}
 	return nil
+}
+
+// duplicateBilderByRow answers, for every row of one receipt, which other
+// receipt holds the same picture — the "is this the same receipt twice?" hint of
+// Bild.DuplikatVon.
+//
+// One query covers the whole page. Asking per image made a receipt with three
+// images cost four reads instead of two, and the read grows with the page, so a
+// month view of several receipts turned into a hundred duplicate lookups a
+// request.
+//
+// A row without an answer is simply absent from the map, and a row that matches
+// nothing gets a nil hint — the same answer the per-image lookup gave.
+//
+// A failed lookup is answered the same way too: the field stays empty and the
+// read goes on. The hint is decoration on rows that were read successfully, and
+// the per-image version swallowed the failure for the same reason GetBild does.
+// It is logged, because a lookup that always fails is a broken feature nobody
+// would otherwise notice.
+func (s *Service) duplicateBilderByRow(ctx context.Context, q *db.Queries, belegID string, rows []db.Belegbilder) map[string]*string {
+	if len(rows) == 0 {
+		return nil
+	}
+	sha256s := make([]string, 0, len(rows))
+	uploadSha256s := make([]string, 0, len(rows))
+	for _, row := range rows {
+		sha256s = append(sha256s, row.Sha256)
+		uploadSha256s = append(uploadSha256s, row.UploadSha256)
+	}
+	found, err := q.FindDuplicateBilder(ctx, db.FindDuplicateBilderParams{
+		ExcludeID:     belegID,
+		Sha256s:       sha256s,
+		UploadSha256s: uploadSha256s,
+	})
+	if err != nil {
+		s.logWarn("duplicate lookup failed", "beleg_id", belegID, "err", err)
+		return nil
+	}
+	out := make(map[string]*string, len(found))
+	// The query orders by b.id, i.id, so the first hit for an image is a fixed
+	// one. FindDuplicateBild took whichever row SQLite happened to hand back
+	// first; with more than one candidate either answer is the same answer, and
+	// a deterministic one is worth more than an arbitrary repeat of the old
+	// plan's choice.
+	for _, hit := range found {
+		for _, row := range rows {
+			if _, done := out[row.ID]; done {
+				continue
+			}
+			if hit.Sha256 != row.Sha256 && hit.UploadSha256 != row.UploadSha256 {
+				continue
+			}
+			other := hit.ID
+			out[row.ID] = &other
+		}
+	}
+	return out
 }
 
 func releaseBilder(ctx context.Context, q *db.Queries, belegID string) error {

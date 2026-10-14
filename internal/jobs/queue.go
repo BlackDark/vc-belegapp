@@ -31,7 +31,12 @@ type Queue struct {
 	Poll    time.Duration
 	Now     func() time.Time
 	Backoff func(attempt int, kind string) time.Duration
-	Log     *slog.Logger
+	// Defer is how long a claimed job is put back out of the queue after its
+	// type turned out to be at its concurrency cap. Zero is the normal case and
+	// means deferDelay; only a test sets it, because the quarter of a second is
+	// a wait every cap test would otherwise sit through twice.
+	Defer time.Duration
+	Log   *slog.Logger
 	// Handle runs one job. result is optional JSON stored when the job succeeds.
 	// An empty result is stored as {"ok":true}.
 	Handle  func(ctx context.Context, job Job) (seconds float64, result string, err error)
@@ -248,7 +253,7 @@ func (q *Queue) deferClaim(ctx context.Context, job Job) {
 		writeCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), deferWriteTimeout)
 		defer cancel()
 	}
-	next := q.now().Add(deferDelay).UTC().Format(time.RFC3339)
+	next := q.now().Add(q.deferDelay()).UTC().Format(time.RFC3339)
 	err := db.New(q.DB.Write).DeferJob(writeCtx, db.DeferJobParams{
 		NaechsterVersuchAm: next,
 		GeaendertAm:        q.stamp(),
@@ -332,6 +337,14 @@ func (q *Queue) kick() {
 	case q.wakeCh() <- struct{}{}:
 	default:
 	}
+}
+
+// deferDelay is Defer, or the constant when nobody set one.
+func (q *Queue) deferDelay() time.Duration {
+	if q.Defer > 0 {
+		return q.Defer
+	}
+	return deferDelay
 }
 
 func (q *Queue) now() time.Time {

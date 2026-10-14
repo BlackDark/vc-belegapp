@@ -17,6 +17,7 @@ import (
 	"github.com/emersion/go-imap/v2"
 
 	"github.com/BlackDark/vc-belegapp/internal/db"
+	"github.com/BlackDark/vc-belegapp/internal/db/dbtest"
 	"github.com/BlackDark/vc-belegapp/internal/jobs"
 	"github.com/BlackDark/vc-belegapp/internal/mailinbox"
 	"github.com/BlackDark/vc-belegapp/internal/recognition"
@@ -30,7 +31,7 @@ func mailFixture(t *testing.T, box *mailinbox.Fake, senders ...string) *Service 
 	svc := openService(t, recognition.Fake{})
 	svc.Log = slog.New(slog.DiscardHandler)
 	svc.Mail = box
-	svc.MailInterval = 50 * time.Millisecond
+	svc.MailInterval = testIntakeInterval
 	svc.MailMaxAttachments = 3
 	svc.MailAllowedSenders = senders
 	return svc
@@ -729,7 +730,7 @@ func TestHandleJobMail(t *testing.T) {
 // does not use the feature never grows a queue row.
 func TestPollMailboxNoSourceEnqueuesNothing(t *testing.T) {
 	svc := openService(t, recognition.Fake{})
-	svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1}
+	svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1, Poll: testPoll}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
@@ -747,8 +748,8 @@ func TestPollMailboxNoSourceEnqueuesNothing(t *testing.T) {
 func TestPollMailboxEnqueuesOnEveryTick(t *testing.T) {
 	box := &mailinbox.Fake{}
 	svc := mailFixture(t, box)
-	svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1, Poll: 10 * time.Millisecond, Handle: svc.HandleJob}
-	svc.MailInterval = 30 * time.Millisecond
+	svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1, Poll: testPoll, Handle: svc.HandleJob}
+	svc.MailInterval = testIntakeInterval
 
 	ctx, cancel := context.WithCancel(context.Background())
 	queueDone := make(chan struct{})
@@ -764,7 +765,7 @@ func TestPollMailboxEnqueuesOnEveryTick(t *testing.T) {
 	}()
 	// Waiting for the second row ends the test when the ticker has done what it
 	// is about; a fixed sleep only hoped it had, and fails on a loaded CI box.
-	waitFor(t, 10*time.Second, "a second mail job", func() bool {
+	dbtest.WaitFor(t, 10*time.Second, "a second mail job", func() bool {
 		return countJobs(t, svc, "mail") >= 2
 	})
 	cancel()
@@ -779,8 +780,8 @@ func TestPollMailboxSkipsTickWhileAJobIsOpen(t *testing.T) {
 	box := &mailinbox.Fake{}
 	svc := mailFixture(t, box)
 	// The queue never runs, so the first job stays open for the whole window.
-	svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1}
-	svc.MailInterval = 20 * time.Millisecond
+	svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1, Poll: testPoll}
+	svc.MailInterval = testIntakeInterval
 
 	poller, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
@@ -808,7 +809,7 @@ func TestIngestMailboxDoesNotEnqueueRecognitionTwice(t *testing.T) {
 		`UPDATE einstellungen SET erkennung_aktiv = 1`); err != nil {
 		t.Fatal(err)
 	}
-	svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1}
+	svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1, Poll: testPoll}
 
 	if _, err := svc.IngestMailbox(ctx); err != nil {
 		t.Fatal(err)

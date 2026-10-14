@@ -62,7 +62,7 @@ func (s *notifySink) next(t *testing.T) string {
 func notifyFixture(t *testing.T, url string) *Service {
 	t.Helper()
 	svc := newTestService(t, nil)
-	svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1}
+	svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1, Poll: testPoll}
 	if url != "" {
 		svc.Notify = notify.NewWebhook(notify.WebhookOptions{
 			URL:     url,
@@ -199,7 +199,7 @@ func TestSaveBildSurvivesNotifyEnqueueFailure(t *testing.T) {
 	if err := broken.Close(); err != nil {
 		t.Fatal(err)
 	}
-	svc.Jobs = &jobs.Queue{DB: broken, Workers: 1}
+	svc.Jobs = &jobs.Queue{DB: broken, Workers: 1, Poll: testPoll}
 
 	bild, err := svc.SaveBild(context.Background(), colorPNG(t, 12, 34, 56), false)
 	if err != nil {
@@ -465,7 +465,7 @@ func TestIngestMailboxAnnouncesMailSource(t *testing.T) {
 	}}
 	svc := mailFixture(t, box, "kasse@example.de")
 	svc.Notify = notify.NewWebhook(notify.WebhookOptions{URL: sink.server.URL, Timeout: 2 * time.Second})
-	svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1}
+	svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1, Poll: testPoll}
 
 	if _, err := svc.IngestMailbox(context.Background()); err != nil {
 		t.Fatal(err)

@@ -8,6 +8,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
 
 const assignBelegbild = `-- name: AssignBelegbild :exec
@@ -179,6 +180,84 @@ func (q *Queries) FindDuplicateBild(ctx context.Context, arg FindDuplicateBildPa
 	var i FindDuplicateBildRow
 	err := row.Scan(&i.ID, &i.Datum)
 	return i, err
+}
+
+const findDuplicateBilder = `-- name: FindDuplicateBilder :many
+SELECT i.sha256, i.upload_sha256, b.id
+FROM belegbilder i
+JOIN belege b ON b.id = i.beleg_id
+WHERE b.geloescht_am IS NULL
+  AND (?1 = '' OR b.id != ?1)
+  AND (i.sha256 IN (/*SLICE:sha256s*/?) OR i.upload_sha256 IN (/*SLICE:upload_sha256s*/?))
+ORDER BY b.id, i.id
+`
+
+type FindDuplicateBilderParams struct {
+	ExcludeID     interface{}
+	Sha256s       []string
+	UploadSha256s []string
+}
+
+type FindDuplicateBilderRow struct {
+	Sha256       string
+	UploadSha256 string
+	ID           string
+}
+
+// FindDuplicateBild for a whole page of images at once.
+//
+// The predicate is the union of the per-image one: a row comes back exactly when
+// it would have come back for at least one of the images on the page, because
+// `sha256 IN (...) OR upload_sha256 IN (...)` holds for a row if and only if it
+// holds for one of the individual pairs. Which of the page's images a row
+// belongs to is left to the caller, which holds the pairs and would otherwise
+// have to run one query per image.
+//
+// Both columns are still indexed, so this stays an OR of index lookups rather
+// than a table scan. ORDER BY is what makes the answer reproducible:
+// FindDuplicateBild takes an arbitrary one of several candidates (LIMIT 1 with
+// no ordering), and a caller building a map has to be able to say which one it
+// picked.
+func (q *Queries) FindDuplicateBilder(ctx context.Context, arg FindDuplicateBilderParams) ([]FindDuplicateBilderRow, error) {
+	query := findDuplicateBilder
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.ExcludeID)
+	if len(arg.Sha256s) > 0 {
+		for _, v := range arg.Sha256s {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:sha256s*/?", strings.Repeat(",?", len(arg.Sha256s))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:sha256s*/?", "NULL", 1)
+	}
+	if len(arg.UploadSha256s) > 0 {
+		for _, v := range arg.UploadSha256s {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:upload_sha256s*/?", strings.Repeat(",?", len(arg.UploadSha256s))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:upload_sha256s*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FindDuplicateBilderRow
+	for rows.Next() {
+		var i FindDuplicateBilderRow
+		if err := rows.Scan(&i.Sha256, &i.UploadSha256, &i.ID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getBeleg = `-- name: GetBeleg :one
@@ -1082,12 +1161,49 @@ func (q *Queries) ListSitzungen(ctx context.Context) ([]Sitzungen, error) {
 	return items, nil
 }
 
-const listUnassignedBelegbilderBefore = `-- name: ListUnassignedBelegbilderBefore :many
-SELECT id, beleg_id, seite, blob_key, thumb_blob_key, sha256, upload_sha256, mime, bytes, breite, hoehe, erkennung_status, erkennung_ergebnis, erkennung_roh, erkennung_fehler, erkennung_modell, erkennung_dauer_ms, erstellt_am FROM belegbilder WHERE beleg_id IS NULL AND erstellt_am < ?
+const listUnassignedBelegbilderBeforePage = `-- name: ListUnassignedBelegbilderBeforePage :many
+SELECT id, beleg_id, seite, blob_key, thumb_blob_key, sha256, upload_sha256, mime, bytes, breite, hoehe, erkennung_status, erkennung_ergebnis, erkennung_roh, erkennung_fehler, erkennung_modell, erkennung_dauer_ms, erstellt_am FROM belegbilder
+WHERE beleg_id IS NULL
+  AND erstellt_am < ?1
+  AND (
+    ?2 = ''
+    OR erstellt_am > ?2
+    OR (erstellt_am = ?2 AND id > ?3)
+  )
+ORDER BY erstellt_am, id
+LIMIT ?4
 `
 
-func (q *Queries) ListUnassignedBelegbilderBefore(ctx context.Context, erstelltAm string) ([]Belegbilder, error) {
-	rows, err := q.db.QueryContext(ctx, listUnassignedBelegbilderBefore, erstelltAm)
+type ListUnassignedBelegbilderBeforePageParams struct {
+	Before  string
+	After   interface{}
+	AfterID string
+	Limit   int64
+}
+
+// The expired unassigned images the sweeper removes, one batch at a time.
+//
+// This replaces the unbounded read it grew out of: the same rows, a LIMIT, and
+// a cursor instead of an offset.
+//
+// The cursor is the key of the last row of the previous batch, compared as the
+// pair (erstellt_am, id). An empty cursor means "start at the oldest"; the
+// first arm of the disjunction says so outright rather than leaning on both
+// columns being written by the application and never empty.
+//
+// ORDER BY ascending reads the descending index belegbilder_offen_erstellt_am
+// backwards, so a batch stops after `limit` rows instead of walking the whole
+// backlog to filter and sort it. A keyset and not an offset because the caller
+// deletes what it reads: with OFFSET, deleting the rows of the previous batch
+// moves every row behind the window forward by exactly that many, so the next
+// batch steps over live rows and leaves them expired for another hour.
+func (q *Queries) ListUnassignedBelegbilderBeforePage(ctx context.Context, arg ListUnassignedBelegbilderBeforePageParams) ([]Belegbilder, error) {
+	rows, err := q.db.QueryContext(ctx, listUnassignedBelegbilderBeforePage,
+		arg.Before,
+		arg.After,
+		arg.AfterID,
+		arg.Limit,
+	)
 	if err != nil {
 		return nil, err
 	}

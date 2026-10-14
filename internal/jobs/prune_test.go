@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/BlackDark/vc-belegapp/internal/db"
+	"github.com/BlackDark/vc-belegapp/internal/db/dbtest"
 )
 
 // testNow is the fixed clock every prune test reads, so "older than the
@@ -29,9 +31,18 @@ func seedJob(t *testing.T, database *db.DB, id, status string, changed time.Time
 	}
 }
 
-// seedJobsBulk writes n finished rows in one transaction. It exists only for
-// the tests that need a backlog big enough for the file size to move; the
-// correctness tests seed row by row so a failure names the row it meant.
+// seedRowsPerStatement is how many rows one INSERT carries: four bound
+// parameters each, so 4000 of the 32766 SQLite allows per statement. Comfortably
+// under, and a statement per thousand rows instead of a statement per row.
+const seedRowsPerStatement = 1000
+
+// seedJobsBulk writes n finished rows of typ "watch", seedRowsPerStatement to a
+// statement.
+//
+// A statement rather than a row: these backlogs exist to be big, not to be
+// individually named, and 12000 single-row inserts cost more wall clock under
+// -race than the prune they set up. The correctness tests seed row by row so a
+// failure names the row it meant.
 func seedJobsBulk(t *testing.T, database *db.DB, n int, changed time.Time) {
 	t.Helper()
 	stamp := changed.UTC().Format(time.RFC3339)
@@ -40,12 +51,20 @@ func seedJobsBulk(t *testing.T, database *db.DB, n int, changed time.Time) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	for i := 0; i < n; i++ {
-		if _, err := tx.Exec(`INSERT INTO jobs (
+	const cols = 3
+	for first := 0; first < n; first += seedRowsPerStatement {
+		last := min(first+seedRowsPerStatement, n)
+		values := make([]string, 0, (last-first)*cols)
+		args := make([]any, 0, (last-first)*cols)
+		for i := first; i < last; i++ {
+			values = append(values, "(?, 'watch', 'payload-payload-payload', 'fertig', 1, ?, NULL, NULL, ?, ?)")
+			args = append(args, jobID(i), stamp, stamp, stamp)
+		}
+		stmt := `INSERT INTO jobs (
 			id, typ, payload, status, versuche, naechster_versuch_am, ergebnis, fehler, erstellt_am, geaendert_am
-		) VALUES (?, 'watch', 'payload-payload-payload', 'fertig', 1, ?, NULL, NULL, ?, ?)`,
-			jobID(i), stamp, stamp, stamp); err != nil {
-			t.Fatalf("seed %d: %v", i, err)
+		) VALUES ` + strings.Join(values, ", ")
+		if _, err := tx.Exec(stmt, args...); err != nil {
+			t.Fatalf("seed rows %d..%d: %v", first, last, err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -168,10 +187,7 @@ func TestPruneDeletesOldFinishedRowsOnly(t *testing.T) {
 func TestPruneDeletesInBatches(t *testing.T) {
 	database := openQueueDB(t)
 	ctx := context.Background()
-	old := testNow.Add(-30 * 24 * time.Hour)
-	for i := 0; i < 2500; i++ {
-		seedJob(t, database, jobID(i), "fertig", old)
-	}
+	seedJobsBulk(t, database, 2500, testNow.Add(-30*24*time.Hour))
 	p := testPruner(database, 24*time.Hour)
 	p.Batch = 100
 	deleted, err := p.Prune(ctx)
@@ -226,9 +242,7 @@ func TestPruneDisabledByZeroRetention(t *testing.T) {
 func TestPruneRunStopsOnCancel(t *testing.T) {
 	database := openQueueDB(t)
 	old := testNow.Add(-30 * 24 * time.Hour)
-	for i := 0; i < 3000; i++ {
-		seedJob(t, database, jobID(i), "fertig", old)
-	}
+	seedJobsBulk(t, database, 3000, old)
 	p := testPruner(database, 24*time.Hour)
 	p.Every = time.Millisecond
 	p.Batch = 1
@@ -294,9 +308,7 @@ func TestPruneDoesNotDelayJobExecution(t *testing.T) {
 	ctx := context.Background()
 	old := testNow.Add(-30 * 24 * time.Hour)
 	const backlog = 1500
-	for i := 0; i < backlog; i++ {
-		seedJob(t, database, jobID(i), "fertig", old)
-	}
+	seedJobsBulk(t, database, backlog, old)
 
 	// Worker one is held by a job whose handler never returns on its own;
 	// worker two is free and has to serve the job enqueued later.
@@ -343,9 +355,9 @@ func TestPruneDoesNotDelayJobExecution(t *testing.T) {
 
 	// Wait until the prune is visibly working before the job is enqueued, so
 	// the queue is unambiguously running against a busy connection.
-	waitFor(t, 10*time.Second, func() bool {
+	dbtest.WaitFor(t, 10*time.Second, "the prune to delete a row", func() bool {
 		return countWatchJobs(t, database) < backlog
-	}, "the prune never deleted a row")
+	})
 
 	id, err := q.Enqueue(ctx, "erkennung", `{"bild_id":"b"}`)
 	if err != nil {
@@ -563,16 +575,4 @@ func TestPruneSkipsAnalyzeOnACancelledContext(t *testing.T) {
 	if got := statRows(t, database); got != 0 {
 		t.Fatalf("%d statistics after an ANALYZE on a cancelled context", got)
 	}
-}
-
-func waitFor(t *testing.T, within time.Duration, cond func() bool, msg string) {
-	t.Helper()
-	deadline := time.Now().Add(within)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatal(msg)
 }

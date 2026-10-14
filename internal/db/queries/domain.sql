@@ -169,8 +169,33 @@ WHERE pdf_blob_key = sqlc.arg('key')
 -- name: ListExportBelegIDs :many
 SELECT beleg_ids FROM monatsexporte;
 
--- name: ListUnassignedBelegbilderBefore :many
-SELECT * FROM belegbilder WHERE beleg_id IS NULL AND erstellt_am < ?;
+-- The expired unassigned images the sweeper removes, one batch at a time.
+--
+-- This replaces the unbounded read it grew out of: the same rows, a LIMIT, and
+-- a cursor instead of an offset.
+--
+-- The cursor is the key of the last row of the previous batch, compared as the
+-- pair (erstellt_am, id). An empty cursor means "start at the oldest"; the
+-- first arm of the disjunction says so outright rather than leaning on both
+-- columns being written by the application and never empty.
+--
+-- ORDER BY ascending reads the descending index belegbilder_offen_erstellt_am
+-- backwards, so a batch stops after `limit` rows instead of walking the whole
+-- backlog to filter and sort it. A keyset and not an offset because the caller
+-- deletes what it reads: with OFFSET, deleting the rows of the previous batch
+-- moves every row behind the window forward by exactly that many, so the next
+-- batch steps over live rows and leaves them expired for another hour.
+-- name: ListUnassignedBelegbilderBeforePage :many
+SELECT * FROM belegbilder
+WHERE beleg_id IS NULL
+  AND erstellt_am < sqlc.arg('before')
+  AND (
+    sqlc.arg('after') = ''
+    OR erstellt_am > sqlc.arg('after')
+    OR (erstellt_am = sqlc.arg('after') AND id > sqlc.arg('after_id'))
+  )
+ORDER BY erstellt_am, id
+LIMIT sqlc.arg('limit');
 
 -- The "offene Bilder" list: uploaded images that no Beleg owns yet, newest
 -- first. An empty status means "no filter"; the paged count runs the same
@@ -196,6 +221,29 @@ WHERE b.geloescht_am IS NULL
   AND (sqlc.arg('exclude_id') = '' OR b.id != sqlc.arg('exclude_id'))
   AND (i.sha256 = sqlc.arg('sha256') OR i.upload_sha256 = sqlc.arg('upload_sha256'))
 LIMIT 1;
+
+-- FindDuplicateBild for a whole page of images at once.
+--
+-- The predicate is the union of the per-image one: a row comes back exactly when
+-- it would have come back for at least one of the images on the page, because
+-- `sha256 IN (...) OR upload_sha256 IN (...)` holds for a row if and only if it
+-- holds for one of the individual pairs. Which of the page's images a row
+-- belongs to is left to the caller, which holds the pairs and would otherwise
+-- have to run one query per image.
+--
+-- Both columns are still indexed, so this stays an OR of index lookups rather
+-- than a table scan. ORDER BY is what makes the answer reproducible:
+-- FindDuplicateBild takes an arbitrary one of several candidates (LIMIT 1 with
+-- no ordering), and a caller building a map has to be able to say which one it
+-- picked.
+-- name: FindDuplicateBilder :many
+SELECT i.sha256, i.upload_sha256, b.id
+FROM belegbilder i
+JOIN belege b ON b.id = i.beleg_id
+WHERE b.geloescht_am IS NULL
+  AND (sqlc.arg('exclude_id') = '' OR b.id != sqlc.arg('exclude_id'))
+  AND (i.sha256 IN (sqlc.slice('sha256s')) OR i.upload_sha256 IN (sqlc.slice('upload_sha256s')))
+ORDER BY b.id, i.id;
 
 -- name: ListErkennungen :many
 SELECT b.id, b.datum, b.haendler_name, b.belegbetrag_cent, i.erkennung_ergebnis

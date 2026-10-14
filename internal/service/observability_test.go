@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/BlackDark/vc-belegapp/internal/db/dbtest"
 	"log/slog"
 	"strings"
 	"testing"
@@ -27,7 +28,7 @@ func TestRunJobsReportsAFailedStartupRepair(t *testing.T) {
 	var buf syncBuffer
 	svc := openService(t, nil)
 	svc.Log = slog.New(slog.NewJSONHandler(&buf, nil))
-	svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1, Poll: 10 * time.Millisecond}
+	svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1, Poll: testPoll}
 	// Closing the write pool fails every repair below and every queue write,
 	// which is the point: the queue must still come up.
 	if err := svc.DB.Write.Close(); err != nil {
@@ -42,7 +43,7 @@ func TestRunJobsReportsAFailedStartupRepair(t *testing.T) {
 	}()
 	// Waiting for the lines rather than sleeping: the repairs run before the
 	// workers, so they are done long before the queue's own error log starts.
-	waitFor(t, 10*time.Second, "the failed repairs to be reported", func() bool {
+	dbtest.WaitFor(t, 10*time.Second, "the failed repairs to be reported", func() bool {
 		text := buf.String()
 		return strings.Contains(text, "interrupted jobs were not reset") &&
 			strings.Contains(text, "interrupted recognitions were not reset") &&

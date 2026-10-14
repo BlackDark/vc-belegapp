@@ -201,7 +201,7 @@ func TestStopJobsGivesUpOnAStuckHandler(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	svc.Jobs = &jobs.Queue{
-		DB: svc.DB, Workers: 1, Poll: 10 * time.Millisecond,
+		DB: svc.DB, Workers: 1, Poll: testPoll,
 		Handle: func(context.Context, jobs.Job) (float64, string, error) {
 			close(started)
 			<-release // ignores the context, the way a hung read does

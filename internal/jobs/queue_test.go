@@ -48,12 +48,23 @@ func openQueueDB(t *testing.T) *db.DB {
 	return database
 }
 
+// testPoll is the queue poll interval every fixture in this package uses.
+//
+// The production default is 200ms and the right answer for a machine, but a
+// test pays it on every retry: a job pushed back with a 1ms backoff is not
+// eligible again until the ticker fires, so a three-attempt failure costs three
+// intervals of nothing happening. At a millisecond the queue still wakes on
+// its ticker — the tests that are about the ticker still wait for it — and the
+// suite stops paying production's patience for it.
+const testPoll = time.Millisecond
+
 func testQueue(database *db.DB, handle func(context.Context, Job) (float64, string, error)) *Queue {
 	return &Queue{
 		DB:      database,
 		Workers: 1,
-		Poll:    10 * time.Millisecond,
-		Backoff: func(int, string) time.Duration { return time.Millisecond },
+		Poll:    testPoll,
+		Backoff: func(int, string) time.Duration { return testPoll },
+		Defer:   testPoll,
 		Handle:  handle,
 	}
 }
@@ -73,6 +84,11 @@ func runQueue(t *testing.T, q *Queue) context.CancelFunc {
 	return cancel
 }
 
+// waitStatus polls the row rather than the job's own channel, because the
+// status write is the last thing a worker does: a test that waited for the
+// handler's return would pass on a queue that never wrote the row down. The
+// poll is one millisecond because the queue is; a coarser sleep would put the
+// test's own latency in front of every retry it waits for.
 func waitStatus(t *testing.T, database *db.DB, id, status string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
@@ -86,7 +102,7 @@ func waitStatus(t *testing.T, database *db.DB, id, status string) {
 		if row.Status == status {
 			return
 		}
-		time.Sleep(15 * time.Millisecond)
+		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("status %s, want %s", last, status)
 }
@@ -167,6 +183,51 @@ func TestQueueRequeuesWhenCancelled(t *testing.T) {
 	}
 	cancel()
 	waitStatus(t, database, id, "wartend")
+}
+
+// The loop claims before it waits, so a job that was already waiting when the
+// queue starts runs at once instead of after a poll interval. That is what lets
+// a restart pick up the backlog it was left with without a person watching a
+// poll of nothing.
+//
+// No other test in this package can see it: they wait in seconds for a ticker
+// that fires in milliseconds, so a loop that waited for its first tick would
+// pass every one of them. Hence the ticker here is an hour long, and the row is
+// written straight into the table — Enqueue kicks a worker, and a loop that
+// waits on either the wake-up or the ticker has to fail this.
+func TestQueueClaimsAJobWaitingBeforeTheFirstTick(t *testing.T) {
+	database := openQueueDB(t)
+	ran := make(chan string, 1)
+	q := &Queue{
+		DB:      database,
+		Workers: 1,
+		Poll:    time.Hour,
+		Handle: func(_ context.Context, job Job) (float64, string, error) {
+			ran <- job.ID
+			return 0, "", nil
+		},
+	}
+	const id = "job-vor-dem-ersten-tick"
+	ctx := context.Background()
+	if err := db.New(database.Write).InsertJob(ctx, db.InsertJobParams{
+		ID: id, Typ: TypErkennung, Payload: "{}",
+		NaechsterVersuchAm: "2020-01-01T00:00:00Z",
+		ErstelltAm:         "2020-01-01T00:00:00Z",
+		GeaendertAm:        "2020-01-01T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runQueue(t, q)
+
+	select {
+	case got := <-ran:
+		if got != id {
+			t.Fatalf("ran job %s, want %s", got, id)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the waiting job never ran; the queue has to claim before its first tick")
+	}
+	waitStatus(t, database, id, "fertig")
 }
 
 // The queue runs five job types and the recognition metric counts one of them.
