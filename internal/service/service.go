@@ -85,6 +85,11 @@ type Service struct {
 	// jobStopTimeout overrides jobShutdownTimeout for the stop of the workers.
 	// Zero is the normal case and means the constant; only the test sets it.
 	jobStopTimeout time.Duration
+	// sweepBatchRows overrides defaultSweepBatch, the number of expired images
+	// one pass of the image sweeper reads at a time. Zero is the normal case and
+	// means the constant; only the test sets it, to make a multi-batch pass
+	// cheap enough to run on a small fixture.
+	sweepBatchRows int
 }
 
 // ImportLaeuft reports whether a data import currently holds the write lock.

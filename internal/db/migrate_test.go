@@ -546,7 +546,7 @@ func TestLookupIndexMigrationAppliesAndRollsBack(t *testing.T) {
 	if got := presentIndexes(t, database, lookupIndexNames); len(got) != 0 {
 		t.Fatalf("00009 already applied before Migrate: %v", got)
 	}
-	seedPlanBelegbilder(t, database, 50, false)
+	seedPlanBelegbilder(t, database, "", 50, false)
 	seedPlanJobs(t, database, 50, "wartend")
 
 	if err := Migrate(ctx, database.Write); err != nil {

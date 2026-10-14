@@ -10,6 +10,7 @@ import (
 
 	"github.com/BlackDark/vc-belegapp/internal/config"
 	"github.com/BlackDark/vc-belegapp/internal/db"
+	"github.com/BlackDark/vc-belegapp/internal/db/dbtest"
 )
 
 // Every job type shares one FIFO pool. Two watched-folder jobs on a mount that
@@ -47,6 +48,13 @@ func TestQueueStuckIntakeDoesNotStarveErkennung(t *testing.T) {
 	})
 	q.Workers = 2
 	q.Policy = Policy{Concurrency: map[string]int{"watch": 1}}
+	// The deferral keeps its production quarter of a second here, and not for
+	// speed. The assertion below reads the jobs table, and a deferral short
+	// enough for the free worker to re-claim the deferred job inside the same
+	// millisecond turns "exactly one job is running" into a coin flip between
+	// the two states the queue really is in. TestQueueCapsJobsOfOneType asserts
+	// the same cap from a counter inside the handler and needs no such care.
+	q.Defer = 0
 	runQueue(t, q)
 
 	// The first poll takes a worker and hangs there.
@@ -78,13 +86,20 @@ func TestQueueStuckIntakeDoesNotStarveErkennung(t *testing.T) {
 
 	// One watch job runs and the other waits untouched: waiting for a free slot
 	// costs the job no attempt.
-	if got := countByStatus(t, database, "laeuft"); got != 1 {
-		t.Fatalf("%d jobs running, want 1", got)
+	//
+	// Neither half of that is read as a snapshot. A deferred job is in "laeuft"
+	// for as long as the hand-back takes, so a row read at an arbitrary moment
+	// is a coin flip between two states the queue really passes through. So:
+	// "one runs" is counted where it is decided, at the entrance of the handler,
+	// which cannot be anything else; and the row is waited for until it has
+	// come to rest, which is the state the assertion is about.
+	if n := len(watchStarted); n != 0 {
+		t.Fatalf("%d watch handlers running, want 1", n+1)
 	}
-	row := jobRow(t, database, second)
-	if row.Status != "wartend" || row.Versuche != 0 {
-		t.Errorf("deferred job is %q with versuche %d, want wartend with 0", row.Status, row.Versuche)
-	}
+	dbtest.WaitFor(t, 3*time.Second, "the second watch job to be handed back", func() bool {
+		row := jobRow(t, database, second)
+		return row.Status == "wartend" && row.Versuche == 0
+	})
 
 	// With the hung job released the deferred one runs, so the cap queues intake
 	// work rather than dropping it.
@@ -132,9 +147,11 @@ func TestQueueCapsJobsOfOneType(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitRunning(t, &running, 1)
-	// Long enough for the second job to be claimed and started if nothing held
-	// it back; a quarter of that is all a deferred job waits.
-	time.Sleep(150 * time.Millisecond)
+	// Long enough for the second job to be claimed and started many times over
+	// if nothing held it back. The bar is the number of poll intervals, not a
+	// wall clock number: the queue is polled at testPoll here, so this covers
+	// hundreds of them.
+	time.Sleep(50 * testPoll)
 	if got := running.Load(); got != 1 {
 		t.Fatalf("%d watch jobs run at the same time, want 1", got)
 	}
@@ -508,15 +525,6 @@ func jobRow(t *testing.T, database *db.DB, id string) db.Job {
 		t.Fatal(err)
 	}
 	return row
-}
-
-func countByStatus(t *testing.T, database *db.DB, status string) int {
-	t.Helper()
-	n, err := db.New(database.Write).CountJobsByStatus(context.Background(), status)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return int(n)
 }
 
 func waitRunning(t *testing.T, running *atomic.Int32, want int32) {

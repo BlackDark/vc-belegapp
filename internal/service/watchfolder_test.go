@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/BlackDark/vc-belegapp/internal/db/dbtest"
 	"log/slog"
 	"maps"
 	"os"
@@ -29,7 +30,7 @@ func watchFixture(t *testing.T) (*Service, string) {
 	svc.Log = nil
 	folder := t.TempDir()
 	svc.WatchFolder = folder
-	svc.WatchInterval = 50 * time.Millisecond
+	svc.WatchInterval = testIntakeInterval
 	return svc, folder
 }
 
@@ -763,7 +764,7 @@ func TestHandleJobUnknownTypeStillFails(t *testing.T) {
 // Without a folder no ticker runs and no job is enqueued.
 func TestPollWatchFolderNoFolderEnqueuesNothing(t *testing.T) {
 	svc := openService(t, recognition.Fake{})
-	svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1}
+	svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1, Poll: testPoll}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
@@ -781,8 +782,8 @@ func TestPollWatchFolderNoFolderEnqueuesNothing(t *testing.T) {
 func TestPollWatchFolderEnqueuesOnEveryTick(t *testing.T) {
 	svc, folder := watchFixture(t)
 	putWatch(t, folder, "beleg.jpg", colorPNG(t, 61, 62, 63))
-	svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1, Poll: 10 * time.Millisecond, Handle: svc.HandleJob}
-	svc.WatchInterval = 30 * time.Millisecond
+	svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1, Poll: testPoll, Handle: svc.HandleJob}
+	svc.WatchInterval = testIntakeInterval
 
 	ctx, cancel := context.WithCancel(context.Background())
 	queueDone := make(chan struct{})
@@ -799,7 +800,7 @@ func TestPollWatchFolderEnqueuesOnEveryTick(t *testing.T) {
 	// polls, so the image — not a job row — is what ends the wait. It also
 	// proves the polls really ran and took the file, where a fixed sleep only
 	// hoped they had and fails on a loaded CI box.
-	waitFor(t, 10*time.Second, "the watched file to become an image", func() bool {
+	dbtest.WaitFor(t, 10*time.Second, "the watched file to become an image", func() bool {
 		return countBilder(t, svc) == 1
 	})
 	if n := countJobs(t, svc, "watch"); n < 2 {
@@ -821,8 +822,8 @@ func TestPollWatchFolderSkipsTickWhileAJobIsOpen(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := watchFixture(t)
 	// The queue never runs, so the first job stays open for the whole window.
-	svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1}
-	svc.WatchInterval = 20 * time.Millisecond
+	svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1, Poll: testPoll}
+	svc.WatchInterval = testIntakeInterval
 
 	poller, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})

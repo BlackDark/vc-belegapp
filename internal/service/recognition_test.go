@@ -39,7 +39,7 @@ func startJobs(t *testing.T, svc *Service) {
 	svc.Jobs = &jobs.Queue{
 		DB:      svc.DB,
 		Workers: 1,
-		Poll:    10 * time.Millisecond,
+		Poll:    testPoll,
 		Backoff: func(int, string) time.Duration { return 5 * time.Millisecond },
 		Handle:  svc.HandleJob,
 		OnRetry: svc.JobRetry,

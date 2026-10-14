@@ -111,7 +111,7 @@ func TestEveryEnqueuedJobCarriesACanonicalType(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := openService(t, recognition.Fake{})
-			svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1}
+			svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1, Poll: testPoll}
 			tc.queue(t, svc)
 
 			var typ string
