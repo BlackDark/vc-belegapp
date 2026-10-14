@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -205,17 +207,26 @@ func TestIngestWatchFolderNeedsTwoPollsPerFile(t *testing.T) {
 func TestIngestWatchFolderSkipsNamesItDoesNotRead(t *testing.T) {
 	svc, folder := watchFixture(t)
 	payload := colorPNG(t, 7, 8, 9)
-	for _, name := range []string{
+	// The names are distinct after lowercasing, not merely as written. On a
+	// case-insensitive filesystem (APFS, NTFS) two names differing only in
+	// case are one entry, so a pair like beleg.jpg.part and beleg.JPG.PART
+	// collapses into a single file there: the second silently overwrites the
+	// first, one fixture disappears, and the coverage it was there to provide
+	// disappears with it on exactly one platform. The uppercase partial
+	// suffix therefore rides on a stem of its own.
+	skipped := []string{
 		".hidden.jpg",          // dotfile: also covers ._ AppleDouble sidecars
 		"beleg.jpg.tmp",        // partial write
 		"beleg.jpg.part",       // partial write
 		"beleg.jpg.crdownload", // browser download in progress
-		"beleg.JPG.PART",       // the check is case-insensitive
+		"beleg.HEIC.PART",      // the suffix check is case-insensitive
 		"beleg.pdf",            // not a picture this application stores
 		"beleg.heic",           // nor this one (SPEC 1.2)
 		"beleg.txt",            // nor this one
 		"notanextension",       // no extension at all
-	} {
+	}
+	wantCaseFoldedDistinct(t, skipped)
+	for _, name := range skipped {
 		putWatch(t, folder, name, payload)
 	}
 	// A directory is not a file, even with a picture extension.
@@ -239,14 +250,98 @@ func TestIngestWatchFolderSkipsNamesItDoesNotRead(t *testing.T) {
 		t.Fatalf("%d images stored from names that are not intake candidates", n)
 	}
 	// Nothing was moved either: a skipped name keeps its place in the folder.
+	//
+	// The expectation is derived from the fixtures above and never written as
+	// a literal. A hardcoded count reads the same on a case-insensitive and a
+	// case-sensitive filesystem while meaning two different things, so it
+	// silently encodes whichever one the author happened to be sitting on.
+	// Deriving it from the same list that wrote the folder makes a collapsed
+	// fixture fail loudly on both platforms instead of quietly on one, and the
+	// membership check names the entry that went missing rather than leaving a
+	// reader to diff two slices.
 	names := watchNames(t, folder)
-	if len(names) != 10 {
-		t.Fatalf("folder holds %v, want the ten files, the directory and the link", names)
+	want := slices.Concat(skipped, []string{"subdir.jpg", "linked.jpg"})
+	if len(names) != len(want) {
+		t.Fatalf("folder holds %v, want the %d files, the directory and the link", names, len(want))
+	}
+	for _, name := range want {
+		if !slices.Contains(names, name) {
+			t.Fatalf("%s is gone from the folder, which holds %v", name, names)
+		}
 	}
 	for _, name := range names {
 		if strings.HasPrefix(name, watchProcessedDir) || strings.HasPrefix(name, watchRejectedDir) {
 			t.Fatalf("a skipped file was moved: %v", names)
 		}
+	}
+}
+
+// The intake decides on the lowercased name, which is what makes an uppercase
+// photo an intake candidate and an uppercase partial suffix a skip. A photo
+// extension that is already lowercased cannot tell the two apart: a name is a
+// candidate exactly when its final extension is one this application stores,
+// and ToLower can only ever widen that set, never narrow it. So the probe for
+// case-insensitivity has to be a name that is only a candidate once lowercased
+// -- drop the ToLower from watchCandidate and this table's uppercase picture
+// entries flip to false.
+//
+// The names here are distinct after lowercasing. That is not a stylistic
+// preference: on APFS "beleg.jpg" and "BELEG.JPG" are one file, the second
+// write overwrites the first, and the row the first name was there to check
+// silently stops existing. wantCaseFoldedDistinct enforces it instead of
+// leaving it to whoever edits this table next.
+func TestWatchCandidateDecidesOnTheLowercasedName(t *testing.T) {
+	cases := map[string]bool{
+		"beleg.jpg":            true,
+		"BELEG.WEBP":           true, // only lowercased is this a stored picture
+		"Beleg.PNG":            true,
+		"beleg.HEIC.PART":      false,
+		"beleg.Jpg.CrDownload": false,
+		".hidden.jpg":          false,
+		"beleg.pdf":            false,
+		"beleg.txt":            false,
+		"notanextension":       false,
+	}
+	wantCaseFoldedDistinct(t, slices.Sorted(maps.Keys(cases)))
+
+	folder := t.TempDir()
+	for name := range cases {
+		if err := os.WriteFile(filepath.Join(folder, name), []byte("x"), 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, err := os.ReadDir(folder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := map[string]bool{}
+	for _, entry := range entries {
+		candidate[entry.Name()] = watchCandidate(entry)
+	}
+	for _, name := range slices.Sorted(maps.Keys(cases)) {
+		got, ok := candidate[name]
+		if !ok {
+			t.Fatalf("%s is not in %s, so a case-insensitive filesystem folded it away", name, folder)
+		}
+		if got != cases[name] {
+			t.Errorf("watchCandidate(%q) = %v, want %v", name, got, cases[name])
+		}
+	}
+}
+
+// wantCaseFoldedDistinct fails the test when two fixture names differ only by
+// letter case. A case-insensitive filesystem stores them as one entry, so the
+// second fixture is never exercised there and runs on Linux alone -- which is
+// how a fixture written to cover a case-folding check ends up covering it on
+// exactly one of the two platforms whose answers have to agree.
+func wantCaseFoldedDistinct(t *testing.T, names []string) {
+	t.Helper()
+	seen := map[string]string{}
+	for _, name := range names {
+		if first, ok := seen[strings.ToLower(name)]; ok {
+			t.Fatalf("%q and %q are one file on a case-insensitive filesystem, so one of them is never tested there", first, name)
+		}
+		seen[strings.ToLower(name)] = name
 	}
 }
 
@@ -579,6 +674,15 @@ func TestIngestWatchFolderLeavesUnreadableFilesAlone(t *testing.T) {
 	path := putWatch(t, folder, "beleg.jpg", colorPNG(t, 41, 42, 43))
 	// The directory becomes unreadable, so the poll cannot get to the file.
 	// Restoring it afterwards must leave the file byte-identical.
+	//
+	// root is the one caller the premise does not hold for: it bypasses the
+	// permission bits, so the folder stays readable, the poll succeeds, and the
+	// assertion below blames the product for a directory nobody can actually
+	// lock away from root. That is the whole failure in a container image that
+	// runs as uid 0. Say so instead of asserting something untrue.
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses the permission bits this test depends on")
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
