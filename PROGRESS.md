@@ -1,16 +1,20 @@
 # Stand der Umsetzung
 
 Diese Sitzung hat den offenen Rückstand der [ROADMAP](docs/ROADMAP.md) abgearbeitet und die Codebasis
-aufgeräumt. Neun Einheiten sind gelandet: die amtlichen Lohnsteuerwerte kommen jetzt aus der API statt aus
-dem Frontend-Bundle (U1), doppelte Service-Logik ist zusammengeführt (U2), Dateinamen und interne
-Zeichenketten sind englisch (U3). Danach kam der komplette Eingangsweg für Prüfbilder: die Liste
-„Offene Bilder" (U4a), der IMAP-Abruf (U4b), die Webhook-Benachrichtigung (U8) und der überwachte Ordner
-(U7). Zuletzt wurden die Betriebseigenschaften gehärtet — die Job-Warteschlange kann von einem festhängenden
-Eingang nicht mehr die Belegerkennung aushungern (U9), und die `jobs`-Tabelle wächst nicht mehr unbegrenzt,
-weil abgeschlossene Zeilen stündlich entfernt und der Speicher Platz zurückgegeben wird (U10). Zwei geplante
-Eingänge wurden bewusst nicht gebaut; die Gründe stehen unten. Jede Einheit ist vor dem Commit geprüft
-worden, die Entscheidungen sind in [SPEC](docs/SPEC.md) und [configuration](docs/configuration.md)
-dokumentiert, nicht in dieser Datei.
+aufgeräumt: die amtlichen Lohnsteuerwerte aus der API statt aus dem Frontend-Bundle (U1), doppelte
+Service-Logik zusammengeführt (U2), Dateien und interne Zeichenketten englisch (U3), der komplette
+Eingangsweg für Prüfbilder — Liste „Offene Bilder" (U4a), IMAP-Abruf (U4b), Webhook (U8), überwachter
+Ordner (U7). Danach die Betriebseigenschaften: die Warteschlange kann von einem festhängenden Eingang
+nicht mehr die Belegerkennung aushungern (U9), und die `jobs`-Tabelle wächst nicht mehr unbegrenzt,
+weil abgeschlossene Zeilen stündlich entfernt und der Speicher Platz zurückgegeben wird (U10). Zwei
+geplante Eingänge wurden bewusst nicht gebaut; die Gründe stehen unten. Jede Einheit ist vor dem Commit geprüft
+worden, die Entscheidungen stehen in [SPEC](docs/SPEC.md) und [configuration](docs/configuration.md).
+
+Eine zweite Runde (U11–U19) hatte gemessene statt vermutete Belege: jede verdächtige Abfrage aus
+`internal/db/queries/` wurde mit `EXPLAIN QUERY PLAN` gegen das wirklich migrierte Schema gelesen, alle
+Migrationen aus `internal/db/migrations/` auf eine frische Datenbank gelegt. Der Durchlauf fand vier neue
+Migrationen, drei Taktgeber, ein N+1 und fünf stillschweigend verworfene Fehler. Alles davon ist gelandet.
+Die Runde deckte außerdem einen CI-Ausfall auf, der unentdeckt auf `main` stand — siehe [CI](#ci-der-rote-verlauf-auf-und-seine-auflösung).
 
 ## Erreichte Einheiten
 
@@ -25,10 +29,20 @@ dokumentiert, nicht in dieser Datei.
 | U7  | Überwachter Ordner: eingelegte Bilder als unzugewiesene Bilder einlesen; die Quelle wandert nach `.processed`, wird nie gelöscht | `6acbb53` | erledigt |
 | U9  | Warteschlange gehärtet: Parallelitätsgrenze je Jobtyp, Frist je Hintergrundauftrag, Zurückstellen ohne Versuchsverbrauch. Dazu Konfigurations- und Redaktionskorrekturen: Postfachpasswort wird verlangt, Mailbox-Details landen nicht mehr im Fehlertext | `964f99b`, `bf311ba` | erledigt |
 | U10 | Aufräumen der Job-Historie: abgeschlossene Zeilen werden nach `BELEGAPP_JOB_RETENTION` gelöscht, freie Seiten über `auto_vacuum=INCREMENTAL` zurückgegeben | `364c527` | erledigt |
+| U11 | Indizes für die zwei heißen Zugriffe: `blob_key`/`thumb_blob_key` auf `belegbilder` und ein partieller Index `jobs(typ,payload) WHERE status IN ('wartend','laeuft')`. Migration `00009_lookup_index.sql`, jeder Query-Plan von einem Test festgeschrieben. Der als redundant verdächtigte Index `belegbilder_beleg` **bleibt**: gemessen brachte sein Wegfall nichts | `5bab499` | erledigt |
+| U12 | `BELEGAPP_JOB_RETENTION` wird beim Start gegen die Download-Frist eines Datenexports geprüft (beide lesen dieselbe Konstante, können also nicht auseinanderlaufen). Dazu Jobfristen je Typ: `BELEGAPP_JOB_TIMEOUT_ERKENNUNG`, `_DATAEXPORT`, `_MAIL`, `_NOTIFY`, `_WATCH`; `0` heißt weiterhin „keine Frist". Unbekannter Typ oder unlesbare Dauer wird beim Start abgelehnt, nicht ignoriert | `94fa6d9` | erledigt |
+| U13 | `jobs.TypErkennung`, `TypDatenexport`, `TypMail`, `TypNotify`, `TypWatch` als exportierte Konstanten; die etwa zwanzig Stellen, die den Typ als String-Literal ausschrieben, benutzen sie. Ein Test liest die `CHECK`-Bedingung auf `jobs.typ` aus dem `sqlite_master` einer wirklich migrierten Datenbank, damit Go-Liste und Tabelle nicht auseinanderlaufen können | PR #25 (`cf63f31`) | erledigt |
+| U14 | Die vier stillschweigend verworfenen Fehlerstellen sind sichtbar: `RunJobs` protokolliert einen fehlgeschlagenen `Reset`/`ResetLaufendeErkennung`/`ListErkennungOffen`, `JobRetry`/`JobFail` einen fehlgeschlagenen Status-Write, `sweepOnce` warnt je Bild und fasst die Fehlschläge zusammen, statt einen teilweisen Durchlauf als Erfolg zu melden | PR #25 (`cf63f31`) | erledigt |
+| U15 | Gemeinsame Poll-Schleife `pollLoop` mit `enqueueUnlessOpen` und den Log-Helfern für `mail` und `watch`, die vorher zweimal derselbe Code waren. `Sweep` und `Pruner` bleiben bewusst eigenständig: sie sind keine Eingangs-Taktgeber | PR #25 (`cf63f31`) | erledigt |
+| U16 | `ANALYZE` läuft am Ende jedes Aufräumdurchlaufs (begrenzt auf 15 s, Fehler nicht fatal). Ohne Statistiken fielen die Query-Pläne in Migration `00008` und `00009` auf Vollabtastungen zurück. **Mit U11 gelandet**, nicht danach: der Plan-Test legt den Index wieder weg und misst neu, er kann ohne `ANALYZE` also nicht grün werden | `5bab499` | erledigt |
+| U17 | `sweepOnce` liest und löscht in Batches von 200 mit einem Keyset-Cursor auf `(erstellt_am, id)` statt in einer unbegrenzten Abfrage auf der einen Schreibverbindung. Ein Offset wäre falsch: das Löschen eines Batches schiebt jede Zeile hinter dem Fenster um genau dessen Länge vor, `LIMIT ... OFFSET n` überspränge also lebende Zeilen | PR #26 (`c487e55`) | erledigt |
+| U18 | `Bild.DuplikatVon` kostete eine Duplikatsuche je Bild. Jetzt eine `IN (...)`-Abfrage für die ganze Seite, Paarung und `LIMIT 1` in Go; der Kandidat ist der erste nach `(b.id, i.id)` und damit wiederholbar. `internal/service/warnings.go` profitiert mit | PR #26 (`c487e55`) | erledigt |
+| U19 | Ticker-Intervalle werden injiziert (`internal/jobs` von 19,2 s auf 11,0 s), und die zwei Kopien eines Warte-Helfers mit vertauschten Argumenten wurden zu einem `dbtest.WaitFor`, dessen falsche Reihenfolge nicht übersetzt. `internal/service` blieb bei ~20 s: die Kosten liegen in der Fixture (`dbtest.OpenSeeded` spielt neun Migrationen je Test), nicht in den Takten | PR #26 (`c487e55`) | erledigt |
 
 U4 ist über die ursprüngliche Ein-Zeilen-Aufgabe hinausgewachsen und in zwei Commits gelandet (U4a Liste,
-U4b Abruf). U7 und U8 sind in dieser Reihenfolge gelandet, nicht in der ursprünglichen — die Absicht war
-beide Male, den Prüfweg vor der Benachrichtigung zu haben.
+U4b Abruf). U7 und U8 sind in dieser Reihenfolge gelandet, nicht in der ursprünglichen — die Absicht war beide
+Male, den Prüfweg vor der Benachrichtigung zu haben. Ab U13 geht alles über einen Pull Request und landet als
+Squash in der Historie von `main`: `cf63f31` ist der Squash-Stand von PR #25, `c487e55` der von PR #26.
 
 ## Bewusst verworfen
 
@@ -37,40 +51,88 @@ beide Male, den Prüfweg vor der Benachrichtigung zu haben.
 | U5 — PWA Web Share Target | Nur Chromium/Android. iOS Safari kennt kein `share_target`, und iOS teilt HEIC, das die Bildverarbeitung ablehnt. Der CSRF-/Cookie-Risikofaktor lohnt diese Abdeckung nicht. |
 | U6 — Webhook-Eingang für Mail | Der IMAP-Abruf aus U4b deckt eingehende Mail bereits ab, ganz ohne öffentlichen Endpunkt. Ein Webhook fügte einer im Internet betriebenen Einzelbenutzer-App einen dauerhaft öffentlichen POST-Endpunkt hinzu, der die Sitzungsprüfung umgeht. |
 
+## CI: der rote Verlauf auf `main` und seine Auflösung
+
+**`main` war über sieben aufeinanderfolgende Commits nicht grün, und das fiel erst auf, als jemand die Historie
+nachlas.** Bei vier davon (`6acbb53`, `bf311ba`, `887cc26`, `5bab499`) lief CI an und fiel im Job `go` durch; bei
+drei (`964f99b`, `364c527`, `94fa6d9`) ist für den Push kein Lauf verzeichnet. Der Fehler war derselbe,
+eingeführt mit U7 (`6acbb53`) und behoben mit `8661dd5` (PR #24).
+
+Die Ursache ist ein Test-Fixture, kein Produktfehler. `TestIngestWatchFolderSkipsNamesItDoesNotRead` legte
+zwei Dateinamen an, die sich **nur in der Groß-/Kleinschreibung** unterschieden — `beleg.JPG.PART` und
+`beleg.jpg.part`. Auf einem dateisystem, das Groß- und Kleinschreibung nicht unterscheidet (macOS, APFS,
+Standard), schreibt das zweite stillschweigend über das erste, und die erwartete Dateizahl hält **aus
+Zufall**. Auf Linux überleben beide Einträge, die Zählung stimmt nicht mehr, und die Behauptung schlägt fehl:
+
+```
+--- FAIL: TestIngestWatchFolderSkipsNamesItDoesNotRead (0.34s)
+    watchfolder_test.go:244: folder holds [... beleg.JPG.PART ... beleg.jpg.part ...], want the ten files, the directory and the link
+```
+
+Der Test war also seit U7 kaputt, aber nur auf einer Plattform sichtbar. Das eigentliche Versagen ist ein
+zweites: **Niemand hat die CI auf `main` nach jedem Push angesehen.** Die lokale Suite lief auf macOS und war
+grün, also wurde viermal weitergearbeitet, bis ein Commit aus der Ferne geprüft wurde.
+
+Behoben in `8661dd5` (PR #24): die erwartete Zahl wird aus der Liste abgeleitet, die den Ordner geschrieben
+hat, und die Zugehörigkeit wird geprüft statt einer festen Zahl; ein Helfer lehnt jedes Fixture-Paar ab, das
+einmal kleingeschrieben kollidiert; ein eigener Test nagelt das Kleinschreiben selbst fest, weil der Sprungtest
+sonst nicht fehlschlagen könnte. Ein Berechtigungstest wird übersprungen, wenn die Suite als `root` läuft.
+
+**Die Lehre, die daraus folgt: nach jedem Push den CI-Status auf `main` prüfen, nicht nur die lokale Suite.**
+
+## Arbeitsweise mit `main`
+
+`main` ist geschützt. Eine Änderung geht über einen Pull Request, wird per Squash zusammengefasst und
+automatisch gemergt, sobald die erforderlichen Checks grün sind; erforderlich sind `web`, `go`, `pdf` und
+`docker` (0 Reviews, Single-Maintainer, lineare Historie, kein Force-Push, kein Löschen, Konversationen
+aufgelöst — die vollständige Regel steht in [SPEC](docs/SPEC.md) §16.4). `gh` ist über seinen
+Anmeldedatenspeicher authentifiziert:
+
+```bash
+gh pr create --base main --head <branch> --title "..." --body "..."
+gh pr merge --squash --auto <pr-number>
+```
+
+Nach dem Push wird **nicht** mehr nachgedrückt: kein Force-Push, kein Amend, kein Rebase. Ein Branch hinter
+`main` wird gemeldet und aufgegeben, statt die Historie umzuschreiben.
+
 ## Bekannte Einschränkungen
 
 Ungeschönt, weil jede davon jemanden betrifft, der die Anwendung betreibt:
 
 - **Eine Frist kann keinen festhängenden Dateisystemzugriff unterbrechen.** Auf einem hängenden NFS- oder
-  SMB-Mount bleibt ein `watch`-Auftrag im Lesen, bis der Mount antwortet. Die Parallelitätsgrenze begrenzt
-  das auf einen Worker je Typ, aber **zwei** festhängende Typen unterschiedlicher Art — ein hängender Mount und
-  etwa ein Webhook-Server, der Verbindungen annimmt und nie antwortet — füllen den Pool von zwei Workern und
-  halten die Belegerkennung bis zum Neustart an. Ein Neustart hilft nicht: der Auftrag wird wieder eingereiht
-  und hängt wieder. Abhilfe: den Eingang abschalten (`BELEGAPP_WATCH_FOLDER=`), bis der Mount zurück ist.
+  SMB-Mount bleibt ein `watch`-Auftrag im Lesen, bis der Mount antwortet. Die Parallelitätsgrenze begrenzt das
+  auf einen Worker je Typ, aber **zwei** festhängende Typen unterschiedlicher Art — ein hängender Mount und etwa
+  ein Webhook-Server, der Verbindungen annimmt und nie antwortet — füllen den Pool von zwei Workern und halten
+  die Belegerkennung bis zum Neustart an. Ein Neustart hilft nicht: der Auftrag wird wieder eingereiht und
+  hängt wieder. Die Fristen aus U9/U12 ändern daran nichts, weil eine Frist nur einen Auftrag beendet, der
+  wieder im Rechner hängt, nicht einen, der noch darin steckt. Abhilfe: `BELEGAPP_WATCH_FOLDER=`.
 - **`auto_vacuum=INCREMENTAL` gilt nur für Datenbanken, die ab hier neu angelegt werden.** SQLite übergeht die
   Einstellung auf einer Datei, die bereits Tabellen hat — stillschweigend, absichtlich. Eine bestehende
-  Installation löscht also weiterhin korrekt, behält aber ihre Dateigröße, bis ein Betreiber einmalig
-  `PRAGMA auto_vacuum=INCREMENTAL; VACUUM;` bei gestopptem Prozess ausführt. Ohne diesen Schritt begrenzt das
-  Aufräumen nur das Wachstum, es schrumpft nichts. Schritt für Schritt in
-  [configuration](docs/configuration.md#the-jobs-table-and-the-size-of-the-database).
+  Installation löscht weiterhin korrekt, behält aber ihre Dateigröße, bis ein Betreiber einmalig `PRAGMA
+  auto_vacuum=INCREMENTAL; VACUUM;` bei gestopptem Prozess ausführt. Ohne diesen Schritt begrenzt das Aufräumen
+  nur das Wachstum — Schritt für Schritt in [configuration](docs/configuration.md#the-jobs-table-and-the-size-of-the-database).
 - **Der Webhook ist die einzige Ankunftsanzeige für Postfach- und Ordnerbelege.** Prüft niemand einen Eingang,
   vernichtet ihn der TTL-Lauf für unzugewiesene Bilder (Vorgabe `BELEGAPP_UNASSIGNED_IMAGE_TTL=24h`, stündlicher
   Lauf, also nach 24–25 Stunden). Die Ordnerquelle ist nach `.processed` verschoben und liegt noch da; beim
-  Postfach ist die Mail nie gelöscht, es sei denn, sie wird nach `BELEGAPP_MAIL_DONE_FOLDER` verschoben. Das
-  Bild ist der einzige Verlust. Dazu kommt: ein dauerhaft fehlschlagender Webhook-Auftrag hat **keine**
-  sichtbare Oberfläche für den Benutzer — er erscheint nur als Zeile mit Status `fehler` in der
-  `jobs`-Tabelle.
+  Postfach ist die Mail nie gelöscht, es sei denn, sie wandert nach `BELEGAPP_MAIL_DONE_FOLDER`. Das Bild ist der
+  einzige Verlust. Dazu: ein dauerhaft fehlschlagender Webhook-Auftrag hat **keine** sichtbare Oberfläche — er
+  erscheint nur als Status `fehler` in der `jobs`-Tabelle, seit U14 wenigstens mit Logeintrag.
 - **Ein dauerhaft fehlschlagender Eingang schreibt weiterhin eine Zeile je Intervall.** Das Aufräumen begrenzt
   die Tabelle, aber es bremst den Auftrag nicht zurück: ein Postfach mit dauerhaft abgelehnten Anmeldedaten
-  erzeugt alle fünf Minuten eine neue Zeile, jeder Endzustand wird nach einer Woche entfernt, und dieselbe
-  Woche später steht die nächste da. Es gibt keine Meldeschwelle und keinen Circuit-Breaker.
+  erzeugt alle fünf Minuten eine neue Zeile, jeder Endzustand wird nach einer Woche entfernt, und dieselbe Woche
+  später steht die nächste da. Es gibt keine Meldeschwelle und keinen Circuit-Breaker.
 - **`github.com/emersion/go-imap/v2` ist eine Beta-Abhängigkeit** (`v2.0.0-beta.8`, MIT). Die v1-Linie ist seit
   2022 eingefroren, deshalb wurde die v2 gewählt. Ein API-Wechsel beim nächsten Sprung kann Codeänderungen
   erzwingen.
 - **Der überwachte Ordner erkennt bereits gespeicherte Bytes am Inhalts-Hash**, legt sie ohne zweites Bild ab
-  und meldet das mit einer eigenen Warnung und einem eigenen Zähler, statt sie wie einen gewöhnlichen
-  Fund zu verschieben. Praktisch: dieselbe Quittung wird nicht doppelt angelegt, aber sie ist auch kein
-  Hinweis darauf, dass etwas neu eingegangen ist.
+  und meldet das mit einer eigenen Warnung und einem eigenen Zähler, statt sie wie einen gewöhnlichen Fund zu
+  verschieben. Dieselbe Quittung wird also nicht doppelt angelegt, aber es ist auch kein Hinweis darauf, dass
+  etwas neu eingegangen ist.
+
+Zwei Einschränkungen aus dem vorigen Stand sind erledigt und stehen deshalb nicht mehr hier: `ANALYZE` läuft
+jetzt am Ende jedes Aufräumdurchlaufs (U16), und `BELEGAPP_JOB_RETENTION` wird beim Start gegen die
+Download-Frist eines Datenexports geprüft (U12).
 
 ## Review-Protokoll
 
@@ -96,13 +158,22 @@ bei Oberflächen-Lügen und bei kaputt gebautem `dist` bisher erfolgreich.
   dauerhaft einen fehlgeschlagenen Auftrag je Intervall, mit „Zugang verweigert" statt „Passwort fehlt".
   Der Mail-Fehlertext trug Mailbox-Host und rohe Serverantwort in die Auftragszeile und ins Log. Vier
   Tests mit festen `time.Sleep` wurden durch deterministische Wartebedingungen ersetzt.
-- **U10** — der Statfilter musste in die Query wandern, damit ein Fehler im Aufrufer keine Zeile löschen
-  kann, die noch Arbeit schuldet; der Aufräumvorgang darf nicht in der Warteschlange hängen, weil der
-  Schreibkanal nur eine Verbindung hat und ein Block auf den ganzen Bestand jeden Auftrag verzögert hätte
-  (festgehalten durch `TestPruneDoesNotDelayJobExecution`); `auto_vacuum` an anderer Stelle als bei der
-  Erstellung zu setzen wäre auf einer bestehenden Datenbank wirkungslos; die Dateigrößenmessung musste das
-  WAL erst zurückfalten, sonst misst sie nichts; und das Test-Cleanup schlug mit „directory not empty"
-  fehl, weil `database/sql` die `-wal`-/`-shm`-Dateien nach `Close` neu anlegt.
+- **U10** — der Statfilter musste in die Query wandern, damit ein Fehler im Aufrufer keine Zeile löschen kann,
+  die noch Arbeit schuldet; der Aufräumvorgang darf nicht in der Warteschlange hängen, weil der Schreibkanal nur
+  eine Verbindung hat und ein Block auf den ganzen Bestand jeden Auftrag verzögert hätte (festgehalten durch
+  `TestPruneDoesNotDelayJobExecution`); `auto_vacuum` an anderer Stelle als bei der Erstellung zu setzen wäre auf
+  einer bestehenden Datenbank wirkungslos; die Dateigrößenmessung musste das WAL erst zurückfalten; und das
+  Test-Cleanup schlug mit „directory not empty" fehl, weil `database/sql` die `-wal`-/`-shm`-Dateien nach
+  `Close` neu anlegt.
+- **U11/U16** — die Query-Pläne wurden **nach** dem Anlegen der Migration gegen die frisch migrierte Datenbank
+  gelesen, nicht vorher geschätzt; die Tests legen den Index wieder weg und messen neu, sonst wären sie grün,
+  ohne dass SQLite ihn benutzt. Der als redundant verdächtigte Index blieb, weil die Messung keinen Unterschied
+  zeigte — die Vermutung war falsch, das Messen hat sie widerlegt.
+- **U17/U19** — ein Offset-Cursor wäre still falsch gewesen, nicht nur langsam: das Löschen eines Batches
+  verschiebt jede Zeile hinter dem Fenster vor, `LIMIT ... OFFSET n` hätte also lebende Zeilen übersprungen.
+  Die Poll-Schleife beansprucht außerdem einen Auftrag, **bevor** sie wartet; fast jeder Test zahlte Sekunden
+  für einen Taktgeber, der im Millisekundenbereich feuert, und `TestQueueClaimsAJobWaitingBeforeTheFirstTick`
+  gibt ihm eine Stunde und fällt ohne diese erste Beanspruchung.
 
 ## Konfiguration aus dieser Sitzung
 
@@ -113,7 +184,10 @@ Maßgeblich ist die Tabelle in [configuration](docs/configuration.md); hier nur 
 - `BELEGAPP_NOTIFY_*` — Webhook-Adresse, Token, Timeout
 - `BELEGAPP_WATCH_FOLDER`, `BELEGAPP_WATCH_INTERVAL` — überwachter Ordner
 - `BELEGAPP_JOB_TIMEOUT` — Frist für die drei Hintergrundaufträge `mail`, `watch`, `notify`
-- `BELEGAPP_JOB_RETENTION` — Aufbewahrungsfenster für abgeschlossene Auftragszeilen
+- `BELEGAPP_JOB_TIMEOUT_ERKENNUNG`, `_DATAEXPORT`, `_MAIL`, `_NOTIFY`, `_WATCH` — Frist je Typ, überschreibt
+  `BELEGAPP_JOB_TIMEOUT`; `0` bedeutet „keine Frist" (ab U12)
+- `BELEGAPP_JOB_RETENTION` — Aufbewahrungsfenster für abgeschlossene Auftragszeilen; muss mindestens so lang
+  sein wie die Download-Frist eines Datenexports, sonst wird die Konfiguration beim Start abgelehnt (ab U12)
 
 ## Offene Fragen
 
@@ -122,19 +196,27 @@ des Eigentümers:
 
 - **§19.1** — die Konfigurationsfragen zur Jahresregel, die nur der Arbeitgeber beantworten kann
   (Tageszuschuss, bezuschusste Mahlzeiten, Kirchensteuerverfahren, Eigenanteil-Variante, Monatslimit,
-  Übergabeweg). U1 beantwortet davon nur die Beschaffungsfrage: Sachbezugswerte und Kirchensteuersätze
-  kommen jetzt aus der API, nicht mehr aus einer Liste im Bundle.
+  Übergabeweg). U1 beantwortet davon nur die Beschaffungsfrage: die amtlichen Werte kommen aus der API.
 - **§19.3** — die Annahmen, die sich die Spezifikation selbst gegeben hat und die bestätigt werden müssen.
 
 Diese Sitzung deckt bereits ab, was ohne Antwort auskam: die Eingangswege (IMAP, überwachter Ordner) und
-ihre Anzeige (Liste „Offene Bilder", Webhook) sind umgesetzt und in §19.2 als erledigt vermerkt. Offen
-bleiben darin PDF-Anhänge als Eingabe (kein Rasterizer), WebDAV als Eingang, und die Frage, wie sich
-eine prüfpflichtige Belegzuordnung überhaupt abbilden soll.
+ihre Anzeige (Liste „Offene Bilder", Webhook) sind umgesetzt und in §19.2 als erledigt vermerkt.
+
+Offen bleiben und eine eigene Entscheidung brauchen (alle in [ROADMAP](docs/ROADMAP.md), nicht terminiert):
+
+- **Die Sachbezugswerte für 2027 müssen vor Januar 2027 aktualisiert werden.** Für 2027 liegt bisher nur ein
+  Entwurf vor, die Oberfläche warnt bis zum Release mit dem amtlichen Wert. Ein Termin, keine Frage.
+- **WebDAV als Eingang** (ROADMAP-Option 4b) — derselbe Aufbau wie der überwachte Ordner, aber ohne Mount
+  und mit einer zweiten Zugangsberechtigung in der Anwendung.
+- **PDF-Anhänge als Eingabe** — kein Rasterizer im Bestand; §1.2 schließt PDF-Belege aus, bis das entschieden
+  ist. Dazu die Frage aus §19.2, wie sich eine prüfpflichtige Belegzuordnung überhaupt abbilden soll.
+- **Mehrbenutzerbetrieb, Rollen, Mandanten** — das Datenmodell ist dafür offengehalten, gebaut ist nichts.
+- **Offline-Erfassung mit Sync-Warteschlange** und **Regelzeiträume mitten im Jahr** (Teilbelege gehören dazu).
 
 ## Verwandte Dokumente
 
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — genehmigter Rückstand und mögliche Features
-- [`docs/SPEC.md`](docs/SPEC.md) — §18 Meilensteine, §19 offene Punkte, §5.2 Warteschlange
+- [`docs/SPEC.md`](docs/SPEC.md) — §16.4 Branch-Schutz, §18 Meilensteine, §19 offene Punkte, §5.2 Warteschlange
 - [`docs/FEATURES.md`](docs/FEATURES.md) — Changelog je Version
 - [`docs/configuration.md`](docs/configuration.md) — alle `BELEGAPP_*`-Variablen
 - [`docs/deployment.md`](docs/deployment.md) — Betrieb, Datenbankgröße
