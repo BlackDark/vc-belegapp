@@ -347,14 +347,14 @@ func TestDefaultPolicyPerTypeOverride(t *testing.T) {
 // avoids is an operator setting 0 and getting the global deadline anyway.
 func TestDefaultPolicyZeroOverrideDisablesTheDeadline(t *testing.T) {
 	p := DefaultPolicy(10*time.Minute, map[string]time.Duration{
-		typMail: 0,
+		TypMail: 0,
 		// The export is listed as zero by default already; an operator
 		// putting it back must get the same answer.
-		typDatenexport: 0,
+		TypDatenexport: 0,
 	})
 	// Both named types are in the map, with a zero, so neither falls through
 	// to the default.
-	for _, typ := range []string{typMail, typDatenexport} {
+	for _, typ := range []string{TypMail, TypDatenexport} {
 		budget, ok := p.Timeout[typ]
 		if !ok {
 			t.Errorf("%s is not in the timeout map, so it falls back to the default", typ)
@@ -370,12 +370,12 @@ func TestDefaultPolicyZeroOverrideDisablesTheDeadline(t *testing.T) {
 	// The types nobody named still get the global number. erkennung keeps its
 	// own zero here: it is one of the two the default leaves off, which is a
 	// separate switch from the one this test is about.
-	for _, typ := range []string{typWatch, typNotify, "ein_neuer_typ"} {
+	for _, typ := range []string{TypWatch, TypNotify, "ein_neuer_typ"} {
 		if got := p.timeout(typ); got != 10*time.Minute {
 			t.Errorf("%s %s, want the global 10m", typ, got)
 		}
 	}
-	if got := p.timeout(typErkennung); got != 0 {
+	if got := p.timeout(TypErkennung); got != 0 {
 		t.Errorf("erkennung %s, want none", got)
 	}
 }
@@ -414,20 +414,20 @@ func TestQueuePerTypeOverrideRunsPastTheGlobalTimeout(t *testing.T) {
 	})
 	// The global deadline is short enough to fail a mail job on its own; the
 	// override takes it off the type the job below has.
-	q.Policy = DefaultPolicy(50*time.Millisecond, map[string]time.Duration{typMail: 0})
+	q.Policy = DefaultPolicy(50*time.Millisecond, map[string]time.Duration{TypMail: 0})
 	// Two workers, so the control job can start while the mail job sleeps. The
 	// point is the deadline, not the cap.
 	q.Workers = 2
 	runQueue(t, q)
 
 	ctx := context.Background()
-	mail, err := q.Enqueue(ctx, typMail, "{}")
+	mail, err := q.Enqueue(ctx, TypMail, "{}")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The control job keeps the global deadline and fails on it, which is what
 	// says the override is scoped to the one type.
-	notify, err := q.Enqueue(ctx, typNotify, "{}")
+	notify, err := q.Enqueue(ctx, TypNotify, "{}")
 	if err != nil {
 		t.Fatal(err)
 	}

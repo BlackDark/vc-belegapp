@@ -6,22 +6,40 @@ import (
 	"time"
 )
 
-// The job types the queue sees in jobs.typ. Nothing in this package switches on
-// them; they are the keys of the policy maps and of DefaultPolicy, so a type
-// added later is covered by the moment it is named there.
+// The job types the queue sees in jobs.typ.
+//
+// These are the one spelling of every type, and everything that writes a job
+// row or switches on one uses them: internal/service enqueues with them, its
+// dispatch names them, and app.go recognises them. A type written out as a
+// string literal somewhere else is a job nothing caps and nothing runs — the
+// policy would not name it and HandleJob would fall through to "Unbekannter
+// Job" — so a sixth type is added here and nowhere else.
+//
+// The other side of the spelling is the CHECK constraint on jobs.typ in
+// migration 00007, which lists the same five values. TestJobTypesMatchTheCheck
+// Constraint compares the two, so the list below and the table cannot drift.
 const (
-	typErkennung   = "erkennung"
-	typDatenexport = "datenexport"
-	typMail        = "mail"
-	typNotify      = "notify"
-	typWatch       = "watch"
+	TypErkennung   = "erkennung"
+	TypDatenexport = "datenexport"
+	TypMail        = "mail"
+	TypNotify      = "notify"
+	TypWatch       = "watch"
 )
 
 // jobTypes is every type the queue knows, in the order the documentation lists
 // them. It is the one place a type is added on this side, so the two subsets
 // below cannot name one it does not contain and the drift test has a single
 // list to walk instead of a literal that could fall behind a sixth type.
-var jobTypes = []string{typErkennung, typDatenexport, typMail, typNotify, typWatch}
+var jobTypes = []string{TypErkennung, TypDatenexport, TypMail, TypNotify, TypWatch}
+
+// Types returns every job type the queue knows, in the order the documentation
+// lists them.
+//
+// It is for the guards on the other side of the package boundary: a test in
+// internal/service walks it to check that its dispatch handles each type and
+// that what it enqueues carries it. The returned slice is a copy, so a caller
+// cannot change the canonical list.
+func Types() []string { return append([]string(nil), jobTypes...) }
 
 // cappedTypes are the job types the queue runs at most one job of at a time:
 // the three background intakes and the data export. They may not take the whole
@@ -29,7 +47,7 @@ var jobTypes = []string{typErkennung, typDatenexport, typMail, typNotify, typWat
 //
 // It is deliberately not the same set as deadlineFreeTypes — see DefaultPolicy,
 // where the data export is capped but not bounded in time.
-var cappedTypes = []string{typMail, typWatch, typNotify, typDatenexport}
+var cappedTypes = []string{TypMail, TypWatch, TypNotify, TypDatenexport}
 
 // deadlineFreeTypes are the types DefaultPolicy leaves off the deadline: the
 // recognition, which bounds its own model call with BELEGAPP_LLM_TIMEOUT, and
@@ -39,7 +57,7 @@ var cappedTypes = []string{typMail, typWatch, typNotify, typDatenexport}
 //
 // An operator can undo that: a per-type override wins over the entry below, in
 // both directions.
-var deadlineFreeTypes = []string{typErkennung, typDatenexport}
+var deadlineFreeTypes = []string{TypErkennung, TypDatenexport}
 
 // deferDelay is how long a claimed job stays out of the queue after its type
 // turned out to be at its concurrency cap.

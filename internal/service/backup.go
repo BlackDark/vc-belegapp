@@ -179,7 +179,7 @@ func (s *Service) EnqueueDatenexport(ctx context.Context, actor Actor) (string, 
 	if err != nil {
 		return "", err
 	}
-	return s.Jobs.Enqueue(ctx, "datenexport", string(payload))
+	return s.Jobs.Enqueue(ctx, jobs.TypDatenexport, string(payload))
 }
 
 func (s *Service) runDatenexport(ctx context.Context, job jobs.Job) (string, error) {
@@ -229,7 +229,7 @@ func (s *Service) OpenDatenexport(ctx context.Context, jobID string) (Download, 
 	if err != nil {
 		return Download{}, err
 	}
-	if row.Typ != "datenexport" || row.Status != "fertig" {
+	if row.Typ != jobs.TypDatenexport || row.Status != "fertig" {
 		return Download{}, problem.New(404, "E_NICHT_GEFUNDEN", "Datenexport nicht gefunden.")
 	}
 	var result struct {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/BlackDark/vc-belegapp/internal/jobs"
 	"github.com/BlackDark/vc-belegapp/internal/notify"
 )
 
@@ -45,11 +46,11 @@ func (s *Service) enqueueBildPruefen(ctx context.Context, bildID, erstelltAm, qu
 	}
 	raw, err := json.Marshal(notifyJob{BildID: bildID, ErstelltAm: erstelltAm, Quelle: quelle})
 	if err != nil {
-		s.logNotify("notify job could not be built", "bild_id", bildID)
+		s.log("notify job could not be built", "bild_id", bildID)
 		return
 	}
-	if _, err := s.Jobs.Enqueue(ctx, "notify", string(raw)); err != nil {
-		s.logNotify("notify job could not be enqueued", "bild_id", bildID, "err", err)
+	if _, err := s.Jobs.Enqueue(ctx, jobs.TypNotify, string(raw)); err != nil {
+		s.log("notify job could not be enqueued", "bild_id", bildID, "err", err)
 	}
 }
 
@@ -72,18 +73,9 @@ func (s *Service) runNotify(ctx context.Context, payload string) (string, error)
 		// The event is already in the payload, not in this message: what went
 		// wrong is about the receiver, and a log line repeats neither the
 		// answer nor the address.
-		s.logNotify("review notification failed", "bild_id", job.BildID, "err", err)
+		s.log("review notification failed", "bild_id", job.BildID, "err", err)
 		return "", err
 	}
-	s.logNotify("review notification sent", "bild_id", job.BildID, "quelle", job.Quelle)
+	s.log("review notification sent", "bild_id", job.BildID, "quelle", job.Quelle)
 	return `{"ok":true}`, nil
-}
-
-// logNotify writes one line about the outbound webhook. It names the image and
-// the intake, never the address and never the token.
-func (s *Service) logNotify(msg string, args ...any) {
-	if s.Log == nil {
-		return
-	}
-	s.Log.Info(msg, args...)
 }

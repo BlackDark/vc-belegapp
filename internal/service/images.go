@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"sort"
 	"time"
@@ -159,7 +160,15 @@ func (s *Service) GetBild(ctx context.Context, bildID string) (Bild, error) {
 		Sha256:       row.Sha256,
 		UploadSha256: row.UploadSha256,
 	})
-	if ferr == nil {
+	if ferr != nil {
+		// The hint is decoration on a row that was read successfully: a review
+		// screen that cannot answer "is this the same receipt twice?" is still
+		// worth showing, so the lookup failure leaves the field empty instead of
+		// failing a read that has nothing wrong with it. It is logged because a
+		// lookup that always fails is a broken feature nobody would otherwise
+		// notice.
+		s.logWarn("duplicate lookup failed", "bild_id", bildID, "err", ferr)
+	} else {
 		dup = &found.ID
 	}
 	return bildFromRow(row, dup), nil
@@ -355,7 +364,7 @@ func faelligAm(erstellt string, ttl time.Duration) *string {
 
 // Sweep removes unassigned images older than the TTL until ctx ends.
 func (s *Service) Sweep(ctx context.Context) {
-	_ = s.sweepOnce(ctx)
+	s.sweepLogged(ctx)
 	s.SweepExports(ctx)
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
@@ -364,12 +373,34 @@ func (s *Service) Sweep(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_ = s.sweepOnce(ctx)
+			s.sweepLogged(ctx)
 			s.SweepExports(ctx)
 		}
 	}
 }
 
+// sweepLogged is one sweep pass plus the line that says it did not finish.
+//
+// The ticker is unattended and there is nobody to return an error to, so the
+// report is the log. A pass that removed nine of ten expired rows is otherwise
+// indistinguishable from a pass that removed nothing.
+func (s *Service) sweepLogged(ctx context.Context) {
+	// A cancelled context is the shutdown, not a finding: it would put one line
+	// per pass in the log of every stop.
+	if err := s.sweepOnce(ctx); err != nil && ctx.Err() == nil {
+		s.logWarn("the expired-image sweep did not finish; the rest is retried on the next pass", "err", err)
+	}
+}
+
+// sweepOnce removes every unassigned image older than the TTL and then the blob
+// objects nothing refers to any more.
+//
+// One image that cannot be deleted does not end the pass. The rest are just as
+// expired, and a failure here — a row another request touched, a trigger, a full
+// disk — says nothing about the next one, so aborting would leave a whole
+// backlog to wait for an hour. Each failure is logged with the image it belongs
+// to and collected, so the pass is both complete and reported: a partial sweep
+// comes back as an error rather than as silence.
 func (s *Service) sweepOnce(ctx context.Context) error {
 	if s.ImageTTL <= 0 {
 		return nil
@@ -379,10 +410,21 @@ func (s *Service) sweepOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var failures []error
 	for _, row := range rows {
-		_ = s.DeleteBild(ctx, row.ID)
+		if err := s.DeleteBild(ctx, row.ID); err != nil {
+			s.logWarn("an expired image was not removed", "bild_id", row.ID, "err", err)
+			failures = append(failures, err)
+		}
 	}
-	return s.sweepOrphanBlobs(ctx)
+	// The orphan sweep still runs after a partial one: the objects of the rows
+	// that did go are just as unreferenced as those of the rows that did not.
+	sweepErr := s.sweepOrphanBlobs(ctx)
+	if len(failures) == 0 {
+		return sweepErr
+	}
+	return fmt.Errorf("%d of %d expired images were not removed: %w",
+		len(failures), len(rows), errors.Join(append(failures, sweepErr)...))
 }
 
 // sweepOrphanBlobs removes bilder/ and thumbs/ objects that have no row and

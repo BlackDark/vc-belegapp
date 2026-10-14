@@ -5,11 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
-	"time"
 
 	"github.com/emersion/go-imap/v2"
 
-	"github.com/BlackDark/vc-belegapp/internal/db"
+	"github.com/BlackDark/vc-belegapp/internal/jobs"
 	"github.com/BlackDark/vc-belegapp/internal/mailinbox"
 	"github.com/BlackDark/vc-belegapp/internal/notify"
 	"github.com/BlackDark/vc-belegapp/internal/problem"
@@ -274,38 +273,15 @@ const mailJobPayload = "{}"
 // waiting or running — without that, an unreachable server would pile one
 // extra job onto the backlog on every tick.
 func (s *Service) PollMailbox(ctx context.Context) {
-	if s.Mail == nil || s.Jobs == nil || s.MailInterval <= 0 {
+	if s.Mail == nil {
 		return
 	}
-	s.enqueueMail(ctx)
-	ticker := time.NewTicker(s.MailInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.enqueueMail(ctx)
-		}
-	}
+	s.pollLoop(ctx, s.MailInterval, s.enqueueMail)
 }
 
 // enqueueMail queues one poll unless one is already open.
 func (s *Service) enqueueMail(ctx context.Context) {
-	n, err := db.New(s.DB.Write).CountOpenJobsByPayload(ctx, db.CountOpenJobsByPayloadParams{
-		Typ:     "mail",
-		Payload: mailJobPayload,
-	})
-	if err != nil {
-		s.logMail("mail job could not be counted", "err", err)
-		return
-	}
-	if n > 0 {
-		return
-	}
-	if _, err := s.Jobs.Enqueue(ctx, "mail", mailJobPayload); err != nil {
-		s.logMail("mail job could not be enqueued", "err", err)
-	}
+	s.enqueueUnlessOpen(ctx, jobs.TypMail, mailJobPayload)
 }
 
 // runMail is the mail job body.
@@ -315,7 +291,7 @@ func (s *Service) runMail(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if poll.Bilder > 0 {
-		s.logMail("mail ingested", "bilder", poll.Bilder, "nachrichten", poll.Geprueft)
+		s.log("mail ingested", "bilder", poll.Bilder, "nachrichten", poll.Geprueft)
 	}
 	body, err := json.Marshal(poll)
 	if err != nil {
@@ -324,19 +300,9 @@ func (s *Service) runMail(ctx context.Context) (string, error) {
 	return string(body), nil
 }
 
-func (s *Service) logMail(msg string, args ...any) {
-	if s.Log == nil {
-		return
-	}
-	s.Log.Info(msg, args...)
-}
-
 // warnMail logs a finding the operator should look at: a rejected sender, a
 // skipped attachment, a filing that did not happen. Never the password and
 // never a mail body.
 func (s *Service) warnMail(msg string, args ...any) {
-	if s.Log == nil {
-		return
-	}
-	s.Log.Warn(msg, args...)
+	s.logWarn(msg, args...)
 }
