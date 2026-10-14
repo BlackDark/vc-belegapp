@@ -34,16 +34,32 @@ type erkennungJob struct {
 }
 
 // RunJobs resets interrupted work and processes the queue until ctx ends.
+//
+// The resets are repairs, and a repair that failed must not stop the queue —
+// the workers below still drain everything claimable. What it does instead is
+// leave work stranded, so each failure is logged rather than swallowed: a job
+// left in "laeuft" counts as open for the intake that owns it (the pollers skip
+// a tick while one is), and an image left in "laeuft" reads as a recognition
+// that never finishes. The next start runs the same repairs, so the log line is
+// the difference between "an image is stuck" and "an image is stuck and nobody
+// knows".
 func (s *Service) RunJobs(ctx context.Context) {
 	if s.Jobs == nil {
 		return
 	}
-	_ = s.Jobs.Reset(ctx)
-	_ = db.New(s.DB.Write).ResetLaufendeErkennung(ctx)
+	if err := s.Jobs.Reset(ctx); err != nil {
+		s.log("interrupted jobs were not reset; they stay in laeuft until the next start", "err", err)
+	}
+	if err := db.New(s.DB.Write).ResetLaufendeErkennung(ctx); err != nil {
+		s.log("interrupted recognitions were not reset; they stay in laeuft until the next start", "err", err)
+	}
 	ids, err := db.New(s.DB.Write).ListErkennungOffen(ctx)
-	if err == nil {
-		for _, bildID := range ids {
-			_ = s.enqueueErkennung(ctx, bildID)
+	if err != nil {
+		s.log("open recognitions could not be listed; none were re-queued", "err", err)
+	}
+	for _, bildID := range ids {
+		if err := s.enqueueErkennung(ctx, bildID); err != nil {
+			s.logWarn("open recognition was not re-queued", "bild_id", bildID, "err", err)
 		}
 	}
 	s.Jobs.Run(ctx)
@@ -53,19 +69,19 @@ func (s *Service) RunJobs(ctx context.Context) {
 func (s *Service) HandleJob(ctx context.Context, job jobs.Job) (float64, string, error) {
 	start := time.Now()
 	switch job.Typ {
-	case "erkennung":
+	case jobs.TypErkennung:
 		err := s.runErkennung(ctx, job.Payload)
 		return time.Since(start).Seconds(), "", err
-	case "datenexport":
+	case jobs.TypDatenexport:
 		result, err := s.runDatenexport(ctx, job)
 		return time.Since(start).Seconds(), result, err
-	case "mail":
+	case jobs.TypMail:
 		result, err := s.runMail(ctx)
 		return time.Since(start).Seconds(), result, err
-	case "notify":
+	case jobs.TypNotify:
 		result, err := s.runNotify(ctx, job.Payload)
 		return time.Since(start).Seconds(), result, err
-	case "watch":
+	case jobs.TypWatch:
 		result, err := s.runWatch(ctx)
 		return time.Since(start).Seconds(), result, err
 	default:
@@ -78,35 +94,50 @@ func (s *Service) HandleJob(ctx context.Context, job jobs.Job) (float64, string,
 // Only a recognition job carries a recognition status: the notify payload names
 // an image too, and writing a status onto that one would overwrite the state of
 // a recognition that is running perfectly well.
+//
+// A status write that fails is logged and not retried. The queue has already
+// recorded this attempt in the job row and has no second channel back to
+// anything, so there is nothing to return the error to; and the state it would
+// have written is repairable on its own — the next start resets an image that is
+// still in "laeuft" and queues it again. What was missing was not the write but
+// the fact that it did not happen: without a line, an image can sit in "laeuft"
+// for the life of the process with nothing to say why.
 func (s *Service) JobRetry(ctx context.Context, job jobs.Job, _ error) {
-	if job.Typ != "erkennung" {
+	if job.Typ != jobs.TypErkennung {
 		return
 	}
 	bildID := payloadBildID(job.Payload)
 	if bildID == "" {
 		return
 	}
-	_ = db.New(s.DB.Write).SetErkennungStatus(ctx, db.SetErkennungStatusParams{
+	if err := db.New(s.DB.Write).SetErkennungStatus(ctx, db.SetErkennungStatusParams{
 		ErkennungStatus: "ausstehend",
 		ID:              bildID,
-	})
+	}); err != nil {
+		s.logWarn("recognition status could not be put back to ausstehend; the image stays laeuft until the next start",
+			"job_id", job.ID, "bild_id", bildID, "err", err)
+	}
 }
 
 // JobFail records a terminal recognition error on the image. It is scoped to
-// the recognition job for the same reason as JobRetry.
+// the recognition job for the same reason as JobRetry, and it reports a failed
+// status write the same way.
 func (s *Service) JobFail(ctx context.Context, job jobs.Job, err error) {
-	if job.Typ != "erkennung" {
+	if job.Typ != jobs.TypErkennung {
 		return
 	}
 	bildID := payloadBildID(job.Payload)
 	if bildID == "" {
 		return
 	}
-	_ = db.New(s.DB.Write).SetErkennungStatus(ctx, db.SetErkennungStatusParams{
+	if err := db.New(s.DB.Write).SetErkennungStatus(ctx, db.SetErkennungStatusParams{
 		ErkennungStatus: "fehler",
 		ErkennungFehler: failureText(err),
 		ID:              bildID,
-	})
+	}); err != nil {
+		s.logWarn("the recognition failure could not be written to the image; it stays laeuft until the next start",
+			"job_id", job.ID, "bild_id", bildID, "err", err)
+	}
 }
 
 // RestartErkennung queues another extraction. Manual entry stays available.
@@ -314,7 +345,7 @@ func (s *Service) enqueueErkennung(ctx context.Context, bildID string) error {
 	}
 	payload := string(raw)
 	n, err := db.New(s.DB.Write).CountOpenJobsByPayload(ctx, db.CountOpenJobsByPayloadParams{
-		Typ:     "erkennung",
+		Typ:     jobs.TypErkennung,
 		Payload: payload,
 	})
 	if err != nil {
@@ -323,7 +354,7 @@ func (s *Service) enqueueErkennung(ctx context.Context, bildID string) error {
 	if n > 0 {
 		return nil
 	}
-	_, err = s.Jobs.Enqueue(ctx, "erkennung", payload)
+	_, err = s.Jobs.Enqueue(ctx, jobs.TypErkennung, payload)
 	return err
 }
 

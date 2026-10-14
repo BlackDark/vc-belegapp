@@ -351,9 +351,6 @@ func logNotifyEnabled(log *slog.Logger, cfg config.Config) {
 	)
 }
 
-// jobTypErkennung is the one job type the recognition metrics describe.
-const jobTypErkennung = "erkennung"
-
 // observeErkennung counts finished recognition jobs.
 //
 // The queue is shared by four job types, but belegapp_erkennung_total is named
@@ -366,7 +363,7 @@ const jobTypErkennung = "erkennung"
 // pair of instruments for jobs an operator did not ask to measure.
 func observeErkennung(metrics server.Metrics) func(typ, result string, seconds float64) {
 	return func(typ, result string, seconds float64) {
-		if typ != jobTypErkennung {
+		if typ != jobs.TypErkennung {
 			return
 		}
 		metrics.ErkennungTotal.WithLabelValues(result).Inc()

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/BlackDark/vc-belegapp/internal/db"
+	"github.com/BlackDark/vc-belegapp/internal/jobs"
 	"github.com/BlackDark/vc-belegapp/internal/notify"
 )
 
@@ -548,38 +549,15 @@ const watchJobPayload = "{}"
 // still waiting or running — without that, a folder on a stalled disk would
 // pile one extra job onto the backlog on every tick.
 func (s *Service) PollWatchFolder(ctx context.Context) {
-	if s.WatchFolder == "" || s.Jobs == nil || s.WatchInterval <= 0 {
+	if s.WatchFolder == "" {
 		return
 	}
-	s.enqueueWatch(ctx)
-	ticker := time.NewTicker(s.WatchInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.enqueueWatch(ctx)
-		}
-	}
+	s.pollLoop(ctx, s.WatchInterval, s.enqueueWatch)
 }
 
 // enqueueWatch queues one poll unless one is already open.
 func (s *Service) enqueueWatch(ctx context.Context) {
-	n, err := db.New(s.DB.Write).CountOpenJobsByPayload(ctx, db.CountOpenJobsByPayloadParams{
-		Typ:     "watch",
-		Payload: watchJobPayload,
-	})
-	if err != nil {
-		s.logWatch("watch job could not be counted", "err", err)
-		return
-	}
-	if n > 0 {
-		return
-	}
-	if _, err := s.Jobs.Enqueue(ctx, "watch", watchJobPayload); err != nil {
-		s.logWatch("watch job could not be enqueued", "err", err)
-	}
+	s.enqueueUnlessOpen(ctx, jobs.TypWatch, watchJobPayload)
 }
 
 // runWatch is the watch job body.
@@ -589,7 +567,7 @@ func (s *Service) runWatch(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if poll.Bilder > 0 || poll.Abgelehnt > 0 {
-		s.logWatch("watched folder ingested",
+		s.log("watched folder ingested",
 			"bilder", poll.Bilder, "abgelehnt", poll.Abgelehnt, "geprueft", poll.Geprueft)
 	}
 	body, err := json.Marshal(poll)
@@ -599,20 +577,10 @@ func (s *Service) runWatch(ctx context.Context) (string, error) {
 	return string(body), nil
 }
 
-func (s *Service) logWatch(msg string, args ...any) {
-	if s.Log == nil {
-		return
-	}
-	s.Log.Info(msg, args...)
-}
-
 // warnWatch logs a finding the operator should look at: a file still being
 // written, one the content check refused, one that could not be filed. Never
 // image bytes, never the contents of a rejected file, never a path outside the
 // watched folder.
 func (s *Service) warnWatch(msg string, args ...any) {
-	if s.Log == nil {
-		return
-	}
-	s.Log.Warn(msg, args...)
+	s.logWarn(msg, args...)
 }
