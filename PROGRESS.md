@@ -7,7 +7,8 @@ Eingangsweg für Prüfbilder — Liste „Offene Bilder" (U4a), IMAP-Abruf (U4b)
 Ordner (U7). Danach die Betriebseigenschaften: die Warteschlange kann von einem festhängenden Eingang
 nicht mehr die Belegerkennung aushungern (U9), und die `jobs`-Tabelle wächst nicht mehr unbegrenzt,
 weil abgeschlossene Zeilen stündlich entfernt und der Speicher Platz zurückgegeben wird (U10). Zwei
-geplante Eingänge wurden bewusst nicht gebaut; die Gründe stehen unten.
+geplante Eingänge wurden bewusst nicht gebaut; die Gründe stehen unten. Jede Einheit ist vor dem Commit geprüft
+worden, die Entscheidungen stehen in [SPEC](docs/SPEC.md) und [configuration](docs/configuration.md).
 
 Eine zweite Runde (U11–U19) hatte gemessene statt vermutete Belege: jede verdächtige Abfrage aus
 `internal/db/queries/` wurde mit `EXPLAIN QUERY PLAN` gegen das wirklich migrierte Schema gelesen, alle
@@ -39,9 +40,9 @@ Die Runde deckte außerdem einen CI-Ausfall auf, der unentdeckt auf `main` stand
 | U19 | Ticker-Intervalle werden injiziert (`internal/jobs` von 19,2 s auf 11,0 s), und die zwei Kopien eines Warte-Helfers mit vertauschten Argumenten wurden zu einem `dbtest.WaitFor`, dessen falsche Reihenfolge nicht übersetzt. `internal/service` blieb bei ~20 s: die Kosten liegen in der Fixture (`dbtest.OpenSeeded` spielt neun Migrationen je Test), nicht in den Takten | PR #26 (`c487e55`) | erledigt |
 
 U4 ist über die ursprüngliche Ein-Zeilen-Aufgabe hinausgewachsen und in zwei Commits gelandet (U4a Liste,
-U4b Abruf). U7 und U8 sind in dieser Reihenfolge gelandet, nicht in der ursprünglichen — die Absicht war
-beide Male, den Prüfweg vor der Benachrichtigung zu haben. Ab U13 geht alles über einen Pull Request und landet
-als Squash in der Historie von `main`: `cf63f31` ist der Squash-Stand von PR #25, `c487e55` der von PR #26.
+U4b Abruf). U7 und U8 sind in dieser Reihenfolge gelandet, nicht in der ursprünglichen — die Absicht war beide
+Male, den Prüfweg vor der Benachrichtigung zu haben. Ab U13 geht alles über einen Pull Request und landet als
+Squash in der Historie von `main`: `cf63f31` ist der Squash-Stand von PR #25, `c487e55` der von PR #26.
 
 ## Bewusst verworfen
 
@@ -52,10 +53,10 @@ als Squash in der Historie von `main`: `cf63f31` ist der Squash-Stand von PR #25
 
 ## CI: der rote Verlauf auf `main` und seine Auflösung
 
-**`main` war über sieben aufeinanderfolgende Commits nicht grün, und das fiel erst auf, als jemand die
-Historie nachlas.** Bei vier davon (`6acbb53`, `bf311ba`, `887cc26`, `5bab499`) lief CI an und fiel im Job
-`go` durch; bei drei (`964f99b`, `364c527`, `94fa6d9`) ist für den Push kein Lauf verzeichnet. Der Fehler war
-derselbe, eingeführt mit U7 (`6acbb53`) und behoben mit `8661dd5` (PR #24).
+**`main` war über sieben aufeinanderfolgende Commits nicht grün, und das fiel erst auf, als jemand die Historie
+nachlas.** Bei vier davon (`6acbb53`, `bf311ba`, `887cc26`, `5bab499`) lief CI an und fiel im Job `go` durch; bei
+drei (`964f99b`, `364c527`, `94fa6d9`) ist für den Push kein Lauf verzeichnet. Der Fehler war derselbe,
+eingeführt mit U7 (`6acbb53`) und behoben mit `8661dd5` (PR #24).
 
 Die Ursache ist ein Test-Fixture, kein Produktfehler. `TestIngestWatchFolderSkipsNamesItDoesNotRead` legte
 zwei Dateinamen an, die sich **nur in der Groß-/Kleinschreibung** unterschieden — `beleg.JPG.PART` und
@@ -100,39 +101,39 @@ Nach dem Push wird **nicht** mehr nachgedrückt: kein Force-Push, kein Amend, ke
 Ungeschönt, weil jede davon jemanden betrifft, der die Anwendung betreibt:
 
 - **Eine Frist kann keinen festhängenden Dateisystemzugriff unterbrechen.** Auf einem hängenden NFS- oder
-  SMB-Mount bleibt ein `watch`-Auftrag im Lesen, bis der Mount antwortet. Die Parallelitätsgrenze begrenzt
-  das auf einen Worker je Typ, aber **zwei** festhängende Typen unterschiedlicher Art — ein hängender Mount und
-  etwa ein Webhook-Server, der Verbindungen annimmt und nie antwortet — füllen den Pool von zwei Workern und
-  halten die Belegerkennung bis zum Neustart an. Ein Neustart hilft nicht: der Auftrag wird wieder eingereiht
-  und hängt wieder. Die Fristen aus U9/U12 ändern daran nichts, weil eine Frist nur einen Auftrag beendet,
-  der wieder im Rechner hängt, nicht einen, der noch darin steckt. Abhilfe: `BELEGAPP_WATCH_FOLDER=`.
+  SMB-Mount bleibt ein `watch`-Auftrag im Lesen, bis der Mount antwortet. Die Parallelitätsgrenze begrenzt das
+  auf einen Worker je Typ, aber **zwei** festhängende Typen unterschiedlicher Art — ein hängender Mount und etwa
+  ein Webhook-Server, der Verbindungen annimmt und nie antwortet — füllen den Pool von zwei Workern und halten
+  die Belegerkennung bis zum Neustart an. Ein Neustart hilft nicht: der Auftrag wird wieder eingereiht und
+  hängt wieder. Die Fristen aus U9/U12 ändern daran nichts, weil eine Frist nur einen Auftrag beendet, der
+  wieder im Rechner hängt, nicht einen, der noch darin steckt. Abhilfe: `BELEGAPP_WATCH_FOLDER=`.
 - **`auto_vacuum=INCREMENTAL` gilt nur für Datenbanken, die ab hier neu angelegt werden.** SQLite übergeht die
   Einstellung auf einer Datei, die bereits Tabellen hat — stillschweigend, absichtlich. Eine bestehende
-  Installation löscht also weiterhin korrekt, behält aber ihre Dateigröße, bis ein Betreiber einmalig
-  `PRAGMA auto_vacuum=INCREMENTAL; VACUUM;` bei gestopptem Prozess ausführt. Ohne diesen Schritt begrenzt das
-  Aufräumen nur das Wachstum, es schrumpft nichts. Schritt für Schritt in
-  [configuration](docs/configuration.md#the-jobs-table-and-the-size-of-the-database).
+  Installation löscht weiterhin korrekt, behält aber ihre Dateigröße, bis ein Betreiber einmalig `PRAGMA
+  auto_vacuum=INCREMENTAL; VACUUM;` bei gestopptem Prozess ausführt. Ohne diesen Schritt begrenzt das Aufräumen
+  nur das Wachstum — Schritt für Schritt in [configuration](docs/configuration.md#the-jobs-table-and-the-size-of-the-database).
 - **Der Webhook ist die einzige Ankunftsanzeige für Postfach- und Ordnerbelege.** Prüft niemand einen Eingang,
   vernichtet ihn der TTL-Lauf für unzugewiesene Bilder (Vorgabe `BELEGAPP_UNASSIGNED_IMAGE_TTL=24h`, stündlicher
   Lauf, also nach 24–25 Stunden). Die Ordnerquelle ist nach `.processed` verschoben und liegt noch da; beim
-  Postfach ist die Mail nie gelöscht, es sei denn, sie wandert nach `BELEGAPP_MAIL_DONE_FOLDER`. Das Bild ist
-  der einzige Verlust. Dazu: ein dauerhaft fehlschlagender Webhook-Auftrag hat **keine** sichtbare Oberfläche
-  — er erscheint nur als Zeile mit Status `fehler` in der `jobs`-Tabelle, seit U14 wenigstens mit Logeintrag.
+  Postfach ist die Mail nie gelöscht, es sei denn, sie wandert nach `BELEGAPP_MAIL_DONE_FOLDER`. Das Bild ist der
+  einzige Verlust. Dazu: ein dauerhaft fehlschlagender Webhook-Auftrag hat **keine** sichtbare Oberfläche — er
+  erscheint nur als Status `fehler` in der `jobs`-Tabelle, seit U14 wenigstens mit Logeintrag.
 - **Ein dauerhaft fehlschlagender Eingang schreibt weiterhin eine Zeile je Intervall.** Das Aufräumen begrenzt
   die Tabelle, aber es bremst den Auftrag nicht zurück: ein Postfach mit dauerhaft abgelehnten Anmeldedaten
-  erzeugt alle fünf Minuten eine neue Zeile, jeder Endzustand wird nach einer Woche entfernt, und dieselbe
-  Woche später steht die nächste da. Es gibt keine Meldeschwelle und keinen Circuit-Breaker.
+  erzeugt alle fünf Minuten eine neue Zeile, jeder Endzustand wird nach einer Woche entfernt, und dieselbe Woche
+  später steht die nächste da. Es gibt keine Meldeschwelle und keinen Circuit-Breaker.
 - **`github.com/emersion/go-imap/v2` ist eine Beta-Abhängigkeit** (`v2.0.0-beta.8`, MIT). Die v1-Linie ist seit
   2022 eingefroren, deshalb wurde die v2 gewählt. Ein API-Wechsel beim nächsten Sprung kann Codeänderungen
   erzwingen.
 - **Der überwachte Ordner erkennt bereits gespeicherte Bytes am Inhalts-Hash**, legt sie ohne zweites Bild ab
-  und meldet das mit einer eigenen Warnung und einem eigenen Zähler, statt sie wie einen gewöhnlichen
-  Fund zu verschieben. Praktisch: dieselbe Quittung wird nicht doppelt angelegt, aber sie ist auch kein
-  Hinweis darauf, dass etwas neu eingegangen ist.
+  und meldet das mit einer eigenen Warnung und einem eigenen Zähler, statt sie wie einen gewöhnlichen Fund zu
+  verschieben. Dieselbe Quittung wird also nicht doppelt angelegt, aber es ist auch kein Hinweis darauf, dass
+  etwas neu eingegangen ist.
 
 Zwei Einschränkungen aus dem vorigen Stand sind erledigt und stehen deshalb nicht mehr hier: `ANALYZE` läuft
 jetzt am Ende jedes Aufräumdurchlaufs (U16), und `BELEGAPP_JOB_RETENTION` wird beim Start gegen die
 Download-Frist eines Datenexports geprüft (U12).
+
 ## Review-Protokoll
 
 Was die Prüfung je Einheit gefunden hat. Vor jedem Review in diesem Repository lohnt der Blick: sie war
@@ -157,17 +158,17 @@ bei Oberflächen-Lügen und bei kaputt gebautem `dist` bisher erfolgreich.
   dauerhaft einen fehlgeschlagenen Auftrag je Intervall, mit „Zugang verweigert" statt „Passwort fehlt".
   Der Mail-Fehlertext trug Mailbox-Host und rohe Serverantwort in die Auftragszeile und ins Log. Vier
   Tests mit festen `time.Sleep` wurden durch deterministische Wartebedingungen ersetzt.
-- **U10** — der Statfilter musste in die Query wandern, damit ein Fehler im Aufrufer keine Zeile löschen
-  kann, die noch Arbeit schuldet; der Aufräumvorgang darf nicht in der Warteschlange hängen, weil der
-  Schreibkanal nur eine Verbindung hat und ein Block auf den ganzen Bestand jeden Auftrag verzögert hätte
-  (festgehalten durch `TestPruneDoesNotDelayJobExecution`); `auto_vacuum` an anderer Stelle als bei der
-  Erstellung zu setzen wäre auf einer bestehenden Datenbank wirkungslos; die Dateigrößenmessung musste das
-  WAL erst zurückfalten, sonst misst sie nichts; und das Test-Cleanup schlug mit „directory not empty"
-  fehl, weil `database/sql` die `-wal`-/`-shm`-Dateien nach `Close` neu anlegt.
-- **U11/U16** — die Query-Pläne wurden **nach** dem Anlegen der Migration gegen die frisch migrierte
-  Datenbank gelesen, nicht vorher geschätzt; die Tests legen den Index wieder weg und messen neu, sonst wären
-  sie grün, ohne dass SQLite ihn benutzt. Der als redundant verdächtigte Index blieb, weil die Messung keinen
-  Unterschied zeigte — die Vermutung war falsch, das Messen hat sie widerlegt.
+- **U10** — der Statfilter musste in die Query wandern, damit ein Fehler im Aufrufer keine Zeile löschen kann,
+  die noch Arbeit schuldet; der Aufräumvorgang darf nicht in der Warteschlange hängen, weil der Schreibkanal nur
+  eine Verbindung hat und ein Block auf den ganzen Bestand jeden Auftrag verzögert hätte (festgehalten durch
+  `TestPruneDoesNotDelayJobExecution`); `auto_vacuum` an anderer Stelle als bei der Erstellung zu setzen wäre auf
+  einer bestehenden Datenbank wirkungslos; die Dateigrößenmessung musste das WAL erst zurückfalten; und das
+  Test-Cleanup schlug mit „directory not empty" fehl, weil `database/sql` die `-wal`-/`-shm`-Dateien nach
+  `Close` neu anlegt.
+- **U11/U16** — die Query-Pläne wurden **nach** dem Anlegen der Migration gegen die frisch migrierte Datenbank
+  gelesen, nicht vorher geschätzt; die Tests legen den Index wieder weg und messen neu, sonst wären sie grün,
+  ohne dass SQLite ihn benutzt. Der als redundant verdächtigte Index blieb, weil die Messung keinen Unterschied
+  zeigte — die Vermutung war falsch, das Messen hat sie widerlegt.
 - **U17/U19** — ein Offset-Cursor wäre still falsch gewesen, nicht nur langsam: das Löschen eines Batches
   verschiebt jede Zeile hinter dem Fenster vor, `LIMIT ... OFFSET n` hätte also lebende Zeilen übersprungen.
   Die Poll-Schleife beansprucht außerdem einen Auftrag, **bevor** sie wartet; fast jeder Test zahlte Sekunden
@@ -207,7 +208,8 @@ Offen bleiben und eine eigene Entscheidung brauchen (alle in [ROADMAP](docs/ROAD
   Entwurf vor, die Oberfläche warnt bis zum Release mit dem amtlichen Wert. Ein Termin, keine Frage.
 - **WebDAV als Eingang** (ROADMAP-Option 4b) — derselbe Aufbau wie der überwachte Ordner, aber ohne Mount
   und mit einer zweiten Zugangsberechtigung in der Anwendung.
-- **PDF-Anhänge als Eingabe** — kein Rasterizer im Bestand; §1.2 schließt PDF-Belege aus, bis das entschieden ist.
+- **PDF-Anhänge als Eingabe** — kein Rasterizer im Bestand; §1.2 schließt PDF-Belege aus, bis das entschieden
+  ist. Dazu die Frage aus §19.2, wie sich eine prüfpflichtige Belegzuordnung überhaupt abbilden soll.
 - **Mehrbenutzerbetrieb, Rollen, Mandanten** — das Datenmodell ist dafür offengehalten, gebaut ist nichts.
 - **Offline-Erfassung mit Sync-Warteschlange** und **Regelzeiträume mitten im Jahr** (Teilbelege gehören dazu).
 
