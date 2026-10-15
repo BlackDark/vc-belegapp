@@ -30,11 +30,12 @@
   https://recht.nrw.de/system/files/pdf/announcement/2026/01/30/040e8d/sachbezugswerte-nach-der-sozialversicherungsentgel.pdf
 - 2027-Entwurf (Stand der Seite 06.10.2026): https://www.aok.de/fk/tools/weitere-inhalte/beitraege-und-rechengroessen-der-sozialversicherung/sachbezugswerte/
 - Haufe bestätigt 7,67 € (2026) bzw. 7,50 € (2025) als Höchstwert: https://www.haufe.de/id/beitrag/essenmarken-sozialversicherung-HI2748452.html
+- Zusammensetzung des Höchstzuschusses 2026 (4,57 € pauschal versteuert + 3,10 € steuer- und SV-freier Arbeitgeberzuschuss = 7,67 €): https://www.lofino.de/essenszuschuss/essenszuschuss-2026-neuer-sachbezugswert/
 
 ## 2. Wie der Essenszuschuss per Belegnachweis funktioniert
 
 ### 2.1 Rechtsgrundlagen
-- **§ 8 Abs. 2 EStG**: Sachbezüge werden mit dem amtlichen Sachbezugswert bewertet.
+- **§ 8 Abs. 2 Satz 6 EStG**: Sind für die Sachbezüge von Arbeitnehmern durch Rechtsverordnung nach § 17 Abs. 1 Satz 1 Nr. 4 SGB IV Werte bestimmt (hier die SvEV), sind **diese** maßgebend; für die im Rahmen einer Auswärtigkeitstätigkeit bereitgestellte Mahlzeit gilt § 8 Abs. 2 Satz 8 EStG. Die **pauschale Besteuerung mit 25 % steht nicht in § 8, sondern in § 40 Abs. 2 Satz 1 Nr. 1 EStG** (zwei Punkte weiter).
 - **R 8.1 Abs. 7 Nr. 4 LStR 2023**: arbeitstägliche Zuschüsse zu Mahlzeiten als Papier- **oder digitale Essenmarken** (z. B. „Apps“), einlösbar in einer Annahmestelle (z. B. Restaurant, **Lebensmitteleinzelhandel**). Den Inhalt des BMF-Schreibens vom 18.01.2019 hat die Richtlinie übernommen.
   - LStH 2026 (amtlich): https://lsth.bundesfinanzministerium.de/lsth/2026/A-Einkommensteuergesetz/II-Einkommen-2-24b/4-Ueberschuss-d-Einnahmen-ueber-die-Werbungsk-8-9a/Paragraf-8/r-8-1-7.html
 - **BMF-Schreiben vom 18.01.2019** (IV C 5 - S 2334/08/10006-01, BStBl I S. 66), „Sachbezugswert für arbeitstägliche Zuschüsse zu Mahlzeiten“, gilt weiter (LStH 2026 Anhang 24 V):
@@ -47,7 +48,7 @@ Angesetzt wird nicht der Zuschuss, sondern die **Mahlzeit mit dem Sachbezugswert
 1. **Arbeitsrechtliche Grundlage**: Es gibt einen vereinbarten Anspruch auf arbeitstägliche Zuschüsse (Arbeitsvertrag, Betriebsvereinbarung o. Ä.; BMF 2019 Tz. 1).
 2. **Arbeitstäglich wird tatsächlich eine Mahlzeit erworben** (Frühstück, Mittag- oder Abendessen). *„Lebensmittel sind nur dann als Mahlzeit anzuerkennen, wenn sie zum unmittelbaren Verzehr geeignet oder zum Verbrauch während der Essenpausen bestimmt sind.“* Bestandteile dürfen aus **verschiedenen Geschäften** stammen. Mahlzeiten **auf Vorrat** für andere Tage sind **Barlohn**.
 3. **Ein Zuschuss pro Mahlzeit und Arbeitstag**, **nicht** an Krankheits- und Urlaubstagen und nicht an Tagen mit Auswärtstätigkeit (Ausnahme: nach Ablauf der Drei-Monats-Frist).
-4. **Zuschuss ≤ SBW + 3,10 €** (2026: 7,67 € für Mittag-/Abendessen).
+4. **Zuschuss ≤ SBW der jeweiligen Mahlzeitart + 3,10 €** (2026: 7,67 € für Mittag-/Abendessen, 5,47 € für Frühstück).
 5. **Zuschuss ≤ tatsächlicher Preis der Mahlzeit.**
 6. Kein Zuschuss bei Auswärtstätigkeit in den ersten drei Monaten (§ 9 Abs. 4a Satz 6, 7 EStG); an solchen Tagen gibt es Verpflegungspauschalen.
 

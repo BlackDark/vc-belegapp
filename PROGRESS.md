@@ -44,6 +44,17 @@ U4b Abruf). U7 und U8 sind in dieser Reihenfolge gelandet, nicht in der ursprün
 Male, den Prüfweg vor der Benachrichtigung zu haben. Ab U13 geht alles über einen Pull Request und landet als
 Squash in der Historie von `main`: `cf63f31` ist der Squash-Stand von PR #25, `c487e55` der von PR #26.
 
+## Höchstzuschuss je Mahlzeitart (14./15.10.2026)
+
+Der Vorschlag für `zuschuss_cent` kam aus `SBW_mittag + 310`, egal welche Mahlzeiten bezuschusst werden. Eine Regel
+mit Frühstück bekam damit 7,67 € gegen einen Frühstücks-Sachbezugswert von 2,37 €: über der Grenze,
+`W_HOECHSTZUSCHUSS` auf jedem Frühstücksbeleg und der Mehrbetrag als regulärer, damit sozialversicherungspflichtiger
+Lohn. `rules.HoechstzuschussCent` leitet die Grenze jetzt aus dem SBW der jeweiligen Mahlzeitart und dem einen
+konfigurierbaren Aufschlag ab (2026: 547 Frühstück, 767 Mittag/Abend); der Vorschlag — eine Zahl für alle
+bezuschussten Mahlzeitarten — aus dem kleinsten dieser Grenzen. **Mittag und Abend bleiben numerisch unverändert**
+(767/767), nur der Frühstücksvorschlag wandert auf 547. Drei Zuschussbeträge je Mahlzeitart bräuchten drei Spalten;
+`zuschuss_cent` bleibt eine gemeinsame — wer für Frühstück mehr zahlen will, hebt den Wert und nimmt die Warnung in Kauf. `main` stand dabei auf `12ba364`.
+
 ## Bewusst verworfen
 
 | Einheit | Grund |
@@ -194,10 +205,12 @@ Maßgeblich ist die Tabelle in [configuration](docs/configuration.md); hier nur 
 Die verbindlichen Listen stehen in [SPEC](docs/SPEC.md) §19, nicht hier. Beides braucht noch eine Antwort
 des Eigentümers:
 
-- **§19.1** — die Konfigurationsfragen zur Jahresregel, die nur der Arbeitgeber beantworten kann
-  (Tageszuschuss, bezuschusste Mahlzeiten, Kirchensteuerverfahren, Eigenanteil-Variante, Monatslimit,
-  Übergabeweg). U1 beantwortet davon nur die Beschaffungsfrage: die amtlichen Werte kommen aus der API.
-- **§19.3** — die Annahmen, die sich die Spezifikation selbst gegeben hat und die bestätigt werden müssen.
+- **§19.1** — beantwortet und mit Datum in [SPEC](docs/SPEC.md) §19.1 festgehalten: **Nr. 1, 2, 6, 7** am 15.10.
+  (höchstens eine bezuschusste Mahlzeit je Tag; Höchstzuschuss `SBW + 3,10 €`; Fotos genügen; Homeoffice und
+  Kantine akzeptiert), **Nr. 4 und 5** am 14.10. (Eigenanteil-Variante `standard`, Monatslimit 15). Offen bleiben
+  **Nr. 3** (Kirchensteuerverfahren) und aus Nr. 2 die Frage „Zusätzlich oder Gehaltsumwandlung" — beide ändern die
+  Berechnung nicht. **Nr. 8** (Übergabeweg) ist unberührt; U1 beantwortet davon nur die Beschaffung der amtlichen
+  Werte aus der API. **§19.3** — **Nr. 1 und Nr. 12** am 15.10. bestätigt, die übrigen Annahmen warten auf Eduard.
 
 Diese Sitzung deckt bereits ab, was ohne Antwort auskam: die Eingangswege (IMAP, überwachter Ordner) und
 ihre Anzeige (Liste „Offene Bilder", Webhook) sind umgesetzt und in §19.2 als erledigt vermerkt.

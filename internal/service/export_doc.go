@@ -224,9 +224,9 @@ func regelPaare(r rules.Jahresregel) []pdf.Paar {
 	sbw := fmt.Sprintf("Frühstück %s, Mittag %s, Abend %s",
 		pdf.Euro(r.SBWFruehstueckCent), pdf.Euro(r.SBWMittagCent), pdf.Euro(r.SBWAbendCent))
 	cap := fmt.Sprintf("Frühstück %s, Mittag %s, Abend %s",
-		pdf.Euro(r.SBWFruehstueckCent+r.HoechstzuschussAufschlagCent),
-		pdf.Euro(r.SBWMittagCent+r.HoechstzuschussAufschlagCent),
-		pdf.Euro(r.SBWAbendCent+r.HoechstzuschussAufschlagCent))
+		pdf.Euro(rules.HoechstzuschussCent(r, "fruehstueck")),
+		pdf.Euro(rules.HoechstzuschussCent(r, "mittag")),
+		pdf.Euro(rules.HoechstzuschussCent(r, "abend")))
 	return []pdf.Paar{
 		{Label: "Zuschuss/Tag", Wert: pdf.Euro(r.ZuschussCent)},
 		{Label: "Mahlzeitarten", Wert: strings.Join(meals, ", ")},

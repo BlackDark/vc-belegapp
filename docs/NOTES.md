@@ -18,4 +18,9 @@
 - 2026-10-14, SPEC 19.1 Nr. 4: Eigenanteil-Variante **`standard`** – der Eigenanteil wird angerechnet, der Arbeitgeberanteil kommt auf die Erstattung obendrauf.
 - 2026-10-14, SPEC 19.1 Nr. 5: Monatslimit **15 pro Monat**, unabhängig von den tatsächlich geleisteten Arbeitstagen (gesetzlicher Mindestumfang). Keine Skalierung, keine Abwesenheitserfassung in der App.
 - 2026-10-14, SPEC 19.1 Nr. 3: Kirchensteuer **weiter offen**, nicht entschieden. Es bleibt beim bisherigen Verhalten: vereinfachtes Verfahren mit Satz je Bundesland, `bundesland` ist Pflichtfeld.
+- 2026-10-15, SPEC 19.1 Nr. 1: höchstens **eine** bezuschusste Mahlzeit pro Tag. Ist bereits durchgesetzt (partieller UNIQUE-Index auf `datum`, ein `mahlzeit`-Feld je Beleg); `mahlzeiten` in der Jahresregel ist die Menge der bezuschussten Mahlzeitarten. Vorgabe `mittag`, Frühstück und Abend zuschaltbar.
+- 2026-10-15, SPEC 19.1 Nr. 2: Der Arbeitgeber erstattet den **Höchstzuschuss** `SBW + 3,10 €` (2026: Mittag/Abend 7,67 €, Frühstück 5,47 €). Die 3,10 € sind steuer- und SV-frei, der SBW wird mit 25 % pauschal versteuert (§ 40 Abs. 2 Satz 1 Nr. 1 EStG). Die Werte der App bleiben unverändert. Offen bleibt nur „Zusätzlich oder Gehaltsumwandlung" (`gehaltsumwandlung` bleibt konfigurierbar).
+- 2026-10-15, SPEC 19.1 Nr. 6: **Fotos genügen.** Kein Papieroriginal, keine Einreichungsfrist, keine Unterschrift; Nachweis ist die digital bestätigte Arbeitnehmererklärung beim Export.
+- 2026-10-15, SPEC 19.1 Nr. 7: **Homeoffice und Kantine werden beide akzeptiert** (Kantine als fremd betrieben). `W_BEZUGSORT_KANTINE` bleibt nur ein Hinweis.
+- 2026-10-15: Korrektur der Rechtsgrundlage in `docs/research/tax.md` — die 25-%-Pauschalbesteuerung der Mahlzeit-Sachbezugswerte steht in **§ 40 Abs. 2 Satz 1 Nr. 1 EStG**, nicht in § 8 EStG. § 8 Abs. 2 EStG regelt nur die Bewertung (Satz 6: die Werte nach der SvEV sind maßgebend; Satz 8: die Auswärtsmahlzeit).
 SPEC bestätigt durch Eduard 2026-10-08; Start M0.
