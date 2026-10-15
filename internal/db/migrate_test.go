@@ -20,7 +20,7 @@ func TestJobsMailTypeMigrationKeepsRows(t *testing.T) {
 	t.Cleanup(func() { _ = database.Close() })
 
 	// Migrate only as far as 00004, the last migration before the rebuild.
-	upToFour, err := provider(database.Write)
+	upToFour, err := provider(database.WriteDB())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestJobsMailTypeMigrationKeepsRows(t *testing.T) {
 		{"job-4", "datenexport", `{"monat":"2026-01"}`, "fertig", 1, sql.NullString{String: `{"download_url":"/x"}`, Valid: true}, sql.NullString{}},
 	}
 	for _, row := range seed {
-		_, err := database.Write.ExecContext(ctx, `INSERT INTO jobs (
+		_, err := database.WriteDB().ExecContext(ctx, `INSERT INTO jobs (
 			id, typ, payload, status, versuche, naechster_versuch_am, ergebnis, fehler, erstellt_am, geaendert_am
 		) VALUES (?, ?, ?, ?, ?, '2026-10-08T13:00:00Z', ?, ?, '2026-10-08T12:00:00Z', '2026-10-08T12:00:00Z')`,
 			row.id, row.typ, row.payload, row.status, row.versuche, row.ergebnis, row.fehler)
@@ -53,16 +53,16 @@ func TestJobsMailTypeMigrationKeepsRows(t *testing.T) {
 	}
 
 	// The old CHECK must reject the new type, otherwise the rebuild was moot.
-	if _, err := database.Write.ExecContext(ctx,
+	if _, err := database.WriteDB().ExecContext(ctx,
 		`INSERT INTO jobs (id, typ, payload, status, naechster_versuch_am, erstellt_am, geaendert_am)
 		 VALUES ('job-mail', 'mail', '{}', 'wartend', '2026-10-08T13:00:00Z', '2026-10-08T13:00:00Z', '2026-10-08T13:00:00Z')`); err == nil {
 		t.Fatal("pre-00005 schema accepted a mail job")
 	}
 
-	if err := Migrate(ctx, database.Write); err != nil {
+	if err := Migrate(ctx, database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
-	if err := MigrationsCurrent(ctx, database.Write); err != nil {
+	if err := MigrationsCurrent(ctx, database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -72,7 +72,7 @@ func TestJobsMailTypeMigrationKeepsRows(t *testing.T) {
 			versuche                                             int
 			ergebnis, fehler                                     sql.NullString
 		)
-		err := database.Read.QueryRowContext(ctx, `SELECT typ, payload, status, versuche,
+		err := database.ReadDB().QueryRowContext(ctx, `SELECT typ, payload, status, versuche,
 			naechster_versuch_am, ergebnis, fehler, erstellt_am, geaendert_am FROM jobs WHERE id = ?`, want.id).
 			Scan(&typ, &payload, &status, &versuche, &naechster, &ergebnis, &fehler, &erstellt, &geaendert)
 		if err != nil {
@@ -90,7 +90,7 @@ func TestJobsMailTypeMigrationKeepsRows(t *testing.T) {
 	}
 
 	// The new type is accepted, and the queue is still readable through it.
-	if _, err := database.Write.ExecContext(ctx,
+	if _, err := database.WriteDB().ExecContext(ctx,
 		`INSERT INTO jobs (id, typ, payload, status, naechster_versuch_am, erstellt_am, geaendert_am)
 		 VALUES ('job-mail', 'mail', '{}', 'wartend', '2026-10-08T13:00:00Z', '2026-10-08T13:00:00Z', '2026-10-08T13:00:00Z')`); err != nil {
 		t.Fatalf("post-00005 schema rejected a mail job: %v", err)
@@ -105,7 +105,7 @@ func TestJobsMailTypeMigrationKeepsRows(t *testing.T) {
 
 	// jobs_bereit came back with the table; without it every claim scans.
 	var indexes int
-	err = database.Read.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master
+	err = database.ReadDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master
 		WHERE type = 'index' AND name = 'jobs_bereit'`).Scan(&indexes)
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +115,7 @@ func TestJobsMailTypeMigrationKeepsRows(t *testing.T) {
 	}
 
 	// The status CHECK survived, so the rebuild did not weaken it.
-	if _, err := database.Write.ExecContext(ctx,
+	if _, err := database.WriteDB().ExecContext(ctx,
 		`INSERT INTO jobs (id, typ, payload, status, naechster_versuch_am, erstellt_am, geaendert_am)
 		 VALUES ('job-bad', 'mail', '{}', 'unsinn', '2026-10-08T13:00:00Z', '2026-10-08T13:00:00Z', '2026-10-08T13:00:00Z')`); err == nil {
 		t.Fatal("status CHECK was lost in the rebuild")
@@ -135,7 +135,7 @@ func TestJobsNotifyTypeMigrationKeepsRows(t *testing.T) {
 	t.Cleanup(func() { _ = database.Close() })
 
 	// Migrate only as far as 00005, the last migration before the rebuild.
-	upToFive, err := provider(database.Write)
+	upToFive, err := provider(database.WriteDB())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestJobsNotifyTypeMigrationKeepsRows(t *testing.T) {
 		{"job-6", "mail", `{}`, "fehler", 3, sql.NullString{}, sql.NullString{String: "Postfach nicht erreichbar", Valid: true}},
 	}
 	for _, row := range seed {
-		_, err := database.Write.ExecContext(ctx, `INSERT INTO jobs (
+		_, err := database.WriteDB().ExecContext(ctx, `INSERT INTO jobs (
 			id, typ, payload, status, versuche, naechster_versuch_am, ergebnis, fehler, erstellt_am, geaendert_am
 		) VALUES (?, ?, ?, ?, ?, '2026-10-08T13:00:00Z', ?, ?, '2026-10-08T12:00:00Z', '2026-10-08T12:00:00Z')`,
 			row.id, row.typ, row.payload, row.status, row.versuche, row.ergebnis, row.fehler)
@@ -170,16 +170,16 @@ func TestJobsNotifyTypeMigrationKeepsRows(t *testing.T) {
 	}
 
 	// The old CHECK must reject the new type, otherwise the rebuild was moot.
-	if _, err := database.Write.ExecContext(ctx,
+	if _, err := database.WriteDB().ExecContext(ctx,
 		`INSERT INTO jobs (id, typ, payload, status, naechster_versuch_am, erstellt_am, geaendert_am)
 		 VALUES ('job-notify', 'notify', '{}', 'wartend', '2026-10-08T13:00:00Z', '2026-10-08T12:00:00Z', '2026-10-08T12:00:00Z')`); err == nil {
 		t.Fatal("pre-00006 schema accepted a notify job")
 	}
 
-	if err := Migrate(ctx, database.Write); err != nil {
+	if err := Migrate(ctx, database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
-	if err := MigrationsCurrent(ctx, database.Write); err != nil {
+	if err := MigrationsCurrent(ctx, database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -189,7 +189,7 @@ func TestJobsNotifyTypeMigrationKeepsRows(t *testing.T) {
 			versuche                                             int
 			ergebnis, fehler                                     sql.NullString
 		)
-		err := database.Read.QueryRowContext(ctx, `SELECT typ, payload, status, versuche,
+		err := database.ReadDB().QueryRowContext(ctx, `SELECT typ, payload, status, versuche,
 			naechster_versuch_am, ergebnis, fehler, erstellt_am, geaendert_am FROM jobs WHERE id = ?`, want.id).
 			Scan(&typ, &payload, &status, &versuche, &naechster, &ergebnis, &fehler, &erstellt, &geaendert)
 		if err != nil {
@@ -209,7 +209,7 @@ func TestJobsNotifyTypeMigrationKeepsRows(t *testing.T) {
 	// The new type is accepted, and all three earlier ones still are.
 	for _, typ := range []string{"notify", "erkennung", "datenexport", "mail"} {
 		id := "job-after-" + typ
-		if _, err := database.Write.ExecContext(ctx,
+		if _, err := database.WriteDB().ExecContext(ctx,
 			`INSERT INTO jobs (id, typ, payload, status, naechster_versuch_am, erstellt_am, geaendert_am)
 			 VALUES (?, ?, '{}', 'wartend', '2026-10-08T13:00:00Z', '2026-10-08T12:00:00Z', '2026-10-08T12:00:00Z')`,
 			id, typ); err != nil {
@@ -219,7 +219,7 @@ func TestJobsNotifyTypeMigrationKeepsRows(t *testing.T) {
 
 	// jobs_bereit came back with the table; without it every claim scans.
 	var indexes int
-	err = database.Read.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master
+	err = database.ReadDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master
 		WHERE type = 'index' AND name = 'jobs_bereit'`).Scan(&indexes)
 	if err != nil {
 		t.Fatal(err)
@@ -229,7 +229,7 @@ func TestJobsNotifyTypeMigrationKeepsRows(t *testing.T) {
 	}
 
 	// The status CHECK survived, so the rebuild did not weaken it.
-	if _, err := database.Write.ExecContext(ctx,
+	if _, err := database.WriteDB().ExecContext(ctx,
 		`INSERT INTO jobs (id, typ, payload, status, naechster_versuch_am, erstellt_am, geaendert_am)
 		 VALUES ('job-bad', 'notify', '{}', 'unsinn', '2026-10-08T13:00:00Z', '2026-10-08T12:00:00Z', '2026-10-08T12:00:00Z')`); err == nil {
 		t.Fatal("status CHECK was lost in the rebuild")
@@ -244,11 +244,11 @@ func TestMailJobSurvivesQueueRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	if err := Migrate(ctx, database.Write); err != nil {
+	if err := Migrate(ctx, database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
 
-	q := New(database.Write)
+	q := New(database.WriteDB())
 	if err := q.InsertJob(ctx, InsertJobParams{
 		ID:                 "job-mail-1",
 		Typ:                "mail",
@@ -284,11 +284,11 @@ func TestNotifyJobSurvivesQueueRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	if err := Migrate(ctx, database.Write); err != nil {
+	if err := Migrate(ctx, database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
 
-	q := New(database.Write)
+	q := New(database.WriteDB())
 	payload := `{"bild_id":"01hq","erstellt_am":"2026-10-08T13:00:00Z","quelle":"mail"}`
 	if err := q.InsertJob(ctx, InsertJobParams{
 		ID:                 "job-notify-1",
@@ -339,7 +339,7 @@ func TestJobsWatchTypeMigrationKeepsRows(t *testing.T) {
 	t.Cleanup(func() { _ = database.Close() })
 
 	// Migrate only as far as 00006, the last migration before the rebuild.
-	upToSix, err := provider(database.Write)
+	upToSix, err := provider(database.WriteDB())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +366,7 @@ func TestJobsWatchTypeMigrationKeepsRows(t *testing.T) {
 		{"job-8", "notify", `{"bild_id":"01hq2"}`, "fehler", 3, sql.NullString{}, sql.NullString{String: "Ziel nicht erreichbar", Valid: true}},
 	}
 	for _, row := range seed {
-		_, err := database.Write.ExecContext(ctx, `INSERT INTO jobs (
+		_, err := database.WriteDB().ExecContext(ctx, `INSERT INTO jobs (
 			id, typ, payload, status, versuche, naechster_versuch_am, ergebnis, fehler, erstellt_am, geaendert_am
 		) VALUES (?, ?, ?, ?, ?, '2026-10-08T13:00:00Z', ?, ?, '2026-10-08T12:00:00Z', '2026-10-08T12:00:00Z')`,
 			row.id, row.typ, row.payload, row.status, row.versuche, row.ergebnis, row.fehler)
@@ -376,16 +376,16 @@ func TestJobsWatchTypeMigrationKeepsRows(t *testing.T) {
 	}
 
 	// The old CHECK must reject the new type, otherwise the rebuild was moot.
-	if _, err := database.Write.ExecContext(ctx,
+	if _, err := database.WriteDB().ExecContext(ctx,
 		`INSERT INTO jobs (id, typ, payload, status, naechster_versuch_am, erstellt_am, geaendert_am)
 		 VALUES ('job-watch', 'watch', '{}', 'wartend', '2026-10-08T13:00:00Z', '2026-10-08T12:00:00Z', '2026-10-08T12:00:00Z')`); err == nil {
 		t.Fatal("pre-00007 schema accepted a watch job")
 	}
 
-	if err := Migrate(ctx, database.Write); err != nil {
+	if err := Migrate(ctx, database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
-	if err := MigrationsCurrent(ctx, database.Write); err != nil {
+	if err := MigrationsCurrent(ctx, database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -395,7 +395,7 @@ func TestJobsWatchTypeMigrationKeepsRows(t *testing.T) {
 			versuche                                             int
 			ergebnis, fehler                                     sql.NullString
 		)
-		err := database.Read.QueryRowContext(ctx, `SELECT typ, payload, status, versuche,
+		err := database.ReadDB().QueryRowContext(ctx, `SELECT typ, payload, status, versuche,
 			naechster_versuch_am, ergebnis, fehler, erstellt_am, geaendert_am FROM jobs WHERE id = ?`, want.id).
 			Scan(&typ, &payload, &status, &versuche, &naechster, &ergebnis, &fehler, &erstellt, &geaendert)
 		if err != nil {
@@ -416,7 +416,7 @@ func TestJobsWatchTypeMigrationKeepsRows(t *testing.T) {
 	// that dropped mail or notify from the CHECK would fail here.
 	for _, typ := range []string{"watch", "erkennung", "datenexport", "mail", "notify"} {
 		id := "job-after-" + typ
-		if _, err := database.Write.ExecContext(ctx,
+		if _, err := database.WriteDB().ExecContext(ctx,
 			`INSERT INTO jobs (id, typ, payload, status, naechster_versuch_am, erstellt_am, geaendert_am)
 			 VALUES (?, ?, '{}', 'wartend', '2026-10-08T13:00:00Z', '2026-10-08T12:00:00Z', '2026-10-08T12:00:00Z')`,
 			id, typ); err != nil {
@@ -435,7 +435,7 @@ func TestJobsWatchTypeMigrationKeepsRows(t *testing.T) {
 
 	// jobs_bereit came back with the table; without it every claim scans.
 	var indexes int
-	err = database.Read.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master
+	err = database.ReadDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master
 		WHERE type = 'index' AND name = 'jobs_bereit'`).Scan(&indexes)
 	if err != nil {
 		t.Fatal(err)
@@ -445,7 +445,7 @@ func TestJobsWatchTypeMigrationKeepsRows(t *testing.T) {
 	}
 
 	// The status CHECK survived, so the rebuild did not weaken it.
-	if _, err := database.Write.ExecContext(ctx,
+	if _, err := database.WriteDB().ExecContext(ctx,
 		`INSERT INTO jobs (id, typ, payload, status, naechster_versuch_am, erstellt_am, geaendert_am)
 		 VALUES ('job-bad', 'watch', '{}', 'unsinn', '2026-10-08T13:00:00Z', '2026-10-08T12:00:00Z', '2026-10-08T12:00:00Z')`); err == nil {
 		t.Fatal("status CHECK was lost in the rebuild")
@@ -461,11 +461,11 @@ func TestWatchJobSurvivesQueueRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	if err := Migrate(ctx, database.Write); err != nil {
+	if err := Migrate(ctx, database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
 
-	q := New(database.Write)
+	q := New(database.WriteDB())
 	payload := `{}`
 	if err := q.InsertJob(ctx, InsertJobParams{
 		ID:                 "job-watch-1",
@@ -505,7 +505,7 @@ func TestWatchJobSurvivesQueueRoundTrip(t *testing.T) {
 func db2Count(t *testing.T, database *DB, query string, args ...any) (int, error) {
 	t.Helper()
 	var n int
-	err := database.Read.QueryRow(query, args...).Scan(&n)
+	err := database.ReadDB().QueryRow(query, args...).Scan(&n)
 	return n, err
 }
 
@@ -536,7 +536,7 @@ func TestLookupIndexMigrationAppliesAndRollsBack(t *testing.T) {
 	t.Cleanup(func() { _ = database.Close() })
 
 	// Migrate only as far as 00008, the last migration before the indexes.
-	upToEight, err := provider(database.Write)
+	upToEight, err := provider(database.WriteDB())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -549,10 +549,10 @@ func TestLookupIndexMigrationAppliesAndRollsBack(t *testing.T) {
 	seedPlanBelegbilder(t, database, "", 50, false)
 	seedPlanJobs(t, database, 50, "wartend")
 
-	if err := Migrate(ctx, database.Write); err != nil {
+	if err := Migrate(ctx, database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
-	if err := MigrationsCurrent(ctx, database.Write); err != nil {
+	if err := MigrationsCurrent(ctx, database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
 	if got := missingIndexes(t, database, lookupIndexNames); len(got) != 0 {
@@ -567,7 +567,7 @@ func TestLookupIndexMigrationAppliesAndRollsBack(t *testing.T) {
 
 	// Down, then Up again: a Down that leaves the version marked as applied
 	// cannot be run twice, and this is the second run.
-	downProvider, err := provider(database.Write)
+	downProvider, err := provider(database.WriteDB())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -577,7 +577,7 @@ func TestLookupIndexMigrationAppliesAndRollsBack(t *testing.T) {
 	if got := presentIndexes(t, database, lookupIndexNames); len(got) != 0 {
 		t.Fatalf("the Down of 00009 left %v behind", got)
 	}
-	if err := Migrate(ctx, database.Write); err != nil {
+	if err := Migrate(ctx, database.WriteDB()); err != nil {
 		t.Fatalf("re-applying 00009 after the Down: %v", err)
 	}
 	if got := missingIndexes(t, database, lookupIndexNames); len(got) != 0 {
@@ -631,7 +631,7 @@ func indexCount(t *testing.T, database *DB, name string) (int, error) {
 	// connection that prepared a statement before the index was created or
 	// dropped keeps the schema it loaded.
 	var n int
-	err := database.Write.QueryRow(
+	err := database.WriteDB().QueryRow(
 		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, name).Scan(&n)
 	return n, err
 }

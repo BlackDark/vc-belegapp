@@ -57,7 +57,7 @@ func (s *Service) MigrateBildKeys(ctx context.Context) (BildKeyMigration, error)
 	if s == nil || s.Store == nil || s.DB == nil {
 		return out, nil
 	}
-	q := db.New(s.DB.Write)
+	q := db.New(s.DB.WriteDB())
 	rows, err := q.ListBelegbilder(ctx)
 	if err != nil {
 		return out, err

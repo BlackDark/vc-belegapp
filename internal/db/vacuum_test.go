@@ -23,7 +23,7 @@ func openLegacy(t *testing.T, path string) *DB {
 	if err := write.Ping(); err != nil {
 		t.Fatal(err)
 	}
-	return &DB{Write: write, Path: path}
+	return &DB{write: write, Path: path}
 }
 
 // TestOpenEnablesIncrementalAutoVacuumOnNewFiles: the setting is only useful if
@@ -36,11 +36,11 @@ func TestOpenEnablesIncrementalAutoVacuumOnNewFiles(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	ctx := context.Background()
-	if err := Migrate(ctx, database.Write); err != nil {
+	if err := Migrate(ctx, database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
 	var mode int
-	if err := database.Write.QueryRowContext(ctx, "PRAGMA auto_vacuum").Scan(&mode); err != nil {
+	if err := database.WriteDB().QueryRowContext(ctx, "PRAGMA auto_vacuum").Scan(&mode); err != nil {
 		t.Fatal(err)
 	}
 	if mode != 2 {
@@ -57,16 +57,16 @@ func TestExistingDatabaseKeepsWorking(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "belegapp.db")
 
 	legacy := openLegacy(t, path)
-	if err := Migrate(ctx, legacy.Write); err != nil {
+	if err := Migrate(ctx, legacy.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := legacy.Write.ExecContext(ctx,
+	if _, err := legacy.WriteDB().ExecContext(ctx,
 		`INSERT INTO jobs (id, typ, payload, status, versuche, naechster_versuch_am, erstellt_am, geaendert_am)
 		 VALUES ('job-1', 'watch', '{}', 'fertig', 1, '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z')`); err != nil {
 		t.Fatal(err)
 	}
 	// The legacy handle has no read pool; close the write pool directly.
-	if err := legacy.Write.Close(); err != nil {
+	if err := legacy.WriteDB().Close(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -78,7 +78,7 @@ func TestExistingDatabaseKeepsWorking(t *testing.T) {
 	t.Cleanup(func() { _ = database.Close() })
 
 	var mode int
-	if err := database.Write.QueryRowContext(ctx, "PRAGMA auto_vacuum").Scan(&mode); err != nil {
+	if err := database.WriteDB().QueryRowContext(ctx, "PRAGMA auto_vacuum").Scan(&mode); err != nil {
 		t.Fatal(err)
 	}
 	if mode != 0 {
@@ -87,16 +87,16 @@ func TestExistingDatabaseKeepsWorking(t *testing.T) {
 
 	// The queue row survives, and so does everything else.
 	var n int
-	if err := database.Write.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs`).Scan(&n); err != nil {
+	if err := database.WriteDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
 		t.Fatalf("jobs rows %d after the upgrade", n)
 	}
-	if err := Migrate(ctx, database.Write); err != nil {
+	if err := Migrate(ctx, database.WriteDB()); err != nil {
 		t.Fatalf("migrate on an existing database: %v", err)
 	}
-	if err := MigrationsCurrent(ctx, database.Write); err != nil {
+	if err := MigrationsCurrent(ctx, database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -131,7 +131,7 @@ func TestReclaimOnAnUntouchedDatabase(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	ctx := context.Background()
-	if err := Migrate(ctx, database.Write); err != nil {
+	if err := Migrate(ctx, database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.Reclaim(ctx, 0); err != nil {

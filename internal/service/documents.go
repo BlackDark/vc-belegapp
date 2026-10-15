@@ -95,7 +95,7 @@ type BelegPatch struct {
 
 // PreviewBeleg calculates without writing.
 func (s *Service) PreviewBeleg(ctx context.Context, in BelegInput, selfID string) (Preview, error) {
-	q := db.New(s.DB.Read)
+	q := db.New(s.DB.ReadDB())
 	built, _, _, err := s.prepare(ctx, q, in, selfID, true, false)
 	if err != nil {
 		return Preview{}, err
@@ -345,7 +345,7 @@ func (s *Service) DeleteBeleg(ctx context.Context, actor Actor, belegID string, 
 
 // GetBeleg returns one active receipt.
 func (s *Service) GetBeleg(ctx context.Context, belegID string) (Beleg, error) {
-	q := db.New(s.DB.Read)
+	q := db.New(s.DB.ReadDB())
 	row, err := q.GetBeleg(ctx, belegID)
 	if isNoRows(err) {
 		return Beleg{}, problem.New(404, "E_NICHT_GEFUNDEN", "Beleg nicht gefunden.")

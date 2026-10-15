@@ -2,18 +2,55 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver; CGO stays disabled.
 )
 
 // DB is one write connection and a read pool on the same WAL database.
 type DB struct {
-	Write *sql.DB
-	Read  *sql.DB
+	// mu guards write and read, and with them the swap ReplaceFile performs.
+	//
+	// Every holder in the process reads these two fields — the Service, the
+	// session store, the job queue, the pruner, the readiness check — so
+	// replacing them has to be a synchronised write. An unsynchronised one is a
+	// data race on top of the torn pointer it can produce, and the pointer is
+	// only half of it: the pool a reader picks up may be one ReplaceFile is
+	// about to close, and that one never opens again.
+	mu    sync.RWMutex
+	write *sql.DB
+	read  *sql.DB
 	Path  string
+}
+
+// WriteDB returns the pool every write and every migration goes through.
+func (d *DB) WriteDB() *sql.DB {
+	if d == nil {
+		return nil
+	}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.write
+}
+
+// ReadDB returns the read-only pool.
+//
+// Both accessors hand out the pointer and release the lock, so a query that
+// starts one instruction after a replace still runs against the pool the
+// replace closed. That is one request failing with "sql: database is closed",
+// which the client can repeat; what the lock rules out is the reader that
+// never sees a pool at all.
+func (d *DB) ReadDB() *sql.DB {
+	if d == nil {
+		return nil
+	}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.read
 }
 
 // Open creates or opens the SQLite database at path.
@@ -54,7 +91,7 @@ func Open(path string) (*DB, error) {
 		_ = write.Close()
 		return nil, fmt.Errorf("chmod database: %w", err)
 	}
-	return &DB{Write: write, Read: read, Path: path}, nil
+	return &DB{write: write, read: read, Path: path}, nil
 }
 
 // Close closes both pools.
@@ -62,12 +99,20 @@ func (d *DB) Close() error {
 	if d == nil {
 		return nil
 	}
-	errRead := d.Read.Close()
-	errWrite := d.Write.Close()
-	if errWrite != nil {
-		return errWrite
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var errs []error
+	if d.read != nil {
+		if err := d.read.Close(); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	return errRead
+	if d.write != nil {
+		if err := d.write.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // OpenReadOnly opens path for queries without creating a WAL sidecar.

@@ -236,12 +236,12 @@ func (s *Service) ListExports(ctx context.Context, monat string) ([]ExportInfo, 
 	if _, err := parseMonat(monat); err != nil {
 		return nil, errMonatFormat()
 	}
-	return s.listExports(ctx, db.New(s.DB.Read), monat)
+	return s.listExports(ctx, db.New(s.DB.ReadDB()), monat)
 }
 
 // OpenExport reads one stored PDF, CSV, or ZIP.
 func (s *Service) OpenExport(ctx context.Context, exportID, kind string) (ExportDownload, error) {
-	row, err := db.New(s.DB.Read).GetMonatsexport(ctx, exportID)
+	row, err := db.New(s.DB.ReadDB()).GetMonatsexport(ctx, exportID)
 	if isNoRows(err) {
 		return ExportDownload{}, problem.New(404, "E_NICHT_GEFUNDEN", "Der Export wurde nicht gefunden.")
 	}
@@ -311,7 +311,7 @@ func (s *Service) applyExportIntegrity(ctx context.Context, view *Monat) error {
 	if view == nil {
 		return nil
 	}
-	q := db.New(s.DB.Read)
+	q := db.New(s.DB.ReadDB())
 	checks, err := s.pruefpunkte(ctx, q, view.Belege, view.Jahresregel, view.Summen, true)
 	if err != nil {
 		return err

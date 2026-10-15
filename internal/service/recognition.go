@@ -50,10 +50,10 @@ func (s *Service) RunJobs(ctx context.Context) {
 	if err := s.Jobs.Reset(ctx); err != nil {
 		s.log("interrupted jobs were not reset; they stay in laeuft until the next start", "err", err)
 	}
-	if err := db.New(s.DB.Write).ResetLaufendeErkennung(ctx); err != nil {
+	if err := db.New(s.DB.WriteDB()).ResetLaufendeErkennung(ctx); err != nil {
 		s.log("interrupted recognitions were not reset; they stay in laeuft until the next start", "err", err)
 	}
-	ids, err := db.New(s.DB.Write).ListErkennungOffen(ctx)
+	ids, err := db.New(s.DB.WriteDB()).ListErkennungOffen(ctx)
 	if err != nil {
 		s.log("open recognitions could not be listed; none were re-queued", "err", err)
 	}
@@ -110,7 +110,7 @@ func (s *Service) JobRetry(ctx context.Context, job jobs.Job, _ error) {
 	if bildID == "" {
 		return
 	}
-	if err := db.New(s.DB.Write).SetErkennungStatus(ctx, db.SetErkennungStatusParams{
+	if err := db.New(s.DB.WriteDB()).SetErkennungStatus(ctx, db.SetErkennungStatusParams{
 		ErkennungStatus: "ausstehend",
 		ID:              bildID,
 	}); err != nil {
@@ -130,7 +130,7 @@ func (s *Service) JobFail(ctx context.Context, job jobs.Job, err error) {
 	if bildID == "" {
 		return
 	}
-	if err := db.New(s.DB.Write).SetErkennungStatus(ctx, db.SetErkennungStatusParams{
+	if err := db.New(s.DB.WriteDB()).SetErkennungStatus(ctx, db.SetErkennungStatusParams{
 		ErkennungStatus: "fehler",
 		ErkennungFehler: failureText(err),
 		ID:              bildID,
@@ -142,7 +142,7 @@ func (s *Service) JobFail(ctx context.Context, job jobs.Job, err error) {
 
 // RestartErkennung queues another extraction. Manual entry stays available.
 func (s *Service) RestartErkennung(ctx context.Context, bildID string) (Bild, error) {
-	row, err := db.New(s.DB.Read).GetBelegbild(ctx, bildID)
+	row, err := db.New(s.DB.ReadDB()).GetBelegbild(ctx, bildID)
 	if isNoRows(err) {
 		return Bild{}, problem.New(404, "E_NICHT_GEFUNDEN", "Bild nicht gefunden.")
 	}
@@ -157,7 +157,7 @@ func (s *Service) RestartErkennung(ctx context.Context, bildID string) (Bild, er
 		return s.GetBild(ctx, bildID)
 	}
 	if row.ErkennungStatus != "ausstehend" && row.ErkennungStatus != "laeuft" {
-		if err := db.New(s.DB.Write).SetErkennungStatus(ctx, db.SetErkennungStatusParams{
+		if err := db.New(s.DB.WriteDB()).SetErkennungStatus(ctx, db.SetErkennungStatusParams{
 			ErkennungStatus: "ausstehend",
 			ID:              bildID,
 		}); err != nil {
@@ -202,7 +202,7 @@ func (s *Service) ErkennungProblem() string {
 
 // GetJob returns a queue row for the status endpoint.
 func (s *Service) GetJob(ctx context.Context, jobID string) (JobStatus, error) {
-	row, err := db.New(s.DB.Read).GetJob(ctx, jobID)
+	row, err := db.New(s.DB.ReadDB()).GetJob(ctx, jobID)
 	if isNoRows(err) {
 		return JobStatus{}, problem.New(404, "E_NICHT_GEFUNDEN", "Job nicht gefunden.")
 	}
@@ -234,18 +234,18 @@ func (s *Service) runErkennung(ctx context.Context, payload string) error {
 		return err
 	}
 	if !on {
-		return db.New(s.DB.Write).SetErkennungStatus(ctx, db.SetErkennungStatusParams{
+		return db.New(s.DB.WriteDB()).SetErkennungStatus(ctx, db.SetErkennungStatusParams{
 			ErkennungStatus: "keine",
 			ID:              bildID,
 		})
 	}
-	if err := db.New(s.DB.Write).SetErkennungStatus(ctx, db.SetErkennungStatusParams{
+	if err := db.New(s.DB.WriteDB()).SetErkennungStatus(ctx, db.SetErkennungStatusParams{
 		ErkennungStatus: "laeuft",
 		ID:              bildID,
 	}); err != nil {
 		return err
 	}
-	row, err := db.New(s.DB.Read).GetBelegbild(ctx, bildID)
+	row, err := db.New(s.DB.ReadDB()).GetBelegbild(ctx, bildID)
 	if isNoRows(err) {
 		return &recognition.CallError{Kind: recognition.KindPermanent, Text: "Bild nicht gefunden"}
 	}
@@ -292,7 +292,7 @@ func (s *Service) runErkennung(ctx context.Context, payload string) error {
 	if modell == "" {
 		modell = "unbekannt"
 	}
-	return db.New(s.DB.Write).SetBelegbildErkennung(ctx, db.SetBelegbildErkennungParams{
+	return db.New(s.DB.WriteDB()).SetBelegbildErkennung(ctx, db.SetBelegbildErkennungParams{
 		ErkennungStatus:   "fertig",
 		ErkennungErgebnis: string(body),
 		ErkennungRoh:      optText(meta.Roh),
@@ -306,7 +306,7 @@ func (s *Service) noteAttempt(ctx context.Context, bildID string, meta recogniti
 	if len(meta.Roh) == 0 && meta.Modell == "" {
 		return
 	}
-	_ = db.New(s.DB.Write).SaveErkennungVersuch(ctx, db.SaveErkennungVersuchParams{
+	_ = db.New(s.DB.WriteDB()).SaveErkennungVersuch(ctx, db.SaveErkennungVersuchParams{
 		ErkennungRoh:     optText(meta.Roh),
 		ErkennungModell:  optString(meta.Modell),
 		ErkennungDauerMs: meta.DauerMS,
@@ -318,7 +318,7 @@ func (s *Service) recognitionOn(ctx context.Context) (bool, error) {
 	if !recognition.Active(s.Extractor) {
 		return false, nil
 	}
-	row, err := db.New(s.DB.Read).GetEinstellungen(ctx)
+	row, err := db.New(s.DB.ReadDB()).GetEinstellungen(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -327,7 +327,7 @@ func (s *Service) recognitionOn(ctx context.Context) (bool, error) {
 
 func (s *Service) enqueueOrMarkFailed(ctx context.Context, bildID string) {
 	if err := s.enqueueErkennung(ctx, bildID); err != nil {
-		_ = db.New(s.DB.Write).SetErkennungStatus(ctx, db.SetErkennungStatusParams{
+		_ = db.New(s.DB.WriteDB()).SetErkennungStatus(ctx, db.SetErkennungStatusParams{
 			ErkennungStatus: "fehler",
 			ErkennungFehler: "Erkennung konnte nicht gestartet werden.",
 			ID:              bildID,
@@ -344,7 +344,7 @@ func (s *Service) enqueueErkennung(ctx context.Context, bildID string) error {
 		return err
 	}
 	payload := string(raw)
-	n, err := db.New(s.DB.Write).CountOpenJobsByPayload(ctx, db.CountOpenJobsByPayloadParams{
+	n, err := db.New(s.DB.WriteDB()).CountOpenJobsByPayload(ctx, db.CountOpenJobsByPayloadParams{
 		Typ:     jobs.TypErkennung,
 		Payload: payload,
 	})

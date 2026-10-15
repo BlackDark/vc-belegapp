@@ -59,10 +59,10 @@ func Migrate(ctx context.Context, opt Options) error {
 		return err
 	}
 	defer func() { _ = database.Close() }()
-	if err := db.Migrate(ctx, database.Write); err != nil {
+	if err := db.Migrate(ctx, database.WriteDB()); err != nil {
 		return err
 	}
-	_, err = db.EnsureSystem(ctx, database.Write, opt.Config.SecretKey)
+	_, err = db.EnsureSystem(ctx, database.WriteDB(), opt.Config.SecretKey)
 	return err
 }
 
@@ -86,10 +86,10 @@ func Serve(ctx context.Context, opt Options) error {
 		return err
 	}
 	defer func() { _ = database.Close() }()
-	if err := db.Migrate(ctx, database.Write); err != nil {
+	if err := db.Migrate(ctx, database.WriteDB()); err != nil {
 		return err
 	}
-	rt, err := db.EnsureSystem(ctx, database.Write, opt.Config.SecretKey)
+	rt, err := db.EnsureSystem(ctx, database.WriteDB(), opt.Config.SecretKey)
 	if err != nil {
 		return err
 	}
@@ -271,8 +271,8 @@ func Serve(ctx context.Context, opt Options) error {
 	handler, err := server.New(server.Options{
 		Log: opt.Log,
 		Ready: server.ReadyChecks{
-			Database:   database.Write.PingContext,
-			Migrations: func(ctx context.Context) error { return db.MigrationsCurrent(ctx, database.Write) },
+			Database:   database.WriteDB().PingContext,
+			Migrations: func(ctx context.Context) error { return db.MigrationsCurrent(ctx, database.WriteDB()) },
 			Storage:    store.Ping,
 			Typst:      typst.Check,
 		},

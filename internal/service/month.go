@@ -81,7 +81,7 @@ func (s *Service) GetMonat(ctx context.Context, monat string) (Monat, error) {
 	if err != nil {
 		return Monat{}, errMonatFormat()
 	}
-	q := db.New(s.DB.Read)
+	q := db.New(s.DB.ReadDB())
 	status, err := monthStatus(ctx, q, monat)
 	if err != nil {
 		return Monat{}, err
@@ -264,9 +264,9 @@ func (s *Service) pruefpunkte(ctx context.Context, q *db.Queries, belege []Beleg
 	var report audit.Report
 	var err error
 	if full {
-		report, err = audit.Verify(ctx, s.DB.Read)
+		report, err = audit.Verify(ctx, s.DB.ReadDB())
 	} else {
-		report, err = audit.VerifyTip(ctx, s.DB.Read)
+		report, err = audit.VerifyTip(ctx, s.DB.ReadDB())
 	}
 	if err != nil {
 		return nil, err

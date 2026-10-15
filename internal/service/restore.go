@@ -142,13 +142,13 @@ func (s *Service) applyImport(ctx context.Context, arc *export.Archive, actor Ac
 			_ = os.Remove(snap)
 			return ImportResult{}, err
 		}
-		if err := db.Migrate(ctx, s.DB.Write); err != nil {
+		if err := db.Migrate(ctx, s.DB.WriteDB()); err != nil {
 			return ImportResult{}, err
 		}
 		if _, err := s.MigrateBildKeys(ctx); err != nil {
 			return ImportResult{}, err
 		}
-		report, err := audit.Verify(ctx, s.DB.Read)
+		report, err := audit.Verify(ctx, s.DB.ReadDB())
 		if err != nil {
 			return ImportResult{}, err
 		}
@@ -169,13 +169,22 @@ func (s *Service) applyImport(ctx context.Context, arc *export.Archive, actor Ac
 
 // rollbackOnError runs the import steps and restores the safety snapshot when
 // they fail. A rollback error never masks the original one.
+//
+// It is logged rather than dropped, on its own line. The caller only ever sees
+// the original failure, so without that line a rollback that did not work looks
+// exactly like one that did — and the two end very differently: one leaves an
+// instance on its own data, the other on half an import with nothing in the log
+// to say so.
 func (s *Service) rollbackOnError(ctx context.Context, safetyZip, safetyDB string, fn func() (ImportResult, error)) (ImportResult, error) {
 	res, err := fn()
-	if err != nil {
-		_ = s.rollback(ctx, safetyZip, safetyDB)
-		return ImportResult{}, err
+	if err == nil {
+		return res, nil
 	}
-	return res, nil
+	if rbErr := s.rollback(ctx, safetyZip, safetyDB); rbErr != nil {
+		s.logError("der Datenimport wurde zurückgerollt, die Sicherung ließ sich aber nicht einspielen",
+			"import_fehler", err, "rollback_fehler", rbErr)
+	}
+	return ImportResult{}, err
 }
 
 func (s *Service) writeSafety(ctx context.Context) (string, string, error) {
@@ -247,7 +256,7 @@ func (s *Service) copyBlobs(ctx context.Context, arc *export.Archive) error {
 }
 
 func (s *Service) finishImport(ctx context.Context, arc *export.Archive, actor Actor) error {
-	if err := db.New(s.DB.Write).DeleteAllSitzungen(ctx); err != nil {
+	if err := db.New(s.DB.WriteDB()).DeleteAllSitzungen(ctx); err != nil {
 		return err
 	}
 	nachher, err := audit.Snapshot(map[string]any{

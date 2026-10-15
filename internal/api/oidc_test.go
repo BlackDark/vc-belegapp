@@ -53,8 +53,8 @@ func TestOIDCAllowAndDeny(t *testing.T) {
 		Frontend: fstest.MapFS{"index.html": {Data: []byte("Belegapp")}},
 		BaseURL:  ts.URL,
 		Ready: server.ReadyChecks{
-			Database:   database.Write.PingContext,
-			Migrations: func(ctx context.Context) error { return db.MigrationsCurrent(ctx, database.Write) },
+			Database:   database.WriteDB().PingContext,
+			Migrations: func(ctx context.Context) error { return db.MigrationsCurrent(ctx, database.WriteDB()) },
 			Storage:    func(context.Context) error { return nil },
 			Typst:      func(context.Context) (string, error) { return "typst", nil },
 		},

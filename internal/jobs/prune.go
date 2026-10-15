@@ -115,14 +115,14 @@ func (p *Pruner) Run(ctx context.Context) {
 // been failing for weeks. The ANALYZE that ends the pass is the one exception:
 // it has nothing to do with the rows and cannot report one.
 func (p *Pruner) Prune(ctx context.Context) (int64, error) {
-	if p == nil || p.DB == nil || p.DB.Write == nil {
+	if p == nil || p.DB == nil || p.DB.WriteDB() == nil {
 		return 0, errors.New("job prune: database is closed")
 	}
 	if p.Retention <= 0 {
 		return 0, nil
 	}
 	cutoff := p.now().UTC().Add(-p.Retention).Format(time.RFC3339)
-	queries := db.New(p.DB.Write)
+	queries := db.New(p.DB.WriteDB())
 	batch := int64(p.batch())
 
 	var deleted int64
@@ -177,7 +177,7 @@ func (p *Pruner) Prune(ctx context.Context) (int64, error) {
 // write connection the queue claims through, so a statistics pass that runs
 // away must not hold it for longer than a batch would.
 func (p *Pruner) analyze(ctx context.Context) {
-	if p.DB == nil || p.DB.Write == nil {
+	if p.DB == nil || p.DB.WriteDB() == nil {
 		return
 	}
 	if err := ctx.Err(); err != nil {
@@ -185,7 +185,7 @@ func (p *Pruner) analyze(ctx context.Context) {
 	}
 	analyzeCtx, cancel := context.WithTimeout(ctx, p.analyzeBudget())
 	defer cancel()
-	if _, err := p.DB.Write.ExecContext(analyzeCtx, "ANALYZE"); err != nil {
+	if _, err := p.DB.WriteDB().ExecContext(analyzeCtx, "ANALYZE"); err != nil {
 		if p.Log != nil && ctx.Err() == nil {
 			// German like every other message an operator reads here, and only
 			// worth a line: the next pass runs an hour later.

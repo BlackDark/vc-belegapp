@@ -16,7 +16,7 @@ func TestMoveLeavesLockedMonthChanged(t *testing.T) {
 		Datum: "2026-10-06", Mahlzeit: "mittag", Bezugsort: "supermarkt", Arbeitsort: "betrieb",
 		HaendlerName: "REWE", HaendlerOrt: "Köln", BelegbetragCent: 840,
 	})
-	if err := db.New(svc.DB.Write).UpsertMonatStatus(ctx, db.UpsertMonatStatusParams{
+	if err := db.New(svc.DB.WriteDB()).UpsertMonatStatus(ctx, db.UpsertMonatStatusParams{
 		Monat: "2026-10", Status: "gesperrt", GesperrtAm: "2026-10-08T12:00:00Z", LetzteExportversion: 1,
 	}); err != nil {
 		t.Fatal(err)
@@ -101,7 +101,7 @@ func TestMoveIntoLockedMonthLeavesSourceOpen(t *testing.T) {
 	ctx := context.Background()
 	svc := openService(t, nil)
 	saveRule(t, svc)
-	if err := db.New(svc.DB.Write).UpsertMonatStatus(ctx, db.UpsertMonatStatusParams{
+	if err := db.New(svc.DB.WriteDB()).UpsertMonatStatus(ctx, db.UpsertMonatStatusParams{
 		Monat: "2026-10", Status: "gesperrt", GesperrtAm: "2026-10-08T12:00:00Z", LetzteExportversion: 1,
 	}); err != nil {
 		t.Fatal(err)

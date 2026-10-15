@@ -21,7 +21,7 @@ func saveUnassigned(t *testing.T, svc *Service, r, g, b uint8, status, stamp str
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.DB.Write.ExecContext(context.Background(),
+	if _, err := svc.DB.WriteDB().ExecContext(context.Background(),
 		`UPDATE belegbilder SET erstellt_am = ?, erkennung_status = ? WHERE id = ?`,
 		stamp, status, bild.ID); err != nil {
 		t.Fatal(err)
@@ -233,7 +233,7 @@ func TestListOffeneBilderIgnoresMonthLock(t *testing.T) {
 	saveRule(t, svc)
 	beleg := addBeleg(t, svc, colorPNG(t, 7, 7, 7), sampleInput())
 	bildID := beleg.Bilder[0].ID
-	if err := db.New(svc.DB.Write).UpsertMonatStatus(ctx, db.UpsertMonatStatusParams{
+	if err := db.New(svc.DB.WriteDB()).UpsertMonatStatus(ctx, db.UpsertMonatStatusParams{
 		Monat: "2026-10", Status: "gesperrt", GesperrtAm: "2026-10-08T12:00:00Z", LetzteExportversion: 1,
 	}); err != nil {
 		t.Fatal(err)
@@ -264,7 +264,7 @@ func TestListOffeneBilderReportsRecognitionError(t *testing.T) {
 	ctx := context.Background()
 	svc := openService(t, nil)
 	id := saveUnassigned(t, svc, 8, 8, 8, "fehler", "2026-10-08T09:00:00Z")
-	if _, err := svc.DB.Write.ExecContext(ctx,
+	if _, err := svc.DB.WriteDB().ExecContext(ctx,
 		`UPDATE belegbilder SET erkennung_fehler = ? WHERE id = ?`,
 		"Modell nicht erreichbar", id); err != nil {
 		t.Fatal(err)

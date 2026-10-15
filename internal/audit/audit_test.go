@@ -65,7 +65,7 @@ func TestDiff(t *testing.T) {
 func TestChainAndAppendOnly(t *testing.T) {
 	ctx := context.Background()
 	database := openDB(t)
-	tx, err := database.Write.BeginTx(ctx, nil)
+	tx, err := database.WriteDB().BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,23 +91,23 @@ func TestChainAndAppendOnly(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	report, err := Verify(ctx, database.Read)
+	report, err := Verify(ctx, database.ReadDB())
 	if err != nil || !report.OK || report.Anzahl != 2 {
 		t.Fatalf("%+v %v", report, err)
 	}
-	rows, err := List(ctx, database.Read, "2026-10", "", 0, 10)
+	rows, err := List(ctx, database.ReadDB(), "2026-10", "", 0, 10)
 	if err != nil || len(rows) != 1 || rows[0].ID != 2 {
 		t.Fatalf("%v %v", rows, err)
 	}
-	_, err = database.Write.ExecContext(ctx, `UPDATE aenderungsprotokoll SET aktion = 'x' WHERE id = 1`)
+	_, err = database.WriteDB().ExecContext(ctx, `UPDATE aenderungsprotokoll SET aktion = 'x' WHERE id = 1`)
 	if err == nil || !strings.Contains(err.Error(), "append-only") {
 		t.Fatalf("update err %v", err)
 	}
-	_, err = database.Write.ExecContext(ctx, `DELETE FROM aenderungsprotokoll WHERE id = 1`)
+	_, err = database.WriteDB().ExecContext(ctx, `DELETE FROM aenderungsprotokoll WHERE id = 1`)
 	if err == nil || !strings.Contains(err.Error(), "append-only") {
 		t.Fatalf("delete err %v", err)
 	}
-	if _, err := database.Write.ExecContext(ctx, `UPDATE aenderungsprotokoll SET hash = prev_hash WHERE id = 2`); err == nil {
+	if _, err := database.WriteDB().ExecContext(ctx, `UPDATE aenderungsprotokoll SET hash = prev_hash WHERE id = 2`); err == nil {
 		t.Fatal("hash update should fail")
 	}
 }
@@ -115,7 +115,7 @@ func TestChainAndAppendOnly(t *testing.T) {
 func TestVerifyDetectsTamper(t *testing.T) {
 	ctx := context.Background()
 	database := openDB(t)
-	tx, err := database.Write.BeginTx(ctx, nil)
+	tx, err := database.WriteDB().BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestVerifyDetectsTamper(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	report, err := Verify(ctx, database.Write)
+	report, err := Verify(ctx, database.WriteDB())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestVerifyDetectsTamper(t *testing.T) {
 func TestVerifyTipIgnoresEarlierBreak(t *testing.T) {
 	ctx := context.Background()
 	database := openDB(t)
-	tx, err := database.Write.BeginTx(ctx, nil)
+	tx, err := database.WriteDB().BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,11 +174,11 @@ func TestVerifyTipIgnoresEarlierBreak(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	tip, err := VerifyTip(ctx, database.Read)
+	tip, err := VerifyTip(ctx, database.ReadDB())
 	if err != nil || !tip.OK || tip.Anzahl != 2 {
 		t.Fatalf("tip %+v %v", tip, err)
 	}
-	full, err := Verify(ctx, database.Read)
+	full, err := Verify(ctx, database.ReadDB())
 	if err != nil || full.OK || full.ErsterFehlerID != 1 {
 		t.Fatalf("full %+v %v", full, err)
 	}
@@ -191,7 +191,7 @@ func openDB(t *testing.T) *db.DB {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	if err := db.Migrate(context.Background(), database.Write); err != nil {
+	if err := db.Migrate(context.Background(), database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
 	return database

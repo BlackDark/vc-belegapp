@@ -92,7 +92,7 @@ func (s *Service) SaveBildFrom(ctx context.Context, quelle string, data []byte, 
 	if !ok || !okThumb {
 		return Bild{}, errors.New("image hash is not a storage key")
 	}
-	q := db.New(s.DB.Write)
+	q := db.New(s.DB.WriteDB())
 	if err := s.Store.Put(ctx, key, bytes.NewReader(norm.JPEG), int64(len(norm.JPEG)), "image/jpeg"); err != nil {
 		return Bild{}, err
 	}
@@ -138,7 +138,7 @@ func (s *Service) SaveBildFrom(ctx context.Context, quelle string, data []byte, 
 	// job because both answer the same question — what happened to this
 	// upload — and one of them may be switched off without affecting the other.
 	s.enqueueBildPruefen(ctx, bildID, stamp, quelle)
-	row, err := db.New(s.DB.Write).GetBelegbild(ctx, bildID)
+	row, err := db.New(s.DB.WriteDB()).GetBelegbild(ctx, bildID)
 	if err != nil {
 		return Bild{}, err
 	}
@@ -147,7 +147,7 @@ func (s *Service) SaveBildFrom(ctx context.Context, quelle string, data []byte, 
 
 // GetBild returns image metadata.
 func (s *Service) GetBild(ctx context.Context, bildID string) (Bild, error) {
-	row, err := db.New(s.DB.Read).GetBelegbild(ctx, bildID)
+	row, err := db.New(s.DB.ReadDB()).GetBelegbild(ctx, bildID)
 	if isNoRows(err) {
 		return Bild{}, problem.New(404, "E_NICHT_GEFUNDEN", "Bild nicht gefunden.")
 	}
@@ -155,7 +155,7 @@ func (s *Service) GetBild(ctx context.Context, bildID string) (Bild, error) {
 		return Bild{}, err
 	}
 	var dup *string
-	found, ferr := db.New(s.DB.Read).FindDuplicateBild(ctx, db.FindDuplicateBildParams{
+	found, ferr := db.New(s.DB.ReadDB()).FindDuplicateBild(ctx, db.FindDuplicateBildParams{
 		ExcludeID:    asString(row.BelegID),
 		Sha256:       row.Sha256,
 		UploadSha256: row.UploadSha256,
@@ -176,7 +176,7 @@ func (s *Service) GetBild(ctx context.Context, bildID string) (Bild, error) {
 
 // OpenBild returns the normalised JPEG or the thumbnail.
 func (s *Service) OpenBild(ctx context.Context, bildID string, thumb bool) (io.ReadCloser, error) {
-	row, err := db.New(s.DB.Read).GetBelegbild(ctx, bildID)
+	row, err := db.New(s.DB.ReadDB()).GetBelegbild(ctx, bildID)
 	if isNoRows(err) {
 		return nil, problem.New(404, "E_NICHT_GEFUNDEN", "Bild nicht gefunden.")
 	}
@@ -193,7 +193,7 @@ func (s *Service) OpenBild(ctx context.Context, bildID string, thumb bool) (io.R
 
 // DeleteBild removes an image that is not attached to a receipt.
 func (s *Service) DeleteBild(ctx context.Context, bildID string) error {
-	q := db.New(s.DB.Write)
+	q := db.New(s.DB.WriteDB())
 	row, err := q.GetBelegbild(ctx, bildID)
 	if isNoRows(err) {
 		return problem.New(404, "E_NICHT_GEFUNDEN", "Bild nicht gefunden.")
@@ -298,7 +298,7 @@ func (s *Service) ListOffeneBilder(ctx context.Context, params OffeneBilderParam
 	if offset < 0 {
 		offset = 0
 	}
-	q := db.New(s.DB.Read)
+	q := db.New(s.DB.ReadDB())
 	rows, err := q.ListUnassignedBilder(ctx, db.ListUnassignedBilderParams{
 		Status: params.Status,
 		Limit:  int64(limit),
@@ -432,7 +432,7 @@ func (s *Service) sweepOnce(ctx context.Context) error {
 			failures = append(failures, err)
 			break
 		}
-		rows, err := db.New(s.DB.Read).ListUnassignedBelegbilderBeforePage(ctx, page)
+		rows, err := db.New(s.DB.ReadDB()).ListUnassignedBelegbilderBeforePage(ctx, page)
 		if err != nil {
 			return err
 		}
@@ -514,7 +514,7 @@ func (s *Service) sweepOrphanBlobs(ctx context.Context) error {
 }
 
 func (s *Service) referencedBlobKeys(ctx context.Context) (map[string]struct{}, error) {
-	q := db.New(s.DB.Read)
+	q := db.New(s.DB.ReadDB())
 	out := map[string]struct{}{}
 	rows, err := q.ListBelegbildKeys(ctx)
 	if err != nil {

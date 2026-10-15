@@ -49,7 +49,7 @@ func (s *Service) pollLoop(ctx context.Context, every time.Duration, enqueue fun
 // A count or an insert that fails is logged and otherwise ignored: the next tick
 // asks again, so a single failed write costs one interval and nothing else.
 func (s *Service) enqueueUnlessOpen(ctx context.Context, typ, payload string) {
-	n, err := db.New(s.DB.Write).CountOpenJobsByPayload(ctx, db.CountOpenJobsByPayloadParams{
+	n, err := db.New(s.DB.WriteDB()).CountOpenJobsByPayload(ctx, db.CountOpenJobsByPayloadParams{
 		Typ:     typ,
 		Payload: payload,
 	})
@@ -82,6 +82,17 @@ func (s *Service) log(msg string, args ...any) {
 // not be built out of lines that were always going to be written.
 func (s *Service) logWarn(msg string, args ...any) {
 	s.logAt(slog.LevelWarn, msg, args...)
+}
+
+// logError writes one line about something that already went wrong.
+//
+// It is a level of its own and not a louder warning because the two answer
+// different questions. A warning is a finding; an error is a fact about the
+// instance right now, and it has to stay visible when an operator raises the
+// log level to see warnings — which is exactly what they do when an import
+// failed and they want to know what the process thinks happened to their data.
+func (s *Service) logError(msg string, args ...any) {
+	s.logAt(slog.LevelError, msg, args...)
 }
 
 // logAt is the one place a background line is written.

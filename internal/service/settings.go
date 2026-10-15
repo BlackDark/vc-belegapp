@@ -30,7 +30,7 @@ type Einstellungen struct {
 
 // GetEinstellungen returns the singleton row.
 func (s *Service) GetEinstellungen(ctx context.Context) (Einstellungen, error) {
-	row, err := db.New(s.DB.Read).GetEinstellungen(ctx)
+	row, err := db.New(s.DB.ReadDB()).GetEinstellungen(ctx)
 	if err != nil {
 		return Einstellungen{}, err
 	}
@@ -109,7 +109,7 @@ func validateEinstellungen(in Einstellungen) error {
 
 // ListJahresregeln returns every saved year rule.
 func (s *Service) ListJahresregeln(ctx context.Context) ([]rules.Jahresregel, error) {
-	rows, err := db.New(s.DB.Read).ListJahresregeln(ctx)
+	rows, err := db.New(s.DB.ReadDB()).ListJahresregeln(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +126,7 @@ func (s *Service) ListJahresregeln(ctx context.Context) ([]rules.Jahresregel, er
 
 // GetJahresregel returns one year or a 404 problem.
 func (s *Service) GetJahresregel(ctx context.Context, jahr int) (rules.Jahresregel, error) {
-	row, err := db.New(s.DB.Read).GetJahresregel(ctx, int64(jahr))
+	row, err := db.New(s.DB.ReadDB()).GetJahresregel(ctx, int64(jahr))
 	if isNoRows(err) {
 		return rules.Jahresregel{}, problem.New(404, "E_NICHT_GEFUNDEN", "Keine Jahresregel für dieses Jahr.")
 	}
@@ -144,7 +144,7 @@ func (s *Service) SuggestJahresregel(ctx context.Context, jahr int) (rules.Jahre
 		}})
 	}
 	var prev *rules.Jahresregel
-	row, err := db.New(s.DB.Read).GetJahresregel(ctx, int64(jahr-1))
+	row, err := db.New(s.DB.ReadDB()).GetJahresregel(ctx, int64(jahr-1))
 	if err == nil {
 		regel, convErr := regelFromRow(row)
 		if convErr != nil {
@@ -230,7 +230,7 @@ func (s *Service) Feiertage(ctx context.Context, jahr int, land string) ([]holid
 		return nil, problem.New(422, "E_FELD_UNGUELTIG", "Das Jahr ist ungültig.")
 	}
 	var custom []rules.Feiertag
-	row, err := db.New(s.DB.Read).GetJahresregel(ctx, int64(jahr))
+	row, err := db.New(s.DB.ReadDB()).GetJahresregel(ctx, int64(jahr))
 	if err == nil {
 		if land == "" {
 			land = row.Bundesland

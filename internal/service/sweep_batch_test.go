@@ -32,7 +32,7 @@ func seedExpiredBilder(t *testing.T, svc *Service, n int, stamp string) []string
 	ids := make([]string, 0, n)
 	for i := 0; i < n; i++ {
 		id := fmt.Sprintf("bild-%04d", i)
-		if _, err := svc.DB.Write.ExecContext(ctx, `INSERT INTO belegbilder (
+		if _, err := svc.DB.WriteDB().ExecContext(ctx, `INSERT INTO belegbilder (
 			id, blob_key, thumb_blob_key, sha256, upload_sha256, mime, bytes, breite, hoehe,
 			erkennung_status, erstellt_am
 		) VALUES (?, ?, ?, ?, ?, 'image/jpeg', 4, 8, 4, 'keine', ?)`,
@@ -122,7 +122,7 @@ func sweepingService(t *testing.T, batch, rows int) (*Service, *recordingStore, 
 
 func belegbildRows(t *testing.T, svc *Service) []string {
 	t.Helper()
-	rows, err := svc.DB.Read.QueryContext(context.Background(),
+	rows, err := svc.DB.ReadDB().QueryContext(context.Background(),
 		`SELECT id FROM belegbilder ORDER BY id`)
 	if err != nil {
 		t.Fatal(err)
@@ -194,7 +194,7 @@ func TestSweepOnceKeepsGoingAfterAFailingBatchAndReportsIt(t *testing.T) {
 	svc, _, ids := sweepingService(t, 4, 12)
 	// The fifth row by id is the first row of the second batch.
 	stuck := ids[4]
-	if _, err := svc.DB.Write.ExecContext(ctx, fmt.Sprintf(`
+	if _, err := svc.DB.WriteDB().ExecContext(ctx, fmt.Sprintf(`
 		CREATE TRIGGER sweep_batch_stuck BEFORE DELETE ON belegbilder WHEN old.id = '%s'
 		BEGIN SELECT RAISE(ABORT, 'Belegbild gesperrt'); END`, stuck)); err != nil {
 		t.Fatal(err)
@@ -275,7 +275,7 @@ func TestSweepOnceResumesAfterAPartialPass(t *testing.T) {
 	ctx := context.Background()
 	svc, _, ids := sweepingService(t, 3, 7)
 	stuck := ids[2]
-	if _, err := svc.DB.Write.ExecContext(ctx, fmt.Sprintf(`
+	if _, err := svc.DB.WriteDB().ExecContext(ctx, fmt.Sprintf(`
 		CREATE TRIGGER sweep_resume_stuck BEFORE DELETE ON belegbilder WHEN old.id = '%s'
 		BEGIN SELECT RAISE(ABORT, 'Belegbild gesperrt'); END`, stuck)); err != nil {
 		t.Fatal(err)
@@ -283,7 +283,7 @@ func TestSweepOnceResumesAfterAPartialPass(t *testing.T) {
 	if err := svc.sweepOnce(ctx); err == nil {
 		t.Fatal("a partial pass reported success")
 	}
-	if _, err := svc.DB.Write.ExecContext(ctx, `DROP TRIGGER sweep_resume_stuck`); err != nil {
+	if _, err := svc.DB.WriteDB().ExecContext(ctx, `DROP TRIGGER sweep_resume_stuck`); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.sweepOnce(ctx); err != nil {
@@ -336,7 +336,7 @@ func TestSweepOnceJoinsTheRowFailureAndTheOrphanFailure(t *testing.T) {
 	ctx := context.Background()
 	svc, rec, ids := sweepingService(t, 4, 6)
 	stuck := ids[0]
-	if _, err := svc.DB.Write.ExecContext(ctx, fmt.Sprintf(`
+	if _, err := svc.DB.WriteDB().ExecContext(ctx, fmt.Sprintf(`
 		CREATE TRIGGER sweep_join_stuck BEFORE DELETE ON belegbilder WHEN old.id = '%s'
 		BEGIN SELECT RAISE(ABORT, 'Belegbild gesperrt'); END`, stuck)); err != nil {
 		t.Fatal(err)

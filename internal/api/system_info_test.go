@@ -185,8 +185,8 @@ func systemInfoFor(t *testing.T, info Info) httpResult {
 		Frontend: fstest.MapFS{"index.html": {Data: []byte("<title>Belegapp</title>")}},
 		BaseURL:  "https://belege.example.de",
 		Ready: server.ReadyChecks{
-			Database:   database.Write.PingContext,
-			Migrations: func(ctx context.Context) error { return db.MigrationsCurrent(ctx, database.Write) },
+			Database:   database.WriteDB().PingContext,
+			Migrations: func(ctx context.Context) error { return db.MigrationsCurrent(ctx, database.WriteDB()) },
 			Storage:    store.Ping,
 			Typst:      func(context.Context) (string, error) { return "typst test", nil },
 		},

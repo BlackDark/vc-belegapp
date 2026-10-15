@@ -49,7 +49,7 @@ func roundTrip(t *testing.T, destStore func() storage.BlobStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	beforeChain, err := audit.Verify(ctx, src.DB.Read)
+	beforeChain, err := audit.Verify(ctx, src.DB.ReadDB())
 	if err != nil || !beforeChain.OK || beforeChain.Anzahl == 0 {
 		t.Fatalf("source chain %+v %v", beforeChain, err)
 	}
@@ -92,14 +92,14 @@ func roundTrip(t *testing.T, destStore func() storage.BlobStore) {
 	if err != nil || len(img) < 32 {
 		t.Fatalf("restored image %d %v", len(img), err)
 	}
-	chain, err := audit.Verify(ctx, dest.DB.Read)
+	chain, err := audit.Verify(ctx, dest.DB.ReadDB())
 	if err != nil || !chain.OK {
 		t.Fatalf("restored chain %+v %v", chain, err)
 	}
 	if chain.Anzahl != beforeChain.Anzahl+1 {
 		t.Fatalf("chain entries %d, source %d", chain.Anzahl, beforeChain.Anzahl)
 	}
-	entries, err := audit.List(ctx, dest.DB.Read, "", "", 0, 5)
+	entries, err := audit.List(ctx, dest.DB.ReadDB(), "", "", 0, 5)
 	if err != nil || len(entries) == 0 || entries[0].Aktion != "datenimport" {
 		t.Fatalf("audit head %+v %v", entries, err)
 	}
@@ -241,7 +241,7 @@ func TestStopJobsGivesUpOnAStuckHandler(t *testing.T) {
 	// Nothing was lost: the job is still marked running, and Reset on the next
 	// start is what puts it back in the queue.
 	var status string
-	if err := svc.DB.Read.QueryRow(`SELECT status FROM jobs`).Scan(&status); err != nil {
+	if err := svc.DB.ReadDB().QueryRow(`SELECT status FROM jobs`).Scan(&status); err != nil {
 		t.Fatal(err)
 	}
 	if status != "laeuft" {

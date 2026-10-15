@@ -79,6 +79,11 @@ type Service struct {
 	importMu  sync.Mutex
 	imports   map[string]importTicket
 
+	// jobMu makes the cancel func and the WaitGroup transition one step. The
+	// stop at shutdown and the start at the end of a restore can run at the same
+	// time: http.Server.Shutdown has a budget, so it can return while a
+	// CommitImport handler is still inside withRestore.
+	jobMu     sync.Mutex
 	jobParent context.Context
 	jobCancel context.CancelFunc
 	jobWG     sync.WaitGroup
@@ -117,7 +122,7 @@ func (s *Service) stamp() string {
 }
 
 func (s *Service) tx(ctx context.Context, fn func(context.Context, *db.Queries, *sql.Tx) error) error {
-	tx, err := s.DB.Write.BeginTx(ctx, nil)
+	tx, err := s.DB.WriteDB().BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}

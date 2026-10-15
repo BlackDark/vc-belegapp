@@ -43,8 +43,8 @@ func newTestAPI(t *testing.T, svc *service.Service, store storage.BlobStore) htt
 		Frontend: fstest.MapFS{"index.html": {Data: []byte("<title>Belegapp</title>")}},
 		BaseURL:  "https://belege.example.de",
 		Ready: server.ReadyChecks{
-			Database:   svc.DB.Write.PingContext,
-			Migrations: func(ctx context.Context) error { return db.MigrationsCurrent(ctx, svc.DB.Write) },
+			Database:   svc.DB.WriteDB().PingContext,
+			Migrations: func(ctx context.Context) error { return db.MigrationsCurrent(ctx, svc.DB.WriteDB()) },
 			Storage:    store.Ping,
 			Typst:      func(context.Context) (string, error) { return "typst test", nil },
 		},

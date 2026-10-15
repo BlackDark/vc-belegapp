@@ -436,7 +436,7 @@ func (s *Service) ingestWatchFile(ctx context.Context, name string) (stored, dup
 	if hashErr != nil {
 		return false, false, false, false, hashErr
 	}
-	n, countErr := db.New(s.DB.Read).CountBelegbildByUploadSha(ctx, sum)
+	n, countErr := db.New(s.DB.ReadDB()).CountBelegbildByUploadSha(ctx, sum)
 	if countErr != nil {
 		return false, false, false, false, countErr
 	}

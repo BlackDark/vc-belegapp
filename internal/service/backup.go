@@ -80,14 +80,31 @@ func permanent(err error) error {
 
 // StartJobs runs the queue until the parent context ends.
 func (s *Service) StartJobs(parent context.Context) {
+	s.jobMu.Lock()
+	defer s.jobMu.Unlock()
 	s.jobParent = parent
-	s.startJobs()
+	s.startJobsLocked()
 }
 
 // WaitJobs stops the queue and waits for the workers.
-func (s *Service) WaitJobs() { s.stopJobs() }
+func (s *Service) WaitJobs() {
+	s.jobMu.Lock()
+	defer s.jobMu.Unlock()
+	s.stopJobsLocked(s.stopTimeout())
+}
 
 func (s *Service) startJobs() {
+	s.jobMu.Lock()
+	defer s.jobMu.Unlock()
+	s.startJobsLocked()
+}
+
+// startJobsLocked starts the queue workers. The caller holds jobMu.
+//
+// Holding it across both the cancel func and the Add is the whole point of the
+// mutex: a start and a stop that overlap would otherwise have one goroutine in
+// jobWG.Wait while another calls jobWG.Add, and two of them writing jobCancel.
+func (s *Service) startJobsLocked() {
 	if s.Jobs == nil || s.jobParent == nil || s.jobParent.Err() != nil || s.jobCancel != nil {
 		return
 	}
@@ -118,12 +135,8 @@ func (s *Service) startJobs() {
 // starts over.
 const jobShutdownTimeout = 15 * time.Second
 
-// stopJobs cancels the queue and waits for the workers, but never longer than
-// the stop timeout.
-func (s *Service) stopJobs() { s.stopJobsWithin(s.stopTimeout()) }
-
-// stopTimeout is the bound stopJobs applies. It is a field only so the test can
-// shorten it; the process never sets it.
+// stopTimeout is the bound the shutdown stop applies. It is a field only so the
+// test can shorten it; the process never sets it.
 func (s *Service) stopTimeout() time.Duration {
 	if s.jobStopTimeout > 0 {
 		return s.jobStopTimeout
@@ -136,9 +149,19 @@ func (s *Service) stopTimeout() time.Duration {
 // a worker still holding the old file would write into one nobody reads any
 // more. The operator asked for an import on a running instance, so waiting for
 // it is the answer and not a defect.
-func (s *Service) stopJobsForRestore() { s.stopJobsWithin(0) }
+//
+// It waits with jobMu held, which is what the unbounded wait needs to be
+// correct: the wait and the Add that follows it are one transition, and a
+// shutdown that overlaps this waits its turn instead of racing the Add.
+func (s *Service) stopJobsForRestore() {
+	s.jobMu.Lock()
+	defer s.jobMu.Unlock()
+	s.stopJobsLocked(0)
+}
 
-func (s *Service) stopJobsWithin(limit time.Duration) {
+// stopJobsLocked cancels the queue and waits for the workers. The caller holds
+// jobMu. limit <= 0 waits without a bound at all.
+func (s *Service) stopJobsLocked(limit time.Duration) {
 	if s.jobCancel == nil {
 		return
 	}
@@ -222,7 +245,7 @@ func (s *Service) runDatenexport(ctx context.Context, job jobs.Job) (string, err
 // OpenDatenexport opens a finished export that is still inside its download
 // window, export.DownloadTTL.
 func (s *Service) OpenDatenexport(ctx context.Context, jobID string) (Download, error) {
-	row, err := db.New(s.DB.Read).GetJob(ctx, jobID)
+	row, err := db.New(s.DB.ReadDB()).GetJob(ctx, jobID)
 	if isNoRows(err) {
 		return Download{}, problem.New(404, "E_NICHT_GEFUNDEN", "Datenexport nicht gefunden.")
 	}

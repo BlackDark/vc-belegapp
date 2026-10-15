@@ -76,7 +76,7 @@ func notifyFixture(t *testing.T, url string) *Service {
 func countJobs(t *testing.T, svc *Service, typ string) int {
 	t.Helper()
 	var n int
-	if err := svc.DB.Read.QueryRow(`SELECT COUNT(*) FROM jobs WHERE typ = ?`, typ).Scan(&n); err != nil {
+	if err := svc.DB.ReadDB().QueryRow(`SELECT COUNT(*) FROM jobs WHERE typ = ?`, typ).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n
@@ -85,7 +85,7 @@ func countJobs(t *testing.T, svc *Service, typ string) int {
 // notifyPayloads returns the payload of every queued notify job, oldest first.
 func notifyPayloads(t *testing.T, svc *Service) []string {
 	t.Helper()
-	rows, err := svc.DB.Read.Query(
+	rows, err := svc.DB.ReadDB().Query(
 		`SELECT payload FROM jobs WHERE typ = 'notify' ORDER BY erstellt_am, id`)
 	if err != nil {
 		t.Fatal(err)
@@ -209,7 +209,7 @@ func TestSaveBildSurvivesNotifyEnqueueFailure(t *testing.T) {
 		t.Fatal("the upload returned no image")
 	}
 	// The image is stored: the row is there and the blob is readable.
-	row, err := db.New(svc.DB.Read).GetBelegbild(context.Background(), bild.ID)
+	row, err := db.New(svc.DB.ReadDB()).GetBelegbild(context.Background(), bild.ID)
 	if err != nil {
 		t.Fatalf("the image row is missing after a failed enqueue: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestNotifyJobPostsBildPruefen(t *testing.T) {
 
 	// The announcement carries no image data: no hash, no blob key, no
 	// credential. The receiver stores this body and a third party may log it.
-	row, err := db.New(svc.DB.Read).GetBelegbild(context.Background(), bild.ID)
+	row, err := db.New(svc.DB.ReadDB()).GetBelegbild(context.Background(), bild.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -434,7 +434,7 @@ func TestNotifyJobDoesNotTouchRecognitionStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.New(svc.DB.Write).SetErkennungStatus(context.Background(), db.SetErkennungStatusParams{
+	if err := db.New(svc.DB.WriteDB()).SetErkennungStatus(context.Background(), db.SetErkennungStatusParams{
 		ErkennungStatus: "laeuft",
 		ID:              bild.ID,
 	}); err != nil {
@@ -444,7 +444,7 @@ func TestNotifyJobDoesNotTouchRecognitionStatus(t *testing.T) {
 	svc.JobRetry(context.Background(), job, context.Canceled)
 	svc.JobFail(context.Background(), job, context.Canceled)
 
-	row, err := db.New(svc.DB.Read).GetBelegbild(context.Background(), bild.ID)
+	row, err := db.New(svc.DB.ReadDB()).GetBelegbild(context.Background(), bild.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

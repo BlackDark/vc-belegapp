@@ -51,7 +51,7 @@ func (s *Service) exportChanges(ctx context.Context, monat string, version int) 
 	if version < 2 {
 		return nil, nil
 	}
-	q := db.New(s.DB.Read)
+	q := db.New(s.DB.ReadDB())
 	prev, err := q.LatestExport(ctx, monat)
 	if isNoRows(err) {
 		return nil, nil
@@ -59,14 +59,14 @@ func (s *Service) exportChanges(ctx context.Context, monat string, version int) 
 	if err != nil {
 		return nil, err
 	}
-	afterID, ok, err := audit.IDByHash(ctx, s.DB.Read, prev.ProtokollHash)
+	afterID, ok, err := audit.IDByHash(ctx, s.DB.ReadDB(), prev.ProtokollHash)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
 		return nil, nil
 	}
-	entries, err := audit.After(ctx, s.DB.Read, afterID)
+	entries, err := audit.After(ctx, s.DB.ReadDB(), afterID)
 	if err != nil {
 		return nil, err
 	}
