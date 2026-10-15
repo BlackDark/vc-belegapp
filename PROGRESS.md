@@ -53,7 +53,9 @@ Lohn. `rules.HoechstzuschussCent` leitet die Grenze jetzt aus dem SBW der jeweil
 konfigurierbaren Aufschlag ab (2026: 547 Frühstück, 767 Mittag/Abend); der Vorschlag — eine Zahl für alle
 bezuschussten Mahlzeitarten — aus dem kleinsten dieser Grenzen. **Mittag und Abend bleiben numerisch unverändert**
 (767/767), nur der Frühstücksvorschlag wandert auf 547. Drei Zuschussbeträge je Mahlzeitart bräuchten drei Spalten;
-`zuschuss_cent` bleibt eine gemeinsame — wer für Frühstück mehr zahlen will, hebt den Wert und nimmt die Warnung in Kauf. `main` stand dabei auf `12ba364`.
+`zuschuss_cent` bleibt eine gemeinsame — wer für Frühstück mehr zahlen will, hebt den Wert und nimmt die Warnung in Kauf.
+Bestätigt am **15.10.**, ohne Codeänderung: der gemeinsame Wert bleibt, die daraus folgende Grenze ist bewusst
+angenommen. `main` stand dabei auf `12ba364`, der Squash-Stand ist `48b3144` (PR #30).
 
 ## Bewusst verworfen
 
@@ -210,7 +212,11 @@ des Eigentümers:
   Kantine akzeptiert), **Nr. 4 und 5** am 14.10. (Eigenanteil-Variante `standard`, Monatslimit 15). Offen bleiben
   **Nr. 3** (Kirchensteuerverfahren) und aus Nr. 2 die Frage „Zusätzlich oder Gehaltsumwandlung" — beide ändern die
   Berechnung nicht. **Nr. 8** (Übergabeweg) ist unberührt; U1 beantwortet davon nur die Beschaffung der amtlichen
-  Werte aus der API. **§19.3** — **Nr. 1 und Nr. 12** am 15.10. bestätigt, die übrigen Annahmen warten auf Eduard.
+  Werte aus der API. **§19.3** — am 15.10. bestätigt: **Nr. 1, Nr. 3** (kein Entsperren), **Nr. 11** (Import ersetzt
+  alles, mit Sicherung davor), **Nr. 12**; am 14.10. **Nr. 8**. Offen bleiben **Nr. 2, 4, 5, 6, 9, 10** sowie aus
+  Nr. 7 der Modus (`warnen` oder blockieren). Dazu zwei Bestätigungen außerhalb von §19, weil sie nirgends eine
+  offene Frage waren: der gemeinsame `zuschuss_cent` (§5.3) und die Vorgabe `mittag` allein bei einer neuen
+  Jahresregel (§5.2, §5.3). Alle vier stehen in [NOTES](docs/NOTES.md).
 
 Diese Sitzung deckt bereits ab, was ohne Antwort auskam: die Eingangswege (IMAP, überwachter Ordner) und
 ihre Anzeige (Liste „Offene Bilder", Webhook) sind umgesetzt und in §19.2 als erledigt vermerkt.
