@@ -225,6 +225,22 @@ func (ms *memServer) appendMessage(t *testing.T, mailbox string, raw []byte) ima
 // messageWith builds a multipart mail with one picture attachment, one PDF, and
 // a text body — the exact shape a forwarded receipt has.
 func messageWithImage(from, subject string, picture []byte, mimeType, filename string, extra map[string]string) []byte {
+	return messageWithPictures(from, subject, []testPicture{
+		{Data: picture, MimeType: mimeType, Filename: filename},
+	}, extra)
+}
+
+// testPicture is one attachment part of the builder below.
+type testPicture struct {
+	Data     []byte
+	MimeType string
+	Filename string
+}
+
+// messageWithPictures builds a multipart mail with n picture parts and a text
+// body. A message with two hundred parts is the shape the per-part cap alone
+// never sees, so the fixture has to be able to produce one.
+func messageWithPictures(from, subject string, pictures []testPicture, extra map[string]string) []byte {
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, "From: %s\r\n", from)
 	fmt.Fprintf(&buf, "To: belege@example.de\r\n")
@@ -241,21 +257,34 @@ func messageWithImage(from, subject string, picture []byte, mimeType, filename s
 	buf.WriteString("Content-Type: text/plain; charset=utf-8\r\n\r\n")
 	buf.WriteString("Beleg im Anhang.\r\n")
 
-	fmt.Fprintf(&buf, "--%s\r\n", boundary)
-	fmt.Fprintf(&buf, "Content-Type: %s; name=%q\r\n", mimeType, filename)
-	buf.WriteString("Content-Transfer-Encoding: base64\r\n")
-	fmt.Fprintf(&buf, "Content-Disposition: attachment; filename=%q\r\n\r\n", filename)
-	encoded := base64.StdEncoding.EncodeToString(picture)
-	for i := 0; i < len(encoded); i += 76 {
-		end := i + 76
-		if end > len(encoded) {
-			end = len(encoded)
+	for _, picture := range pictures {
+		fmt.Fprintf(&buf, "--%s\r\n", boundary)
+		fmt.Fprintf(&buf, "Content-Type: %s; name=%q\r\n", picture.MimeType, picture.Filename)
+		buf.WriteString("Content-Transfer-Encoding: base64\r\n")
+		fmt.Fprintf(&buf, "Content-Disposition: attachment; filename=%q\r\n\r\n", picture.Filename)
+		encoded := base64.StdEncoding.EncodeToString(picture.Data)
+		for i := 0; i < len(encoded); i += 76 {
+			end := i + 76
+			if end > len(encoded) {
+				end = len(encoded)
+			}
+			buf.WriteString(encoded[i:end])
+			buf.WriteString("\r\n")
 		}
-		buf.WriteString(encoded[i:end])
-		buf.WriteString("\r\n")
 	}
 	fmt.Fprintf(&buf, "--%s--\r\n", boundary)
 	return buf.Bytes()
+}
+
+// pictureBytes is n bytes that are not a real picture. The source decodes the
+// transfer encoding and hands the bytes on without looking inside a part, so
+// the cap tests need volume rather than an image — and this keeps them small.
+func pictureBytes(n int, fill byte) []byte {
+	out := make([]byte, n)
+	for i := range out {
+		out[i] = fill
+	}
+	return out
 }
 
 // pngBytes is a minimal valid 1x1 PNG.
@@ -826,6 +855,220 @@ func TestIMAPFetchRespectsLimit(t *testing.T) {
 	}
 }
 
+// The per-part cap bounds one part and nothing else. readBody drains every part
+// to reach the next, so a message of two hundred 15 MB JPEGs is three gigabytes
+// of heap before the caller sees a single attachment — and the caller, which
+// only bounds what it stores, sees all of them at once. The sum is what has to
+// stop it, while the message is being decoded.
+//
+// What is over the sum is not the message: the two pictures behind it are
+// complete, so they are kept, and the bound itself arrives as one more part
+// carrying the reason and no bytes. The caller skips that one like any other
+// part it cannot store.
+func TestIMAPMessageByteCapStopsDecoding(t *testing.T) {
+	ctx := context.Background()
+	ms := newMemServer(t, "belege", "app-password", nil)
+	ms.createMailbox(t, "INBOX")
+	const partBytes = 1000
+	pictures := []testPicture{
+		{Data: pictureBytes(partBytes, 'a'), MimeType: "image/jpeg", Filename: "1.jpg"},
+		{Data: pictureBytes(partBytes, 'b'), MimeType: "image/jpeg", Filename: "2.jpg"},
+		{Data: pictureBytes(partBytes, 'c'), MimeType: "image/jpeg", Filename: "3.jpg"},
+		{Data: pictureBytes(partBytes, 'd'), MimeType: "image/jpeg", Filename: "4.jpg"},
+	}
+	ms.appendMessage(t, "INBOX", messageWithPictures("kasse@example.de", "Viele Belege", pictures, nil))
+
+	// Room for two parts and 500 bytes: the third does not fit and stops the
+	// decode. The per-part cap sits above the part size and below the total —
+	// below, because a total under the per-part cap is raised to it, so the sum
+	// stays the bound under test rather than a value New has already moved.
+	src := ms.source(t, Options{MaxAttachmentBytes: 1200, MaxMessageBytes: 2*partBytes + 500})
+	messages, err := src.Fetch(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("messages %+v", messages)
+	}
+	got := messages[0].Attachments
+	if len(got) != 3 {
+		t.Fatalf("attachments %d, want the two that fit plus the reason", len(got))
+	}
+	for i, want := range []byte{'a', 'b'} {
+		if got[i].MimeType != "image/jpeg" || got[i].Filename != []string{"1.jpg", "2.jpg"}[i] {
+			t.Fatalf("attachment %d is %+v", i, got[i])
+		}
+		if len(got[i].Data) != partBytes || got[i].Data[0] != want || got[i].Err != nil || !got[i].Usable() {
+			t.Fatalf("attachment %d is %d bytes, first %q: %+v", i, len(got[i].Data), got[i].Data[:1], got[i])
+		}
+	}
+	// The part that did not fit is not handed over cut in half: a picture
+	// truncated by the cap would fail normalization and cost the caller a
+	// stored-then-skipped part without ever naming the bound that stopped it.
+	stopped := got[2]
+	if stopped.Usable() || len(stopped.Data) != 0 {
+		t.Fatalf("the part that did not fit was decoded: %+v", stopped)
+	}
+	assertCapReason(t, stopped.Err, "Die Nachricht hat mehr Bilddaten, als diese Anwendung liest")
+}
+
+// The same bound for a message of many small parts, which the byte cap does not
+// catch at all: they fit in the sum and cost a list entry each. The list stops
+// at the part cap and the reason says which of the two bounds it was.
+func TestIMAPPartCapStopsDecoding(t *testing.T) {
+	ctx := context.Background()
+	ms := newMemServer(t, "belege", "app-password", nil)
+	ms.createMailbox(t, "INBOX")
+	const parts = 200
+	pictures := make([]testPicture, 0, parts)
+	for i := 0; i < parts; i++ {
+		pictures = append(pictures, testPicture{
+			Data:     pictureBytes(16, byte('a'+i%26)),
+			MimeType: "image/jpeg",
+			Filename: fmt.Sprintf("%d.jpg", i),
+		})
+	}
+	ms.appendMessage(t, "INBOX", messageWithPictures("kasse@example.de", "Zweihundert Belege", pictures, nil))
+
+	src := ms.source(t, Options{MaxParts: 3})
+	messages, err := src.Fetch(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("messages %+v", messages)
+	}
+	got := messages[0].Attachments
+	if len(got) != 4 {
+		t.Fatalf("attachments %d, want three decoded parts plus the reason", len(got))
+	}
+	for i, att := range got[:3] {
+		if len(att.Data) != 16 || att.Err != nil || !att.Usable() {
+			t.Fatalf("attachment %d: %+v", i, att)
+		}
+	}
+	stopped := got[3]
+	if stopped.Usable() || len(stopped.Data) != 0 {
+		t.Fatalf("the part behind the cap was decoded: %+v", stopped)
+	}
+	assertCapReason(t, stopped.Err, "Die Nachricht hat mehr Anhänge, als diese Anwendung liest")
+}
+
+// A message that stays inside both bounds is untouched, and a part over the
+// per-part cap still reads cap+1 bytes with no reference to the whole-message
+// bounds — the two are separate limits, and one of them firing says nothing
+// about the other.
+func TestIMAPMessageWithinBothCapsIsUntouched(t *testing.T) {
+	ctx := context.Background()
+	ms := newMemServer(t, "belege", "app-password", nil)
+	ms.createMailbox(t, "INBOX")
+	pictures := []testPicture{
+		{Data: pngBytes(), MimeType: "image/png", Filename: "1.png"},
+		{Data: pngBytes(), MimeType: "image/png", Filename: "2.png"},
+		{Data: []byte("%PDF-1.7"), MimeType: "application/pdf", Filename: "3.pdf"},
+	}
+	ms.appendMessage(t, "INBOX", messageWithPictures("kasse@example.de", "Zwei Belege", pictures, nil))
+
+	src := ms.source(t, Options{MaxAttachmentBytes: 1 << 20, MaxMessageBytes: 1 << 20, MaxParts: 8})
+	messages, err := src.Fetch(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("messages %+v", messages)
+	}
+	got := messages[0].Attachments
+	if len(got) != 3 {
+		t.Fatalf("attachments %d, want every part of the message", len(got))
+	}
+	for _, att := range got[:2] {
+		if !bytes.Equal(att.Data, pngBytes()) || att.Err != nil {
+			t.Fatalf("attachment %+v", att)
+		}
+	}
+	if got[2].MimeType != "application/pdf" || got[2].Usable() {
+		t.Fatalf("the PDF was read: %+v", got[2])
+	}
+}
+
+// The sum is enforced while the part is read, not against the finished list —
+// a cap the caller checked afterwards has already paid for the bytes it refuses.
+// The counting reader below is what tells the two apart: it records how much of
+// the body was actually pulled, so a read that stopped at the room proves the
+// bound was in the reader and not in the caller.
+func TestReadAttachmentStopsAtTheRoomLeft(t *testing.T) {
+	raw := messageWithImage("kasse@example.de", "Bon", pngBytes(), "image/png", "b.png", nil)
+	header := attachmentHeader(t, raw)
+
+	t.Run("stops one byte past the room", func(t *testing.T) {
+		body := &countingReader{Reader: bytes.NewReader(pngBytes())}
+		att, read := readAttachment(header, body, 1<<20, 10)
+		if len(body.seen) != 11 {
+			t.Fatalf("pulled %d bytes out of a body with 10 bytes of room", len(body.seen))
+		}
+		if read != 11 {
+			t.Fatalf("read %d, want the room plus the one byte that proves the part was over it", read)
+		}
+		// The caller is the one that decides what to do with a part that did
+		// not fit; readBody drops it and stops rather than storing half a JPEG.
+		if len(att.Data) != 11 {
+			t.Fatalf("decoded %d bytes", len(att.Data))
+		}
+	})
+
+	t.Run("an exhausted room reads one byte and stops", func(t *testing.T) {
+		body := &countingReader{Reader: bytes.NewReader(pngBytes())}
+		_, read := readAttachment(header, body, 1<<20, 0)
+		if len(body.seen) != 1 || read != 1 {
+			t.Fatalf("pulled %d bytes and reported %d, want one of each", len(body.seen), read)
+		}
+	})
+
+	t.Run("the per-part cap still applies on its own", func(t *testing.T) {
+		body := &countingReader{Reader: bytes.NewReader(pngBytes())}
+		_, read := readAttachment(header, body, 10, 1<<20)
+		if len(body.seen) != 11 || read != 11 {
+			t.Fatalf("pulled %d bytes and reported %d, want cap+1", len(body.seen), read)
+		}
+	})
+}
+
+// countingReader remembers how much of a body was actually pulled out of it.
+type countingReader struct {
+	*bytes.Reader
+	seen []byte
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.seen = append(r.seen, p[:n]...)
+	return n, err
+}
+
+// assertCapReason is what a caller can learn from the part that stopped the
+// decode: a fixed German sentence, no sender text, no server response, and a
+// retry class that says the same bytes refuse the same way next time.
+func assertCapReason(t *testing.T, err error, want string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("the bound that stopped the decode was not reported")
+	}
+	if err.Error() != want {
+		t.Errorf("reason %q, want %q", err.Error(), want)
+	}
+	var call *Error
+	if !asError(err, &call) {
+		t.Fatalf("reason %v carries no retry class", err)
+	}
+	if call.RetryKind() != KindPermanent {
+		t.Errorf("retry kind %q, want %q: these bytes refuse the same way on every retry", call.RetryKind(), KindPermanent)
+	}
+	assertNoLeak(t, "the reason", err.Error())
+	if !strings.Contains(err.Error(), "Anwendung") {
+		t.Errorf("reason %q does not say which bound stopped the decode", err.Error())
+	}
+}
+
 // classify is the contract the job queue reads, so every IMAP status response
 // maps onto a retry class on purpose.
 func TestClassify(t *testing.T) {
@@ -1077,7 +1320,7 @@ func TestReadAttachmentRedactsTheTransferFailure(t *testing.T) {
 	raw := messageWithImage("kasse@example.de", "Bon", pngBytes(), "image/png", "b.png", nil)
 	header := attachmentHeader(t, raw)
 
-	att := readAttachment(header, failedTransfer{}, 1<<20)
+	att, _ := readAttachment(header, failedTransfer{}, 1<<20, 1<<20)
 	if att.Err == nil {
 		t.Fatal("a transfer that failed has to be reported")
 	}
@@ -1149,6 +1392,21 @@ func TestNewAppliesDefaults(t *testing.T) {
 	}
 	if src.options.Inbox != "INBOX" || src.options.MaxAttachmentBytes != 15<<20 || src.options.Timeout <= 0 {
 		t.Fatalf("defaults %+v", src.options)
+	}
+	if src.options.MaxMessageBytes != defaultMaxMessageBytes || src.options.MaxParts != defaultMaxParts {
+		t.Fatalf("decode bounds %+v", src.options)
+	}
+	// The total is a bound on the sum and the per-part cap is a bound on one
+	// part, so the total is never under it: an operator who allows a 100 MB
+	// picture has to be able to receive one inside a mail. Raising the
+	// per-part cap raises the total with it rather than dropping the message
+	// that the picture arrives in.
+	big := New(Options{Host: "imap.example.de", Username: "belege", MaxAttachmentBytes: 100 << 20})
+	if big.options.MaxMessageBytes < big.options.MaxAttachmentBytes {
+		t.Fatalf("total %d under the per-part cap %d", big.options.MaxMessageBytes, big.options.MaxAttachmentBytes)
+	}
+	if big.options.MaxMessageBytes != 100<<20 {
+		t.Fatalf("total %d, want the per-part cap itself", big.options.MaxMessageBytes)
 	}
 	if src.DoneFolder() != "" {
 		t.Fatalf("done folder %q", src.DoneFolder())
