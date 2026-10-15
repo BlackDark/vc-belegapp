@@ -212,7 +212,7 @@ func Vorschlag(jahr int, vor *Jahresregel) Jahresregel {
 		out.SBWAbendCent = latest.Abend
 		out.SBWStatus = StatusUnbekannt
 	}
-	capZuschuss := out.SBWMittagCent + out.HoechstzuschussAufschlagCent
+	capZuschuss := hoechstzuschussVorschlag(out)
 	if vor != nil {
 		out.ZuschussCent = min(vor.ZuschussCent, capZuschuss)
 	} else {
@@ -242,6 +242,31 @@ func SBWCent(r Jahresregel, mahlzeit string) int {
 	default:
 		return r.SBWMittagCent
 	}
+}
+
+// HoechstzuschussCent returns the maximum subsidy of a meal type: that meal's
+// own Sachbezugswert plus the configured addition, the sanctioned employer
+// allowance that is free of wage tax and of social insurance (310 by default).
+// The addition is the one employer field, the base follows the meal type: a
+// breakfast receipt is measured against the breakfast value, never against the
+// lunch one. 2026: 547 for breakfast, 767 for lunch and dinner.
+func HoechstzuschussCent(r Jahresregel, mahlzeit string) int {
+	return SBWCent(r, mahlzeit) + r.HoechstzuschussAufschlagCent
+}
+
+// hoechstzuschussVorschlag caps the suggested daily subsidy. zuschuss_cent is a
+// single number shared by every subsidised meal type, so the only suggestion
+// that is safe for all of them is the smallest of their Höchstzuschüsse:
+// anything above it warns on every receipt of that meal type (W_HOECHSTZUSCHUSS,
+// section 6.2) and turns the whole reimbursement into regular wages. With the
+// default rule (lunch only) this is the lunch cap, unchanged; subsidising
+// breakfast next to lunch pulls the suggestion down to the breakfast cap.
+func hoechstzuschussVorschlag(r Jahresregel) int {
+	hoechst := HoechstzuschussCent(r, r.StandardMahlzeit)
+	for _, mahlzeit := range r.Mahlzeiten {
+		hoechst = min(hoechst, HoechstzuschussCent(r, mahlzeit))
+	}
+	return hoechst
 }
 
 // EncodeMahlzeiten stores the meal list as JSON.

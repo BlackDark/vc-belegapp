@@ -27,7 +27,7 @@ Eine selbst gehostete, mobil optimierte Web-App (PWA) für **einen Nutzer** (Edu
 - Automatischer Versand an den Arbeitgeber (Mail, HR-API). Der Export wird heruntergeladen.
 - Arbeitszeit-, Urlaubs- oder Krankheitserfassung (Belegtag zählt; nur Warnungen).
 - Reisekosten/Verpflegungsmehraufwand.
-- Mehrere Belege oder mehrere bezuschusste Mahlzeiten pro Tag (genau ein Beleg pro Belegtag; ein Beleg darf bis zu 3 Belegbilder haben, siehe 5.2).
+- Mehrere Belege oder mehrere bezuschusste Mahlzeiten pro Tag (genau ein Beleg mit genau einer `mahlzeit` je Belegtag; entschieden 2026-10-15, siehe 19.1 Nr. 1. Ein Beleg darf bis zu 3 Belegbilder haben, siehe 5.2).
 - PDF-Belege als Eingabe (nur Bilder, siehe Offene Punkte). **E-Mail als Transport ist seit dem IMAP-Abruf umgesetzt (8.2.1):** eine weitergeleitete Nachricht mit Bildanhängen landet als unzugeordnetes Belegbild in **Offene Bilder**. PDF-Anhänge bleiben außen vor — es gibt keinen Rasterizer.
 - Offline-Erfassung mit Sync-Queue (PWA nur installierbar + App-Shell-Cache).
 - Native Apps, englische UI.
@@ -172,7 +172,7 @@ Profil (Name, Personalnummer, Arbeitgeber), Standardwerte, Jahresregeln (Liste +
 |---|---|---|
 | jahr | INTEGER PK | CHECK 2020–2100 |
 | zuschuss_cent | INTEGER NOT NULL | CHECK > 0 |
-| mahlzeiten | TEXT NOT NULL | JSON-Array ⊆ {fruehstueck, mittag, abend}, nicht leer; Default `["mittag"]` |
+| mahlzeiten | TEXT NOT NULL | JSON-Array ⊆ {fruehstueck, mittag, abend}, nicht leer; Default `["mittag"]`; Menge der bezuschussten Mahlzeitarten, **keine** Anzahl je Tag (19.1 Nr. 1) |
 | standard_mahlzeit | TEXT NOT NULL | 'mittag'; muss in `mahlzeiten` enthalten sein |
 | sbw_fruehstueck_cent | INTEGER NOT NULL | CHECK > 0 |
 | sbw_mittag_cent | INTEGER NOT NULL | CHECK > 0 |
@@ -336,7 +336,7 @@ Eine Frist beendet keine blockierende Dateisystem-I/O. Ein `watch`-Job auf einem
 | 2026 | 237 | 457 | amtlich (SvEV 19.12.2025, BMF 29.12.2025) |
 | 2027 | 243 | 470 | **Entwurf** (03.09.2026) – UI-Warnung bis Release mit amtlichem Wert |
 
-Neue Jahresregel: Vorschlag = Vorjahresregel (alle Arbeitgeber-Felder) + SBW aus dieser Tabelle; `zuschuss_cent`-Vorschlag = min(Vorjahr, SBW_mittag + 310).
+Neue Jahresregel: Vorschlag = Vorjahresregel (alle Arbeitgeber-Felder) + SBW aus dieser Tabelle; `zuschuss_cent`-Vorschlag = min(Vorjahr, **kleinster Höchstzuschuss der bezuschussten Mahlzeitarten**) = min(Vorjahr, min über m ∈ `mahlzeiten` von (SBW_m + `hoechstzuschuss_aufschlag_cent`)). Der Aufschlag ist der eine Arbeitgeber-Wert (Vorgabe 310, § 40 Abs. 2 Satz 1 Nr. 1 EStG), die Basis folgt der Mahlzeitart: 2026 Mittag/Abend 457 + 310 = **767**, Frühstück 237 + 310 = **547**. `zuschuss_cent` ist **eine** Zahl für alle bezuschussten Mahlzeitarten, deshalb begrenzt die kleinste dieser Grenzen den Vorschlag — mit der Vorgabe (nur `mittag`) unverändert 767, sobald Frühstück mitbezuschusst wird 547. Am **einzelnen Beleg** bleibt es beim Höchstzuschuss seiner Mahlzeitart (6.1, 6.2): ein höher gesetzter `zuschuss_cent` erzeugt je Beleg `W_HOECHSTZUSCHUSS` und im Monat den Prüfpunkt `P_HOECHSTZUSCHUSS` als ⚠ (7.2, 7.3).
 
 ### 5.4 Kirchensteuer-Vorschläge (vereinfachtes Verfahren, 2026, im Binary)
 | Land | bp | Land | bp | Land | bp | Land | bp |
@@ -1120,13 +1120,13 @@ Coverage-Ziel: `internal/calc` 100 %, Backend gesamt ≥ 70 %.
 ## 19. Offene Punkte
 
 ### 19.1 Beim Arbeitgeber zu klären (Konfiguration der Jahresregel)
-1. Tageszuschuss, bezuschusste Mahlzeitarten, arbeitsvertragliche Grundlage.
-2. Zusätzlich oder Gehaltsumwandlung; pauschaliert der Arbeitgeber (25 %)?
+1. Tageszuschuss, bezuschusste Mahlzeitarten, arbeitsvertragliche Grundlage. **Entschieden 2026-10-15: höchstens eine bezuschusste Mahlzeit je Tag.** Das ist bereits durchgesetzt und muss nichts neu bauen: der partielle UNIQUE-Index `belege_datum_aktiv` (5.2, `internal/db/migrations/00002_domain.sql:82`) lässt je `datum` genau einen nicht gelöschten Beleg zu, und jeder Beleg trägt genau **eine** `mahlzeit`. Die Liste `mahlzeiten` der Jahresregel ist damit die Menge der **bezuschussten Mahlzeitarten**, nicht eine Anzahl je Tag. Vorgabe ist `mittag`, Frühstück und Abend sind je Jahresregel zuschaltbar; ein Belegtag bekommt also entweder ein Frühstück **oder** ein Mittagessen, nie beides (1.2, 5.2, 19.3 Nr. 1). Der Tageszuschuss ist mit Nr. 2 beantwortet. Nicht entschieden ist die arbeitsvertragliche Grundlage des Anspruchs; sie ist nur Text der Arbeitnehmererklärung (12.4).
+2. Zusätzlich oder Gehaltsumwandlung; pauschaliert der Arbeitgeber (25 %)? **Entschieden 2026-10-15, soweit es den Betrag betrifft: der Arbeitgeber erstattet den Höchstzuschuss, also `SBW + 3,10 €`** (2026: Mittag/Abend 4,57 + 3,10 = **7,67 €**, Frühstück 2,37 + 3,10 = **5,47 €**). Die 3,10 € sind der steuer- und sozialabgabenfreie Arbeitgeberzuschuss, der amtliche Sachbezugswert wird mit 25 % pauschal versteuert (§ 40 Abs. 2 Satz 1 Nr. 1 EStG). Bestätigt gegen die 16. Verordnung zur Änderung der SvEV (Bundesrat 19.12.2025): Frühstück 2,37 €, Mittag/Abend 4,57 €, max. Zuschuss 7,67 € = 4,57 € (25 % pauschal versteuert) + 3,10 € (steuer- und SV-frei) — `https://www.lofino.de/essenszuschuss/essenszuschuss-2026-neuer-sachbezugswert/`. **Das Verhalten der App bleibt unverändert**: die Werte in `internal/rules` stehen auf diesen Beträgen, `zuschuss_cent` ist je Jahresregel konfigurierbar (5.2, 5.3), und `W_HOECHSTZUSCHUSS` warnt weiter, wenn ein höherer Wert eingestellt wird (7.2). Offen bleibt „Zusätzlich oder Gehaltsumwandlung“: `gehaltsumwandlung` und `pauschalierung` bleiben je Jahresregel schaltbar, mit der bestehenden Regelwarnung (6.3, 7.2).
 3. Kirchensteuer: vereinfachtes Verfahren (Satz nach Bundesland) oder Nachweisverfahren (0 % bzw. 8/9 %); Bundesland der Betriebsstätte. **Weiter offen (Stand 2026-10-14):** nicht entschieden; das bisherige Verhalten bleibt unverändert – vereinfachtes Verfahren mit Satz je Bundesland, `bundesland` ist Pflichtfeld der Jahresregel (5.3, 5.4). Eine Antwort hier ändert die Berechnung nicht ohne neue Entscheidung in 19.3.
 4. Eigenanteil-Variante `standard` (Eigenanteil angerechnet) oder `vorsichtig`. **Entschieden 2026-10-14: `standard`.** Der Eigenanteil ist vom Sachbezugswert abgezogen; der Arbeitgeberanteil (Pauschalsteuer, Soli, Kirchensteuer) kommt auf die Erstattung obendrauf (6.2, 6.3). Das entspricht dem Vorschlag der Jahresregel und 19.3 Nr. 8; die Variante `vorsichtig` bleibt im Code und im Editor wählbar.
 5. Monatslimit 15 oder alle Arbeitstage (dann Abwesenheitserfassung beim Arbeitgeber). **Entschieden 2026-10-14: 15 pro Monat**, unabhängig von den tatsächlich geleisteten Arbeitstagen – gesetzlicher Mindestumfang, keine Skalierung. Damit entfällt der Abwesenheitserfassung-Teil der Frage; die App führt keine Abwesenheitsdaten. `monatslimit` bleibt je Jahresregel konfigurierbar, der Vorschlag ist 15 (6.3, 19.3 Nr. 7).
-6. Reicht das PDF mit Fotos oder werden Papieroriginale verlangt; Frist; Unterschrift nötig?
-7. Homeoffice-Tage akzeptiert? Kantine (fremd betrieben) akzeptiert?
+6. Reicht das PDF mit Fotos oder werden Papieroriginale verlangt; Frist; Unterschrift nötig? **Entschieden 2026-10-15: die Fotos genügen.** Kein Papieroriginal, keine Einreichungsfrist, keine Unterschrift des Arbeitnehmers. Nachweis ist die digital bestätigte Arbeitnehmererklärung beim finalen Export (12.2 Nr. 8, 12.4); die Ort-/Datums-/Unterschriftszeile bleibt als Formularfeld im PDF stehen, die App sammelt keine Originale und führt keine Fristen (11.2 speichert genau ein normalisiertes Bild je Belegbild, 19.3 Nr. 10).
+7. Homeoffice-Tage akzeptiert? Kantine (fremd betrieben) akzeptiert? **Entschieden 2026-10-15: beides ja.** `homeoffice` ist bereits ein Arbeitsort der Jahresregel und des Belegs (5.2), `kantine` bereits ein Bezugsort; die Kantine wird als **fremd betrieben** geführt, weshalb `W_BEZUGSORT_KANTINE` nur ein Hinweis bleibt und nichts blockiert (7.2). Teilbelege bleiben außerhalb von v1 (1.2, 19.2).
 8. Übergabeweg/Format (PDF per Mail, HR-Portal, CSV-Bedarf).
 
 ### 19.2 Fachlich/technisch
@@ -1142,7 +1142,7 @@ Coverage-Ziel: `internal/calc` 100 %, Backend gesamt ≥ 70 %.
 - Domain, Reverse Proxy, IdP-Details (Issuer, Client), S3-Anbieter für Eduards Umgebung.
 
 ### 19.3 Eigene Annahmen dieser Spezifikation (von Eduard zu bestätigen)
-1. Ein Beleg pro Belegtag, aber bis zu **3 Belegbilder** (lange Kassenzettel).
+1. Ein Beleg pro Belegtag, aber bis zu **3 Belegbilder** (lange Kassenzettel). **Bestätigt 2026-10-15** (19.1 Nr. 1): höchstens **eine** bezuschusste Mahlzeit je Belegtag. Die drei Bilder sind Seiten **eines** Belegs, nicht drei Mahlzeiten — der Beleg trägt genau eine `mahlzeit`, und der partielle UNIQUE-Index auf `datum` lässt nur einen nicht gelöschten Beleg je Tag zu (5.2).
 2. Feiertagskalender = gesetzliche Feiertage des in der Jahresregel gewählten **Bundeslands** (gleiches Feld wie Kirchensteuer-Vorschlag) + „Eigene Feiertage“; regionale Feiertage nur manuell.
 3. Gesperrter Monat: Änderungen bleiben möglich, erfordern aber einen **Änderungsgrund**, setzen den Monatsstatus auf `geaendert` und verlangen einen neuen Export (Version n+1 mit Änderungsliste). Kein „Entsperren“.
 4. **Vorschau** (Wasserzeichen ENTWURF) sperrt nicht; nur der finale Export sperrt.
@@ -1153,7 +1153,7 @@ Coverage-Ziel: `internal/calc` 100 %, Backend gesamt ≥ 70 %.
 9. Passwort nur per Env/Secret (kein Setup-Assistent, kein Passwortwechsel in der UI); OIDC verlangt Allowlist (`sub` oder verifizierte E-Mail).
 10. Gespeichert wird das normalisierte Bild (≤ 2400 px, ohne EXIF/GPS), nicht das Original.
 11. Datenimport ersetzt immer den gesamten Bestand (kein Zusammenführen) und legt vorher automatisch eine Sicherung an.
-12. Bezugsorte: Supermarkt, Restaurant, Kantine, Bäckerei, Lieferdienst, Sonstiges; Arbeitsort Betrieb/Homeoffice als zusätzliches Feld.
+12. Bezugsorte: Supermarkt, Restaurant, Kantine, Bäckerei, Lieferdienst, Sonstiges; Arbeitsort Betrieb/Homeoffice als zusätzliches Feld. **Bestätigt 2026-10-15** (19.1 Nr. 7): der Arbeitgeber akzeptiert Homeoffice-Tage und eine fremd betriebene Kantine. Beide Felder bleiben, `bezugsort = kantine` erzeugt weiter nur den Hinweis `W_BEZUGSORT_KANTINE`.
 
 ### 19.4 Intentional deviations
 

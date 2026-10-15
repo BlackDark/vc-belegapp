@@ -127,7 +127,7 @@ func (s *Service) assemble(in BelegInput, regel rules.Jahresregel, rank int, sta
 			Jahr:                regel.Jahr,
 			ZuschussCent:        regel.ZuschussCent,
 			SBWCent:             rules.SBWCent(regel, in.Mahlzeit),
-			HoechstzuschussCent: rules.SBWCent(regel, in.Mahlzeit) + regel.HoechstzuschussAufschlagCent,
+			HoechstzuschussCent: rules.HoechstzuschussCent(regel, in.Mahlzeit),
 			AnerkanntCent:       tag.AnerkanntCent,
 			ErstattungCent:      tag.ErstattungCent,
 			EigenanteilCent:     tag.EigenanteilCent,

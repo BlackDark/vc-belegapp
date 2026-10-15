@@ -227,7 +227,7 @@ func (s *Service) pruefpunkte(ctx context.Context, q *db.Queries, belege []Beleg
 		if beleg.Berechnung.ErstattungCent > beleg.Berechnung.AnerkanntCent {
 			erstattung = "fehler"
 		}
-		if regel != nil && regel.ZuschussCent > rules.SBWCent(*regel, beleg.Mahlzeit)+regel.HoechstzuschussAufschlagCent {
+		if regel != nil && regel.ZuschussCent > rules.HoechstzuschussCent(*regel, beleg.Mahlzeit) {
 			hoechst = "warnung"
 		}
 		for _, w := range beleg.Warnungen {

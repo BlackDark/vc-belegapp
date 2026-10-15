@@ -24,7 +24,7 @@
 - **Belegbild**: Eine gespeicherte, normalisierte Bilddatei (Seite) eines Belegs; inhaltsadressiert per SHA-256.
 - **Erkennungsergebnis**: Strukturierte Antwort der Belegerkennung (Datum, Händler, Belegbetrag, Positionen mit Kategorie, Konfidenz).
 - **Korrekturvorschlag**: Aus dem Erkennungsergebnis berechneter Vorschlag für den Korrigierten Betrag (Belegbetrag ohne Alkohol, Tabak, Pfand, Non-Food); wird nur nach Bestätigung übernommen.
-- **Höchstzuschuss (H)**: SBW der Mahlzeitart + 3,10 € (2026 Mittag: 7,67 €). Liegt der Zuschuss darüber, ist die gesamte Erstattung regulär steuerpflichtig.
+- **Höchstzuschuss (H)**: SBW **der Mahlzeitart** + 3,10 € (2026 Mittag/Abend 7,67 €, Frühstück 5,47 €; entschieden 2026-10-15, SPEC 19.1 Nr. 2). Liegt der Zuschuss darüber, ist die gesamte Erstattung regulär steuerpflichtig.
 - **Regulär steuerpflichtiger Anteil (R)**: Teil der Erstattung, der als Barlohn individuell lohnsteuer- und SV-pflichtig ist (z. B. Zuschuss > Höchstzuschuss).
 - **Pauschalsteuer**: 25 % Lohnsteuer auf ΣG nach § 40 Abs. 2 Satz 1 Nr. 1 EStG plus Soli und pauschale Kirchensteuer; trägt der Arbeitgeber.
 - **Eigenanteil-Variante**: Jahresregel-Schalter `standard` (Eigenanteil mindert G) oder `vorsichtig` (G = min(E, SBW)).

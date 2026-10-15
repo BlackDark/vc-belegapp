@@ -48,6 +48,58 @@ func TestSuggestionFromPreviousYear(t *testing.T) {
 	}
 }
 
+// The Höchstzuschuss is per meal type: that meal's Sachbezugswert plus the one
+// configured addition. Lunch and dinner keep 4,57 + 3,10 = 7,67, breakfast drops
+// to 2,37 + 3,10 = 5,47. The suggestion for zuschuss_cent is a single number for
+// all subsidised meal types, so it is capped at the smallest of those caps.
+func TestCapFollowsTheMealType(t *testing.T) {
+	r := Vorschlag(2026, nil)
+	for _, cmp := range []struct {
+		mahlzeit string
+		want     int
+	}{
+		{"mittag", 767},
+		{"abend", 767},
+		{"fruehstueck", 547},
+	} {
+		if got := HoechstzuschussCent(r, cmp.mahlzeit); got != cmp.want {
+			t.Errorf("HoechstzuschussCent(%s) = %d, want %d", cmp.mahlzeit, got, cmp.want)
+		}
+	}
+	if r.ZuschussCent != 767 {
+		t.Errorf("suggested subsidy %d, want 767", r.ZuschussCent)
+	}
+
+	for _, c := range []struct {
+		name       string
+		mahlzeiten []string
+		vorher     int
+		want       int
+	}{
+		{"nur Mittag", []string{"mittag"}, 900, 767},
+		{"Mittag und Abend", []string{"mittag", "abend"}, 900, 767},
+		{"nur Frühstück", []string{"fruehstueck"}, 900, 547},
+		{"Frühstück und Mittag", []string{"fruehstueck", "mittag"}, 900, 547},
+		{"alle drei", []string{"fruehstueck", "mittag", "abend"}, 900, 547},
+		{"Frühstück und Mittag, kleiner Vorjahreswert", []string{"fruehstueck", "mittag"}, 500, 500},
+	} {
+		prev := Vorschlag(2025, nil)
+		prev.Mahlzeiten = c.mahlzeiten
+		prev.StandardMahlzeit = c.mahlzeiten[0]
+		prev.ZuschussCent = c.vorher
+		next := Vorschlag(2026, &prev)
+		if next.ZuschussCent != c.want {
+			t.Errorf("%s: suggested subsidy %d, want %d", c.name, next.ZuschussCent, c.want)
+		}
+		for _, mahlzeit := range c.mahlzeiten {
+			if next.ZuschussCent > HoechstzuschussCent(next, mahlzeit) {
+				t.Errorf("%s: subsidy %d exceeds the cap of %s (%d)",
+					c.name, next.ZuschussCent, mahlzeit, HoechstzuschussCent(next, mahlzeit))
+			}
+		}
+	}
+}
+
 func TestSuggestionUnknownYear(t *testing.T) {
 	prev := Vorschlag(2026, nil)
 	next := Vorschlag(2030, &prev)
