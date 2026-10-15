@@ -1122,9 +1122,9 @@ Coverage-Ziel: `internal/calc` 100 %, Backend gesamt ≥ 70 %.
 ### 19.1 Beim Arbeitgeber zu klären (Konfiguration der Jahresregel)
 1. Tageszuschuss, bezuschusste Mahlzeitarten, arbeitsvertragliche Grundlage.
 2. Zusätzlich oder Gehaltsumwandlung; pauschaliert der Arbeitgeber (25 %)?
-3. Kirchensteuer: vereinfachtes Verfahren (Satz nach Bundesland) oder Nachweisverfahren (0 % bzw. 8/9 %); Bundesland der Betriebsstätte.
-4. Eigenanteil-Variante `standard` (Eigenanteil angerechnet) oder `vorsichtig`.
-5. Monatslimit 15 oder alle Arbeitstage (dann Abwesenheitserfassung beim Arbeitgeber).
+3. Kirchensteuer: vereinfachtes Verfahren (Satz nach Bundesland) oder Nachweisverfahren (0 % bzw. 8/9 %); Bundesland der Betriebsstätte. **Weiter offen (Stand 2026-10-14):** nicht entschieden; das bisherige Verhalten bleibt unverändert – vereinfachtes Verfahren mit Satz je Bundesland, `bundesland` ist Pflichtfeld der Jahresregel (5.3, 5.4). Eine Antwort hier ändert die Berechnung nicht ohne neue Entscheidung in 19.3.
+4. Eigenanteil-Variante `standard` (Eigenanteil angerechnet) oder `vorsichtig`. **Entschieden 2026-10-14: `standard`.** Der Eigenanteil ist vom Sachbezugswert abgezogen; der Arbeitgeberanteil (Pauschalsteuer, Soli, Kirchensteuer) kommt auf die Erstattung obendrauf (6.2, 6.3). Das entspricht dem Vorschlag der Jahresregel und 19.3 Nr. 8; die Variante `vorsichtig` bleibt im Code und im Editor wählbar.
+5. Monatslimit 15 oder alle Arbeitstage (dann Abwesenheitserfassung beim Arbeitgeber). **Entschieden 2026-10-14: 15 pro Monat**, unabhängig von den tatsächlich geleisteten Arbeitstagen – gesetzlicher Mindestumfang, keine Skalierung. Damit entfällt der Abwesenheitserfassung-Teil der Frage; die App führt keine Abwesenheitsdaten. `monatslimit` bleibt je Jahresregel konfigurierbar, der Vorschlag ist 15 (6.3, 19.3 Nr. 7).
 6. Reicht das PDF mit Fotos oder werden Papieroriginale verlangt; Frist; Unterschrift nötig?
 7. Homeoffice-Tage akzeptiert? Kantine (fremd betrieben) akzeptiert?
 8. Übergabeweg/Format (PDF per Mail, HR-Portal, CSV-Bedarf).
@@ -1148,8 +1148,8 @@ Coverage-Ziel: `internal/calc` 100 %, Backend gesamt ≥ 70 %.
 4. **Vorschau** (Wasserzeichen ENTWURF) sperrt nicht; nur der finale Export sperrt.
 5. Arbeitnehmererklärung wird beim finalen Export digital bestätigt; das PDF enthält zusätzlich eine Unterschriftszeile.
 6. Gehaltsumwandlung + Pauschalierung gleichzeitig: nur Warnung, Berechnung folgt der Konfiguration.
-7. Monatslimit standardmäßig **warnen** (nicht blockieren).
-8. Standard-Eigenanteil-Variante `standard` (Eigenanteil wird angerechnet).
+7. Monatslimit standardmäßig **warnen** (nicht blockieren). **Wert bestätigt 2026-10-14** (19.1 Nr. 5): 15 bezuschusste Belegtage je Kalendermonat, unabhängig von den geleisteten Arbeitstagen. Offen bleibt der Modus: `warnen` ist weiterhin nur eine Annahme dieser Spezifikation.
+8. Standard-Eigenanteil-Variante `standard` (Eigenanteil wird angerechnet). **Bestätigt 2026-10-14** (19.1 Nr. 4): der Arbeitgeber fährt `standard`. Die Annahme ist damit keine Annahme mehr und fällt als offener Punkt weg.
 9. Passwort nur per Env/Secret (kein Setup-Assistent, kein Passwortwechsel in der UI); OIDC verlangt Allowlist (`sub` oder verifizierte E-Mail).
 10. Gespeichert wird das normalisierte Bild (≤ 2400 px, ohne EXIF/GPS), nicht das Original.
 11. Datenimport ersetzt immer den gesamten Bestand (kein Zusammenführen) und legt vorher automatisch eine Sicherung an.
