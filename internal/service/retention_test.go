@@ -39,7 +39,7 @@ func TestMonthViewDefersIntegrity(t *testing.T) {
 	beleg := addBeleg(t, svc, colorPNG(t, 10, 20, 30), sampleInput())
 
 	var key string
-	if err := svc.DB.Read.QueryRowContext(ctx, `SELECT blob_key FROM belegbilder WHERE beleg_id = ?`, beleg.ID).Scan(&key); err != nil {
+	if err := svc.DB.ReadDB().QueryRowContext(ctx, `SELECT blob_key FROM belegbilder WHERE beleg_id = ?`, beleg.ID).Scan(&key); err != nil {
 		t.Fatal(err)
 	}
 	rc, info, err := svc.Store.Get(ctx, key)
@@ -80,10 +80,10 @@ func TestMonthViewTipMissesEarlierBreak(t *testing.T) {
 	svc := exportSvc(t, &fakePDF{})
 	saveRule(t, svc)
 	addBeleg(t, svc, colorPNG(t, 1, 2, 3), sampleInput())
-	if _, err := svc.DB.Write.ExecContext(ctx, `DROP TRIGGER aenderungsprotokoll_no_update`); err != nil {
+	if _, err := svc.DB.WriteDB().ExecContext(ctx, `DROP TRIGGER aenderungsprotokoll_no_update`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.DB.Write.ExecContext(ctx, `UPDATE aenderungsprotokoll SET akteur = 'fremd' WHERE id = 1`); err != nil {
+	if _, err := svc.DB.WriteDB().ExecContext(ctx, `UPDATE aenderungsprotokoll SET akteur = 'fremd' WHERE id = 1`); err != nil {
 		t.Fatal(err)
 	}
 	month, err := svc.GetMonat(ctx, "2026-10")
@@ -104,14 +104,14 @@ func TestSoftDeleteReclaimsUnexportedImages(t *testing.T) {
 	saveRule(t, svc)
 	beleg := addBeleg(t, svc, colorPNG(t, 4, 5, 6), sampleInput())
 	var key, thumb string
-	if err := svc.DB.Read.QueryRowContext(ctx, `SELECT blob_key, thumb_blob_key FROM belegbilder WHERE beleg_id = ?`, beleg.ID).Scan(&key, &thumb); err != nil {
+	if err := svc.DB.ReadDB().QueryRowContext(ctx, `SELECT blob_key, thumb_blob_key FROM belegbilder WHERE beleg_id = ?`, beleg.ID).Scan(&key, &thumb); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.DeleteBeleg(ctx, Actor{Name: "eduard"}, beleg.ID, beleg.Version, nil); err != nil {
 		t.Fatal(err)
 	}
 	var owner *string
-	if err := svc.DB.Read.QueryRowContext(ctx, `SELECT beleg_id FROM belegbilder WHERE blob_key = ?`, key).Scan(&owner); err != nil {
+	if err := svc.DB.ReadDB().QueryRowContext(ctx, `SELECT beleg_id FROM belegbilder WHERE blob_key = ?`, key).Scan(&owner); err != nil {
 		t.Fatal(err)
 	}
 	if owner != nil {
@@ -135,14 +135,14 @@ func TestSoftDeleteReclaimsUnexportedImages(t *testing.T) {
 		t.Fatal("thumbnail still stored")
 	}
 	var gone int
-	if err := svc.DB.Read.QueryRowContext(ctx, `SELECT COUNT(*) FROM belegbilder`).Scan(&gone); err != nil || gone != 0 {
+	if err := svc.DB.ReadDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM belegbilder`).Scan(&gone); err != nil || gone != 0 {
 		t.Fatalf("rows %d %v", gone, err)
 	}
 	var deleted string
-	if err := svc.DB.Read.QueryRowContext(ctx, `SELECT geloescht_am FROM belege WHERE id = ?`, beleg.ID).Scan(&deleted); err != nil || deleted == "" {
+	if err := svc.DB.ReadDB().QueryRowContext(ctx, `SELECT geloescht_am FROM belege WHERE id = ?`, beleg.ID).Scan(&deleted); err != nil || deleted == "" {
 		t.Fatalf("receipt row %q %v", deleted, err)
 	}
-	report, err := audit.Verify(ctx, svc.DB.Read)
+	report, err := audit.Verify(ctx, svc.DB.ReadDB())
 	if err != nil || !report.OK {
 		t.Fatalf("audit %+v %v", report, err)
 	}
@@ -165,7 +165,7 @@ func TestSoftDeleteKeepsExportedImages(t *testing.T) {
 		t.Fatal(err)
 	}
 	var id string
-	if err := svc.DB.Read.QueryRowContext(ctx, `SELECT id FROM belegbilder WHERE beleg_id = ?`, beleg.ID).Scan(&id); err != nil {
+	if err := svc.DB.ReadDB().QueryRowContext(ctx, `SELECT id FROM belegbilder WHERE beleg_id = ?`, beleg.ID).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -256,10 +256,10 @@ func TestExportKeptAfterRetention(t *testing.T) {
 		t.Fatalf("until %s", month.Exporte[0].AufbewahrungBis)
 	}
 	var imageKey, pdfKey string
-	if err := svc.DB.Read.QueryRowContext(ctx, `SELECT blob_key FROM belegbilder WHERE beleg_id = ?`, beleg.ID).Scan(&imageKey); err != nil {
+	if err := svc.DB.ReadDB().QueryRowContext(ctx, `SELECT blob_key FROM belegbilder WHERE beleg_id = ?`, beleg.ID).Scan(&imageKey); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.DB.Read.QueryRowContext(ctx, `SELECT pdf_blob_key FROM monatsexporte WHERE id = ?`, created.ID).Scan(&pdfKey); err != nil {
+	if err := svc.DB.ReadDB().QueryRowContext(ctx, `SELECT pdf_blob_key FROM monatsexporte WHERE id = ?`, created.ID).Scan(&pdfKey); err != nil {
 		t.Fatal(err)
 	}
 	svc.Now = func() time.Time { return time.Date(2033, 1, 2, 0, 0, 0, 0, time.UTC) }
@@ -285,7 +285,7 @@ func TestDeleteImageKeepsSharedBlob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	row, err := db.New(svc.DB.Read).GetBelegbild(ctx, bild.ID)
+	row, err := db.New(svc.DB.ReadDB()).GetBelegbild(ctx, bild.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +293,7 @@ func TestDeleteImageKeepsSharedBlob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.DB.Write.ExecContext(ctx, `UPDATE belegbilder SET blob_key = ? WHERE id = ?`, row.BlobKey, other.ID); err != nil {
+	if _, err := svc.DB.WriteDB().ExecContext(ctx, `UPDATE belegbilder SET blob_key = ? WHERE id = ?`, row.BlobKey, other.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.DeleteBild(ctx, bild.ID); err != nil {

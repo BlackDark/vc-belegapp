@@ -29,7 +29,7 @@ import (
 // keep reporting the index that is no longer there.
 func planDetails(t *testing.T, database *DB, query string, args ...any) []string {
 	t.Helper()
-	rows, err := database.Write.QueryContext(context.Background(),
+	rows, err := database.WriteDB().QueryContext(context.Background(),
 		"EXPLAIN QUERY PLAN "+query, args...)
 	if err != nil {
 		t.Fatalf("explain: %v", err)
@@ -104,7 +104,7 @@ func seedPlanBelegbilder(t *testing.T, database *DB, prefix string, n int, assig
 				'mittag', 'supermarkt', 'betrieb', 'Markt', '', 500, '', 'manuell', 1,
 				'2026-10-01T10:00:00Z', '2026-10-01T10:00:00Z'
 			FROM seq`, n, assigned, prefix)
-		if _, err := database.Write.ExecContext(ctx, belege); err != nil {
+		if _, err := database.WriteDB().ExecContext(ctx, belege); err != nil {
 			t.Fatalf("seed %d belege: %v", n, err)
 		}
 	}
@@ -124,7 +124,7 @@ func seedPlanBelegbilder(t *testing.T, database *DB, prefix string, n int, assig
 		printf('%%064x', n), printf('%%064x', n + 10000000), 'image/jpeg',
 		100000, 800, 1200, 'ausstehend', '2026-10-01T10:00:00Z'
 	FROM seq`, n, belegID, seite, prefix)
-	if _, err := database.Write.ExecContext(ctx, query); err != nil {
+	if _, err := database.WriteDB().ExecContext(ctx, query); err != nil {
 		t.Fatalf("seed %d belegbilder: %v", n, err)
 	}
 }
@@ -143,14 +143,14 @@ func seedPlanJobs(t *testing.T, database *DB, n int, status string) {
 		printf('job-%s-%%06d', n), 'mail', '{}', '%s', 0,
 		'2026-10-01T10:00:00Z', '2026-10-01T10:00:00Z', '2026-10-01T10:00:00Z'
 	FROM seq`, n, status, status)
-	if _, err := database.Write.ExecContext(context.Background(), query); err != nil {
+	if _, err := database.WriteDB().ExecContext(context.Background(), query); err != nil {
 		t.Fatalf("seed %d jobs: %v", n, err)
 	}
 }
 
 func analyze(t *testing.T, database *DB) {
 	t.Helper()
-	if _, err := database.Write.ExecContext(context.Background(), "ANALYZE"); err != nil {
+	if _, err := database.WriteDB().ExecContext(context.Background(), "ANALYZE"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -167,7 +167,7 @@ func TestCountBlobKeyUsesTheBlobKeyIndexes(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	ctx := context.Background()
-	if err := Migrate(ctx, database.Write); err != nil {
+	if err := Migrate(ctx, database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
 	seedPlanBelegbilder(t, database, "", 20000, true)
@@ -185,7 +185,7 @@ func TestCountBlobKeyUsesTheBlobKeyIndexes(t *testing.T) {
 
 	// The other half: drop the index and the plan has to go back to a scan,
 	// or the assertions above prove nothing.
-	if _, err := database.Write.ExecContext(ctx, "DROP INDEX belegbilder_blob_key"); err != nil {
+	if _, err := database.WriteDB().ExecContext(ctx, "DROP INDEX belegbilder_blob_key"); err != nil {
 		t.Fatal(err)
 	}
 	analyze(t, database)
@@ -209,7 +209,7 @@ func TestCountOpenJobsByPayloadUsesThePartialIndex(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	ctx := context.Background()
-	if err := Migrate(ctx, database.Write); err != nil {
+	if err := Migrate(ctx, database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
 	seedPlanJobs(t, database, 20000, "wartend")
@@ -226,7 +226,7 @@ func TestCountOpenJobsByPayloadUsesThePartialIndex(t *testing.T) {
 		t.Errorf("plan %v still reads the whole jobs table", details)
 	}
 
-	if _, err := database.Write.ExecContext(ctx, "DROP INDEX jobs_offen_typ_payload"); err != nil {
+	if _, err := database.WriteDB().ExecContext(ctx, "DROP INDEX jobs_offen_typ_payload"); err != nil {
 		t.Fatal(err)
 	}
 	analyze(t, database)
@@ -252,14 +252,14 @@ func TestFinishedJobsStayOutOfTheOpenJobIndex(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	ctx := context.Background()
-	if err := Migrate(ctx, database.Write); err != nil {
+	if err := Migrate(ctx, database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
 	seedPlanJobs(t, database, 100, "wartend")
 	seedPlanJobs(t, database, 100, "fertig")
 	analyze(t, database)
 
-	entries, err := database.Read.QueryContext(ctx,
+	entries, err := database.ReadDB().QueryContext(ctx,
 		`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'jobs_offen_typ_payload'`)
 	if err != nil {
 		t.Fatal(err)
@@ -298,7 +298,7 @@ func TestSweepBatchUsesTheOpenImageIndex(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	ctx := context.Background()
-	if err := Migrate(ctx, database.Write); err != nil {
+	if err := Migrate(ctx, database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
 	// Only the unassigned rows are expired ones, so that is what the sweep
@@ -323,7 +323,7 @@ func TestSweepBatchUsesTheOpenImageIndex(t *testing.T) {
 	// With the index the batch reads (erstellt_am, id) straight off it; without
 	// it, SQLite falls back to some other index and sorts the whole backlog in
 	// memory before it can hand over the first 200 rows.
-	if _, err := database.Write.ExecContext(ctx, "DROP INDEX belegbilder_offen_erstellt_am"); err != nil {
+	if _, err := database.WriteDB().ExecContext(ctx, "DROP INDEX belegbilder_offen_erstellt_am"); err != nil {
 		t.Fatal(err)
 	}
 	analyze(t, database)
@@ -347,7 +347,7 @@ func TestFindDuplicateBilderUsesBothHashIndexes(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	ctx := context.Background()
-	if err := Migrate(ctx, database.Write); err != nil {
+	if err := Migrate(ctx, database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
 	seedPlanBelegbilder(t, database, "", 5000, true)
@@ -368,7 +368,7 @@ func TestFindDuplicateBilderUsesBothHashIndexes(t *testing.T) {
 		t.Errorf("plan %v reads the whole table", details)
 	}
 
-	if _, err := database.Write.ExecContext(ctx, "DROP INDEX belegbilder_upload_sha256"); err != nil {
+	if _, err := database.WriteDB().ExecContext(ctx, "DROP INDEX belegbilder_upload_sha256"); err != nil {
 		t.Fatal(err)
 	}
 	analyze(t, database)

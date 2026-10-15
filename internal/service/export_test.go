@@ -162,7 +162,7 @@ func TestExportLocksAndVersions(t *testing.T) {
 		t.Fatalf("created %+v", created)
 	}
 	var idRaw string
-	if err := svc.DB.Read.QueryRowContext(ctx, `SELECT beleg_ids FROM monatsexporte WHERE id = ?`, created.ID).Scan(&idRaw); err != nil {
+	if err := svc.DB.ReadDB().QueryRowContext(ctx, `SELECT beleg_ids FROM monatsexporte WHERE id = ?`, created.ID).Scan(&idRaw); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(idRaw, `"id":"`+first.ID+`"`) || !strings.Contains(idRaw, `"version":1`) || strings.HasPrefix(strings.TrimSpace(idRaw), `["`) {
@@ -192,11 +192,11 @@ func TestExportLocksAndVersions(t *testing.T) {
 	if err != nil || month.Status != "gesperrt" || month.LetzteExportversion != 1 {
 		t.Fatalf("locked %+v %v", month.Status, month.LetzteExportversion)
 	}
-	report, err := audit.Verify(ctx, svc.DB.Read)
+	report, err := audit.Verify(ctx, svc.DB.ReadDB())
 	if err != nil || !report.OK {
 		t.Fatalf("chain %+v %v", report, err)
 	}
-	entries, err := audit.After(ctx, svc.DB.Read, 0)
+	entries, err := audit.After(ctx, svc.DB.ReadDB(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}

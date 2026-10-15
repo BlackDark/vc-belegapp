@@ -71,7 +71,7 @@ func runQueue(t *testing.T, q *Queue) context.CancelFunc {
 func waitStatus(t *testing.T, database *db.DB, id, status string) {
 	t.Helper()
 	dbtest.WaitFor(t, 3*time.Second, fmt.Sprintf("job %s to reach %q", id, status), func() bool {
-		row, err := db.New(database.Write).GetJob(context.Background(), id)
+		row, err := db.New(database.WriteDB()).GetJob(context.Background(), id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -213,7 +213,7 @@ func TestQueueClaimsAJobWaitingBeforeTheFirstTick(t *testing.T) {
 	}
 	const id = "job-vor-dem-ersten-tick"
 	ctx := context.Background()
-	if err := db.New(database.Write).InsertJob(ctx, db.InsertJobParams{
+	if err := db.New(database.WriteDB()).InsertJob(ctx, db.InsertJobParams{
 		ID: id, Typ: TypErkennung, Payload: "{}",
 		NaechsterVersuchAm: "2020-01-01T00:00:00Z",
 		ErstelltAm:         "2020-01-01T00:00:00Z",
@@ -279,7 +279,7 @@ func TestQueueResetRequeuesRunning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Write.Exec(`UPDATE jobs SET status = 'laeuft' WHERE id = ?`, id); err != nil {
+	if _, err := database.WriteDB().Exec(`UPDATE jobs SET status = 'laeuft' WHERE id = ?`, id); err != nil {
 		t.Fatal(err)
 	}
 	if err := q.Reset(context.Background()); err != nil {
@@ -337,7 +337,7 @@ func TestOpenJobCountIncludesRunningJobs(t *testing.T) {
 	database := openQueueDB(t)
 	ctx := context.Background()
 	id := "job-offen"
-	if err := db.New(database.Write).InsertJob(ctx, db.InsertJobParams{
+	if err := db.New(database.WriteDB()).InsertJob(ctx, db.InsertJobParams{
 		ID: id, Typ: "mail", Payload: "{}",
 		NaechsterVersuchAm: "2020-01-01T00:00:00Z",
 		ErstelltAm:         "2020-01-01T00:00:00Z",
@@ -346,13 +346,13 @@ func TestOpenJobCountIncludesRunningJobs(t *testing.T) {
 		t.Fatal(err)
 	}
 	params := db.CountOpenJobsByPayloadParams{Typ: "mail", Payload: "{}"}
-	if n, err := db.New(database.Write).CountOpenJobsByPayload(ctx, params); err != nil || n != 1 {
+	if n, err := db.New(database.WriteDB()).CountOpenJobsByPayload(ctx, params); err != nil || n != 1 {
 		t.Fatalf("open jobs %d (%v), want the waiting one", n, err)
 	}
-	if _, err := database.Write.Exec(`UPDATE jobs SET status = 'laeuft' WHERE id = ?`, id); err != nil {
+	if _, err := database.WriteDB().Exec(`UPDATE jobs SET status = 'laeuft' WHERE id = ?`, id); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := db.New(database.Write).CountOpenJobsByPayload(ctx, params); err != nil || n != 1 {
+	if n, err := db.New(database.WriteDB()).CountOpenJobsByPayload(ctx, params); err != nil || n != 1 {
 		t.Fatalf("open jobs %d (%v), want the running one counted too", n, err)
 	}
 }

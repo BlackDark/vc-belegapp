@@ -130,7 +130,7 @@ func TestFlowManualReceipt(t *testing.T) {
 		t.Fatalf("version %d %s", res.Status, res.Raw)
 	}
 
-	if err := db.New(database.Write).UpsertMonatStatus(ctx, db.UpsertMonatStatusParams{
+	if err := db.New(database.WriteDB()).UpsertMonatStatus(ctx, db.UpsertMonatStatusParams{
 		Monat: "2026-10", Status: "gesperrt", GesperrtAm: "2026-10-08T12:00:00Z", LetzteExportversion: 1,
 	}); err != nil {
 		t.Fatal(err)

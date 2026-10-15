@@ -27,20 +27,28 @@ const reclaimPagesDefault = 4096
 // queue: freeing pages rewrites them, and the write pool has one connection.
 // pages <= 0 uses the default bound; the caller may clamp it further.
 func (d *DB) Reclaim(ctx context.Context, pages int) (int64, error) {
-	if d == nil || d.Write == nil {
+	if d == nil {
+		return 0, errors.New("reclaim: database is closed")
+	}
+	// Held for the whole pass so the pools under it cannot be closed and
+	// swapped by a replace while the page counts are being compared.
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	write := d.write
+	if write == nil {
 		return 0, errors.New("reclaim: database is closed")
 	}
 	if pages <= 0 {
 		pages = reclaimPagesDefault
 	}
-	before, err := freePages(ctx, d.Write)
+	before, err := freePages(ctx, write)
 	if err != nil || before == 0 {
 		return 0, err
 	}
-	if _, err := d.Write.ExecContext(ctx, "PRAGMA incremental_vacuum("+strconv.Itoa(pages)+")"); err != nil {
+	if _, err := write.ExecContext(ctx, "PRAGMA incremental_vacuum("+strconv.Itoa(pages)+")"); err != nil {
 		return 0, fmt.Errorf("incremental vacuum: %w", err)
 	}
-	after, err := freePages(ctx, d.Write)
+	after, err := freePages(ctx, write)
 	if err != nil {
 		return 0, err
 	}

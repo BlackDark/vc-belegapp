@@ -123,7 +123,7 @@ func TestAnnualRuleMissing(t *testing.T) {
 		}
 		// The rule disappears behind the application's back: the stored
 		// receipt can no longer be valued.
-		if _, err := database.Write.ExecContext(context.Background(), "DELETE FROM jahresregeln WHERE jahr = 2026"); err != nil {
+		if _, err := database.WriteDB().ExecContext(context.Background(), "DELETE FROM jahresregeln WHERE jahr = 2026"); err != nil {
 			t.Fatal(err)
 		}
 		assertNoRule(t, doJSON(t, client, http.MethodGet, ts.URL+"/api/v1/monate/2026-10", "", nil))

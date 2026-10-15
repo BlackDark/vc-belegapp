@@ -48,14 +48,14 @@ func TestSaveImageUsesContentKeyAndDedup(t *testing.T) {
 	key, _ := BildBlobKey(first.SHA256)
 	thumb, _ := ThumbBlobKey(first.SHA256)
 	var got, gotThumb string
-	if err := svc.DB.Read.QueryRowContext(ctx, `SELECT blob_key, thumb_blob_key FROM belegbilder WHERE id = ?`, first.ID).Scan(&got, &gotThumb); err != nil {
+	if err := svc.DB.ReadDB().QueryRowContext(ctx, `SELECT blob_key, thumb_blob_key FROM belegbilder WHERE id = ?`, first.ID).Scan(&got, &gotThumb); err != nil {
 		t.Fatal(err)
 	}
 	if got != key || gotThumb != thumb {
 		t.Fatalf("keys %s %s", got, gotThumb)
 	}
 	var other string
-	if err := svc.DB.Read.QueryRowContext(ctx, `SELECT blob_key FROM belegbilder WHERE id = ?`, second.ID).Scan(&other); err != nil {
+	if err := svc.DB.ReadDB().QueryRowContext(ctx, `SELECT blob_key FROM belegbilder WHERE id = ?`, second.ID).Scan(&other); err != nil {
 		t.Fatal(err)
 	}
 	if other != key {
@@ -118,7 +118,7 @@ func migrateLegacy(t *testing.T, store storage.BlobStore) {
 	wantThumb, _ := ThumbBlobKey(bild.SHA256)
 	for _, id := range []string{bild.ID, again.ID} {
 		var key, thumb string
-		if err := svc.DB.Read.QueryRowContext(ctx, `SELECT blob_key, thumb_blob_key FROM belegbilder WHERE id = ?`, id).Scan(&key, &thumb); err != nil {
+		if err := svc.DB.ReadDB().QueryRowContext(ctx, `SELECT blob_key, thumb_blob_key FROM belegbilder WHERE id = ?`, id).Scan(&key, &thumb); err != nil {
 			t.Fatal(err)
 		}
 		if key != want || thumb != wantThumb {
@@ -164,7 +164,7 @@ func TestMigrateSkipsBadHashAndKeepsReferencedLegacy(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacy := "bilder/" + bild.ID + ".jpg"
-	if _, err := svc.DB.Write.ExecContext(ctx, `
+	if _, err := svc.DB.WriteDB().ExecContext(ctx, `
 		INSERT INTO belegbilder (
 			id, blob_key, thumb_blob_key, sha256, upload_sha256, mime, bytes, breite, hoehe, erkennung_status, erstellt_am
 		)
@@ -183,7 +183,7 @@ func TestMigrateSkipsBadHashAndKeepsReferencedLegacy(t *testing.T) {
 		t.Fatal("referenced legacy blob removed")
 	}
 	var key string
-	if err := svc.DB.Read.QueryRowContext(ctx, `SELECT blob_key FROM belegbilder WHERE id = ?`, bild.ID).Scan(&key); err != nil {
+	if err := svc.DB.ReadDB().QueryRowContext(ctx, `SELECT blob_key FROM belegbilder WHERE id = ?`, bild.ID).Scan(&key); err != nil {
 		t.Fatal(err)
 	}
 	want, _ := BildBlobKey(bild.SHA256)
@@ -232,7 +232,7 @@ func TestImportMigratesLegacyArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 	var key string
-	if err := dest.DB.Read.QueryRowContext(ctx, `SELECT blob_key FROM belegbilder WHERE id = ?`, bild.ID).Scan(&key); err != nil {
+	if err := dest.DB.ReadDB().QueryRowContext(ctx, `SELECT blob_key FROM belegbilder WHERE id = ?`, bild.ID).Scan(&key); err != nil {
 		t.Fatal(err)
 	}
 	want, _ := BildBlobKey(bild.SHA256)
@@ -296,7 +296,7 @@ func TestReceiptImageAuditActions(t *testing.T) {
 	if !hasAktion(t, svc, "belegbild_entfernt", extra.ID) {
 		t.Fatal("delete did not unassign")
 	}
-	report, err := audit.Verify(ctx, svc.DB.Read)
+	report, err := audit.Verify(ctx, svc.DB.ReadDB())
 	if err != nil || !report.OK {
 		t.Fatalf("chain %+v %v", report, err)
 	}
@@ -304,7 +304,7 @@ func TestReceiptImageAuditActions(t *testing.T) {
 
 func hasAktion(t *testing.T, svc *Service, aktion, entitaetID string) bool {
 	t.Helper()
-	rows, err := audit.List(context.Background(), svc.DB.Read, "", entitaetID, 0, 20)
+	rows, err := audit.List(context.Background(), svc.DB.ReadDB(), "", entitaetID, 0, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +317,7 @@ func hasAktion(t *testing.T, svc *Service, aktion, entitaetID string) bool {
 }
 
 func parkLegacy(ctx context.Context, svc *Service, bildID string) error {
-	row, err := db.New(svc.DB.Read).GetBelegbild(ctx, bildID)
+	row, err := db.New(svc.DB.ReadDB()).GetBelegbild(ctx, bildID)
 	if err != nil {
 		return err
 	}
@@ -329,10 +329,10 @@ func parkLegacy(ctx context.Context, svc *Service, bildID string) error {
 	if err := copyKey(ctx, svc.Store, row.ThumbBlobKey, legacyThumb); err != nil {
 		return err
 	}
-	if _, err := svc.DB.Write.ExecContext(ctx, `UPDATE belegbilder SET blob_key = ?, thumb_blob_key = ? WHERE id = ?`, legacy, legacyThumb, bildID); err != nil {
+	if _, err := svc.DB.WriteDB().ExecContext(ctx, `UPDATE belegbilder SET blob_key = ?, thumb_blob_key = ? WHERE id = ?`, legacy, legacyThumb, bildID); err != nil {
 		return err
 	}
-	q := db.New(svc.DB.Write)
+	q := db.New(svc.DB.WriteDB())
 	svc.deleteBlobIfFree(ctx, q, row.BlobKey)
 	svc.deleteBlobIfFree(ctx, q, row.ThumbBlobKey)
 	return nil

@@ -66,7 +66,7 @@ func watchExists(t *testing.T, path string) bool {
 func countOffeneBilder(t *testing.T, svc *Service) int {
 	t.Helper()
 	var n int
-	if err := svc.DB.Read.QueryRow(`SELECT COUNT(*) FROM belegbilder WHERE beleg_id IS NULL`).Scan(&n); err != nil {
+	if err := svc.DB.ReadDB().QueryRow(`SELECT COUNT(*) FROM belegbilder WHERE beleg_id IS NULL`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n
@@ -771,7 +771,7 @@ func TestPollWatchFolderNoFolderEnqueuesNothing(t *testing.T) {
 	svc.PollWatchFolder(ctx)
 
 	var n int
-	if err := svc.DB.Read.QueryRow(`SELECT COUNT(*) FROM jobs`).Scan(&n); err != nil {
+	if err := svc.DB.ReadDB().QueryRow(`SELECT COUNT(*) FROM jobs`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 0 {

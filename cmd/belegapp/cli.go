@@ -188,7 +188,7 @@ func cmdVerifyAudit(ctx context.Context, args []string, stdout, stderr io.Writer
 		return err
 	}
 	defer func() { _ = database.Close() }()
-	report, err := audit.Verify(ctx, database.Read)
+	report, err := audit.Verify(ctx, database.ReadDB())
 	if err != nil {
 		return err
 	}

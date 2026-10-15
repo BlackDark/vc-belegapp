@@ -115,7 +115,7 @@ func TestEveryEnqueuedJobCarriesACanonicalType(t *testing.T) {
 			tc.queue(t, svc)
 
 			var typ string
-			err := svc.DB.Read.QueryRow(`SELECT typ FROM jobs`).Scan(&typ)
+			err := svc.DB.ReadDB().QueryRow(`SELECT typ FROM jobs`).Scan(&typ)
 			if err != nil {
 				t.Fatalf("no job row: %v", err)
 			}
@@ -123,7 +123,7 @@ func TestEveryEnqueuedJobCarriesACanonicalType(t *testing.T) {
 				t.Errorf("the queued job is of type %q, want the canonical %q", typ, tc.typ)
 			}
 			var n int
-			if err := svc.DB.Read.QueryRow(`SELECT COUNT(*) FROM jobs`).Scan(&n); err != nil || n != 1 {
+			if err := svc.DB.ReadDB().QueryRow(`SELECT COUNT(*) FROM jobs`).Scan(&n); err != nil || n != 1 {
 				t.Errorf("%d job rows, want exactly 1 (%v)", n, err)
 			}
 		})

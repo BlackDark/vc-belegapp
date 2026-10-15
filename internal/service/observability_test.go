@@ -31,7 +31,7 @@ func TestRunJobsReportsAFailedStartupRepair(t *testing.T) {
 	svc.Jobs = &jobs.Queue{DB: svc.DB, Workers: 1, Poll: testPoll}
 	// Closing the write pool fails every repair below and every queue write,
 	// which is the point: the queue must still come up.
-	if err := svc.DB.Write.Close(); err != nil {
+	if err := svc.DB.WriteDB().Close(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -64,7 +64,7 @@ func TestJobStatusWriteFailureIsReported(t *testing.T) {
 		var buf syncBuffer
 		svc := openService(t, nil)
 		svc.Log = slog.New(slog.NewJSONHandler(&buf, nil))
-		if err := svc.DB.Write.Close(); err != nil {
+		if err := svc.DB.WriteDB().Close(); err != nil {
 			t.Fatal(err)
 		}
 		svc.JobRetry(context.Background(), erkennung, errors.New("Modell nicht erreichbar"))
@@ -75,7 +75,7 @@ func TestJobStatusWriteFailureIsReported(t *testing.T) {
 		var buf syncBuffer
 		svc := openService(t, nil)
 		svc.Log = slog.New(slog.NewJSONHandler(&buf, nil))
-		if err := svc.DB.Write.Close(); err != nil {
+		if err := svc.DB.WriteDB().Close(); err != nil {
 			t.Fatal(err)
 		}
 		svc.JobFail(context.Background(), erkennung, errors.New("Modell nicht erreichbar"))
@@ -114,7 +114,7 @@ func TestSweepReportsAPartialPassAndKeepsGoing(t *testing.T) {
 	// there, it is unassigned, it is expired, and the delete still fails.
 	// SQLite takes no bind variables in a trigger, so the id goes into the
 	// statement as a literal — it is a generated ULID, not operator input.
-	if _, err := svc.DB.Write.ExecContext(ctx, fmt.Sprintf(`
+	if _, err := svc.DB.WriteDB().ExecContext(ctx, fmt.Sprintf(`
 		CREATE TRIGGER sweep_stuck BEFORE DELETE ON belegbilder WHEN old.id = '%s'
 		BEGIN SELECT RAISE(ABORT, 'Belegbild gesperrt'); END`, stuck)); err != nil {
 		t.Fatal(err)
@@ -131,7 +131,7 @@ func TestSweepReportsAPartialPassAndKeepsGoing(t *testing.T) {
 	// first one it reached could not be.
 	for _, id := range removed {
 		var n int
-		if err := svc.DB.Read.QueryRowContext(ctx,
+		if err := svc.DB.ReadDB().QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM belegbilder WHERE id = ?`, id).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
@@ -153,7 +153,7 @@ func TestGetBildReportsAFailedDuplicateLookup(t *testing.T) {
 	id := saveUnassigned(t, svc, 31, 32, 33, "keine", "2026-10-08T09:00:00Z")
 	// FindDuplicateBild is the only statement here that reads belege, so
 	// renaming one of its columns breaks that lookup and nothing else.
-	if _, err := svc.DB.Write.ExecContext(ctx,
+	if _, err := svc.DB.WriteDB().ExecContext(ctx,
 		`ALTER TABLE belege RENAME COLUMN datum TO erstelltag`); err != nil {
 		t.Fatal(err)
 	}

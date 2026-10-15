@@ -24,7 +24,7 @@ import (
 func TestJobTypesMatchTheJobsCheckConstraint(t *testing.T) {
 	database := openQueueDB(t)
 	var ddl string
-	err := database.Read.QueryRow(
+	err := database.ReadDB().QueryRow(
 		`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'jobs'`).Scan(&ddl)
 	if err != nil {
 		t.Fatal(err)
@@ -43,14 +43,14 @@ func TestJobTypesMatchTheJobsCheckConstraint(t *testing.T) {
 	// Enqueue call would be stored and only ever noticed by a dispatch that
 	// falls through to "Unbekannter Job".
 	for _, typ := range jobTypes {
-		if _, err := database.Write.ExecContext(context.Background(),
+		if _, err := database.WriteDB().ExecContext(context.Background(),
 			`INSERT INTO jobs (id, typ, payload, status, versuche, naechster_versuch_am, erstellt_am, geaendert_am)
 			 VALUES ('job-' || ?, ?, '{}', 'wartend', 0, '', '', '')`,
 			typ, typ); err != nil {
 			t.Errorf("the table refuses the job type %q the queue runs: %v", typ, err)
 		}
 	}
-	if _, err := database.Write.ExecContext(context.Background(),
+	if _, err := database.WriteDB().ExecContext(context.Background(),
 		`INSERT INTO jobs (id, typ, payload, status, versuche, naechster_versuch_am, erstellt_am, geaendert_am)
 		 VALUES ('job-x', 'erkennun', '{}', 'wartend', 0, '', '', '')`); err == nil {
 		t.Error("a misspelled job type was accepted; a typo would be a job nothing runs")

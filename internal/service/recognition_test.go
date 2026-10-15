@@ -180,7 +180,7 @@ func TestRecognition429ThenSuccess(t *testing.T) {
 	if done.Erkennung.KorrekturvorschlagCent == nil || *done.Erkennung.KorrekturvorschlagCent != 1275 {
 		t.Fatalf("suggestion %v", done.Erkennung.KorrekturvorschlagCent)
 	}
-	row, err := db.New(svc.DB.Write).GetBelegbild(context.Background(), bild.ID)
+	row, err := db.New(svc.DB.WriteDB()).GetBelegbild(context.Background(), bild.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +309,7 @@ func TestRecognitionStaysManual(t *testing.T) {
 	if off.Erkennung.Status != "keine" {
 		t.Fatalf("flag %s", off.Erkennung.Status)
 	}
-	if _, err := active.DB.Write.Exec(`UPDATE einstellungen SET erkennung_aktiv = 0`); err != nil {
+	if _, err := active.DB.WriteDB().Exec(`UPDATE einstellungen SET erkennung_aktiv = 0`); err != nil {
 		t.Fatal(err)
 	}
 	paused, err := active.SaveBild(context.Background(), tinyPNG(t), true)

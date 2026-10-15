@@ -638,7 +638,7 @@ func TestPolicyListsAreSubsetsOfJobTypes(t *testing.T) {
 
 func jobRow(t *testing.T, database *db.DB, id string) db.Job {
 	t.Helper()
-	row, err := db.New(database.Write).GetJob(context.Background(), id)
+	row, err := db.New(database.WriteDB()).GetJob(context.Background(), id)
 	if err != nil {
 		t.Fatal(err)
 	}

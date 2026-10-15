@@ -184,7 +184,7 @@ func openAuthDB(t *testing.T) *db.DB {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	if err := db.Migrate(context.Background(), database.Write); err != nil {
+	if err := db.Migrate(context.Background(), database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
 	return database

@@ -24,7 +24,7 @@ type monthBuilt struct {
 }
 
 func (s *Service) buildMonth(ctx context.Context, view Monat, einst Einstellungen, actor Actor, when time.Time, version int, entwurf bool) (monthBuilt, error) {
-	q := db.New(s.DB.Read)
+	q := db.New(s.DB.ReadDB())
 	loc := s.Loc
 	if loc == nil {
 		loc = time.UTC

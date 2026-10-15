@@ -67,7 +67,7 @@ func (q *Queue) Enqueue(ctx context.Context, typ, payload string) (string, error
 		return "", err
 	}
 	stamp := q.stamp()
-	err = db.New(q.DB.Write).InsertJob(ctx, db.InsertJobParams{
+	err = db.New(q.DB.WriteDB()).InsertJob(ctx, db.InsertJobParams{
 		ID:                 jobID,
 		Typ:                typ,
 		Payload:            payload,
@@ -85,7 +85,7 @@ func (q *Queue) Enqueue(ctx context.Context, typ, payload string) (string, error
 
 // Reset moves jobs left in "laeuft" back to "wartend" after a restart.
 func (q *Queue) Reset(ctx context.Context) error {
-	return db.New(q.DB.Write).ResetRunningJobs(ctx, q.stamp())
+	return db.New(q.DB.WriteDB()).ResetRunningJobs(ctx, q.stamp())
 }
 
 // Run processes jobs until ctx is cancelled.
@@ -254,7 +254,7 @@ func (q *Queue) deferClaim(ctx context.Context, job Job) {
 		defer cancel()
 	}
 	next := q.now().Add(q.deferDelay()).UTC().Format(time.RFC3339)
-	err := db.New(q.DB.Write).DeferJob(writeCtx, db.DeferJobParams{
+	err := db.New(q.DB.WriteDB()).DeferJob(writeCtx, db.DeferJobParams{
 		NaechsterVersuchAm: next,
 		GeaendertAm:        q.stamp(),
 		ID:                 job.ID,
@@ -266,7 +266,7 @@ func (q *Queue) deferClaim(ctx context.Context, job Job) {
 }
 
 func (q *Queue) claim(ctx context.Context) (Job, error) {
-	tx, err := q.DB.Write.BeginTx(ctx, nil)
+	tx, err := q.DB.WriteDB().BeginTx(ctx, nil)
 	if err != nil {
 		return Job{}, err
 	}
@@ -300,7 +300,7 @@ func (q *Queue) finishLogged(ctx context.Context, job Job, status, next string, 
 }
 
 func (q *Queue) finish(ctx context.Context, job Job, status, next string, result, failure any) error {
-	err := db.New(q.DB.Write).UpdateJob(ctx, db.UpdateJobParams{
+	err := db.New(q.DB.WriteDB()).UpdateJob(ctx, db.UpdateJobParams{
 		Status:             status,
 		NaechsterVersuchAm: next,
 		Ergebnis:           result,
@@ -318,7 +318,7 @@ func (q *Queue) stats(ctx context.Context) {
 	if q.OnStats == nil {
 		return
 	}
-	n, err := db.New(q.DB.Write).CountJobsByStatus(ctx, "wartend")
+	n, err := db.New(q.DB.WriteDB()).CountJobsByStatus(ctx, "wartend")
 	if err != nil {
 		return
 	}

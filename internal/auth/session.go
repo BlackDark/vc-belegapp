@@ -65,7 +65,7 @@ func (s *Sessions) Create(ctx context.Context, akteur, userAgent, ip, idToken st
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	now := s.now().UTC()
-	err := db.New(s.DB.Write).InsertSitzung(ctx, db.InsertSitzungParams{
+	err := db.New(s.DB.WriteDB()).InsertSitzung(ctx, db.InsertSitzungParams{
 		TokenHash:      hashToken(token),
 		Akteur:         akteur,
 		ErstelltAm:     now.Format(time.RFC3339),
@@ -87,7 +87,7 @@ func (s *Sessions) Lookup(ctx context.Context, token string) (Session, error) {
 	if token == "" {
 		return Session{}, errNoSession
 	}
-	row, err := db.New(s.DB.Read).GetSitzung(ctx, hashToken(token))
+	row, err := db.New(s.DB.ReadDB()).GetSitzung(ctx, hashToken(token))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Session{}, errNoSession
@@ -100,12 +100,12 @@ func (s *Sessions) Lookup(ctx context.Context, token string) (Session, error) {
 	}
 	now := s.now().UTC()
 	if !now.Before(sess.LaeuftAbAm) || now.Sub(sess.ZuletztAktivAm) > s.Idle {
-		_ = db.New(s.DB.Write).DeleteSitzung(ctx, sess.TokenHash)
+		_ = db.New(s.DB.WriteDB()).DeleteSitzung(ctx, sess.TokenHash)
 		return Session{}, errNoSession
 	}
 	if now.Sub(sess.ZuletztAktivAm) >= touchEvery {
 		stamp := now.Format(time.RFC3339)
-		if err := db.New(s.DB.Write).TouchSitzung(ctx, db.TouchSitzungParams{ZuletztAktivAm: stamp, TokenHash: sess.TokenHash}); err != nil {
+		if err := db.New(s.DB.WriteDB()).TouchSitzung(ctx, db.TouchSitzungParams{ZuletztAktivAm: stamp, TokenHash: sess.TokenHash}); err != nil {
 			return Session{}, err
 		}
 		sess.ZuletztAktivAm = now
@@ -115,17 +115,17 @@ func (s *Sessions) Lookup(ctx context.Context, token string) (Session, error) {
 
 // Delete removes one session by raw token.
 func (s *Sessions) Delete(ctx context.Context, token string) error {
-	return db.New(s.DB.Write).DeleteSitzung(ctx, hashToken(token))
+	return db.New(s.DB.WriteDB()).DeleteSitzung(ctx, hashToken(token))
 }
 
 // DeleteOthers removes every session except the presented token.
 func (s *Sessions) DeleteOthers(ctx context.Context, token string) error {
-	return db.New(s.DB.Write).DeleteOtherSitzungen(ctx, hashToken(token))
+	return db.New(s.DB.WriteDB()).DeleteOtherSitzungen(ctx, hashToken(token))
 }
 
 // List returns every session. The raw token is not included.
 func (s *Sessions) List(ctx context.Context) ([]Session, error) {
-	rows, err := db.New(s.DB.Read).ListSitzungen(ctx)
+	rows, err := db.New(s.DB.ReadDB()).ListSitzungen(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +143,7 @@ func (s *Sessions) List(ctx context.Context) ([]Session, error) {
 // Cleanup removes expired sessions.
 func (s *Sessions) Cleanup(ctx context.Context) error {
 	now := s.now().UTC()
-	return db.New(s.DB.Write).DeleteExpiredSitzungen(ctx, db.DeleteExpiredSitzungenParams{
+	return db.New(s.DB.WriteDB()).DeleteExpiredSitzungen(ctx, db.DeleteExpiredSitzungenParams{
 		LaeuftAbAm:     now.Format(time.RFC3339),
 		ZuletztAktivAm: now.Add(-s.Idle).Format(time.RFC3339),
 	})

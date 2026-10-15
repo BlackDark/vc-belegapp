@@ -32,7 +32,7 @@ type ProtokollReport struct {
 
 // ListProtokoll returns entries newest first.
 func (s *Service) ListProtokoll(ctx context.Context, monat, entitaetID string, vorID int64, limit int) ([]ProtokollEintrag, error) {
-	rows, err := audit.List(ctx, s.DB.Read, monat, entitaetID, vorID, limit)
+	rows, err := audit.List(ctx, s.DB.ReadDB(), monat, entitaetID, vorID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +58,7 @@ func (s *Service) ListProtokoll(ctx context.Context, monat, entitaetID string, v
 
 // VerifyProtokoll checks the hash chain.
 func (s *Service) VerifyProtokoll(ctx context.Context) (ProtokollReport, error) {
-	report, err := audit.Verify(ctx, s.DB.Read)
+	report, err := audit.Verify(ctx, s.DB.ReadDB())
 	if err != nil {
 		return ProtokollReport{}, err
 	}

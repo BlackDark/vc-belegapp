@@ -28,7 +28,7 @@ func seedDupBeleg(t *testing.T, svc *Service, id string, day int, deleted bool, 
 	if deleted {
 		geloescht = fmt.Sprintf("'%s'", stamp)
 	}
-	if _, err := svc.DB.Write.ExecContext(ctx, fmt.Sprintf(`INSERT INTO belege (
+	if _, err := svc.DB.WriteDB().ExecContext(ctx, fmt.Sprintf(`INSERT INTO belege (
 		id, datum, mahlzeit, bezugsort, arbeitsort, haendler_name, haendler_ort,
 		belegbetrag_cent, notiz, quelle, version, erstellt_am, geaendert_am, geloescht_am
 	) VALUES ('%s', '2026-09-%02d', 'mittag', 'supermarkt', 'betrieb', 'REWE', 'Köln',
@@ -37,7 +37,7 @@ func seedDupBeleg(t *testing.T, svc *Service, id string, day int, deleted bool, 
 	}
 	for i, hash := range bilder {
 		bildID := fmt.Sprintf("%s-%d", id, i)
-		_, err := svc.DB.Write.ExecContext(ctx, fmt.Sprintf(`INSERT INTO belegbilder (
+		_, err := svc.DB.WriteDB().ExecContext(ctx, fmt.Sprintf(`INSERT INTO belegbilder (
 			id, beleg_id, seite, blob_key, thumb_blob_key, sha256, upload_sha256, mime,
 			bytes, breite, hoehe, erkennung_status, erstellt_am
 		) VALUES ('%s', '%s', %d, 'bilder/%s.jpg', 'thumbs/%s.jpg', '%s', '%s', 'image/jpeg',
@@ -52,7 +52,7 @@ func seedDupBeleg(t *testing.T, svc *Service, id string, day int, deleted bool, 
 // dupRows reads the images of a receipt in the order attachBilder sees them.
 func dupRows(t *testing.T, svc *Service, belegID string) []db.Belegbilder {
 	t.Helper()
-	rows, err := db.New(svc.DB.Read).ListBelegbilderByBeleg(context.Background(), belegID)
+	rows, err := db.New(svc.DB.ReadDB()).ListBelegbilderByBeleg(context.Background(), belegID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestDuplicateBilderByRowMatchesThePerImageLookup(t *testing.T) {
 	ctx := context.Background()
 	svc := openService(t, nil)
 	rows := dupFixture(t, svc)
-	q := db.New(svc.DB.Read)
+	q := db.New(svc.DB.ReadDB())
 
 	want := perImageDuplicates(t, q, "beleg-ziel", rows)
 	got := svc.duplicateBilderByRow(ctx, q, "beleg-ziel", rows)
@@ -142,7 +142,7 @@ func TestAttachBilderKeepsThePageOrderAndTheHints(t *testing.T) {
 	ctx := context.Background()
 	svc := openService(t, nil)
 	rows := dupFixture(t, svc)
-	q := db.New(svc.DB.Read)
+	q := db.New(svc.DB.ReadDB())
 	want := perImageDuplicates(t, q, "beleg-ziel", rows)
 
 	beleg := &Beleg{ID: "beleg-ziel"}
@@ -173,7 +173,7 @@ func TestDuplicateBilderByRowAsksNothingForAnEmptyPage(t *testing.T) {
 	ctx := context.Background()
 	svc := openService(t, nil)
 	dupFixture(t, svc)
-	counter := &countingDBTX{DBTX: svc.DB.Read}
+	counter := &countingDBTX{DBTX: svc.DB.ReadDB()}
 	q := db.New(counter)
 
 	got := svc.duplicateBilderByRow(ctx, q, "beleg-leer", nil)
@@ -186,7 +186,7 @@ func TestDuplicateBilderByRowAsksNothingForAnEmptyPage(t *testing.T) {
 
 	// The same receipt read for real has to come back empty rather than fail.
 	beleg := &Beleg{ID: "beleg-leer"}
-	if err := svc.attachBilder(ctx, db.New(svc.DB.Read), beleg); err != nil {
+	if err := svc.attachBilder(ctx, db.New(svc.DB.ReadDB()), beleg); err != nil {
 		t.Fatal(err)
 	}
 	if len(beleg.Bilder) != 0 || beleg.Bilder == nil {
@@ -204,9 +204,9 @@ func TestDuplicateBilderByRowAsksTheDatabaseOnce(t *testing.T) {
 		t.Fatalf("fixture holds %d images, want 3", len(rows))
 	}
 
-	before := &countingDBTX{DBTX: svc.DB.Read}
+	before := &countingDBTX{DBTX: svc.DB.ReadDB()}
 	svc.duplicateBilderByRow(ctx, db.New(before), "beleg-ziel", rows)
-	after := &countingDBTX{DBTX: svc.DB.Read}
+	after := &countingDBTX{DBTX: svc.DB.ReadDB()}
 	perImageDuplicates(t, db.New(after), "beleg-ziel", rows)
 
 	if got := before.total(); got != 1 {
@@ -229,7 +229,7 @@ func TestDuplicateBilderByRowPicksTheSameCandidateEveryTime(t *testing.T) {
 	rows := dupRows(t, svc, "beleg-ziel")
 
 	for i := 0; i < 3; i++ {
-		got := svc.duplicateBilderByRow(ctx, db.New(svc.DB.Read), "beleg-ziel", rows)
+		got := svc.duplicateBilderByRow(ctx, db.New(svc.DB.ReadDB()), "beleg-ziel", rows)
 		hint := got["beleg-ziel-0"]
 		if hint == nil {
 			t.Fatal("no hint for an image two receipts share")
@@ -253,12 +253,12 @@ func TestAttachBilderSurvivesAFailedDuplicateLookup(t *testing.T) {
 	seedDupBeleg(t, svc, "beleg-sha", 2, false, [][2]string{{"sha-a", "up-anders"}})
 	// The join to belege is the only thing that reaches the second table, so
 	// renaming it breaks exactly the lookup and nothing else.
-	if _, err := svc.DB.Write.ExecContext(ctx, `ALTER TABLE belege RENAME TO belege_weg`); err != nil {
+	if _, err := svc.DB.WriteDB().ExecContext(ctx, `ALTER TABLE belege RENAME TO belege_weg`); err != nil {
 		t.Fatal(err)
 	}
 
 	beleg := &Beleg{ID: "beleg-ziel"}
-	if err := svc.attachBilder(ctx, db.New(svc.DB.Read), beleg); err != nil {
+	if err := svc.attachBilder(ctx, db.New(svc.DB.ReadDB()), beleg); err != nil {
 		t.Fatalf("a failed duplicate lookup failed the read: %v", err)
 	}
 	if len(beleg.Bilder) != 1 || beleg.Bilder[0].DuplikatVon != nil {
@@ -293,7 +293,7 @@ func TestDuplicateBilderByRowStaysBoundedWhenOneHashIsOnManyReceipts(t *testing.
 
 	// The query itself: forty receipts share the hash, so an unbounded read is
 	// forty rows and a bounded one is one.
-	found, err := db.New(svc.DB.Read).FindDuplicateBilder(ctx, db.FindDuplicateBilderParams{
+	found, err := db.New(svc.DB.ReadDB()).FindDuplicateBilder(ctx, db.FindDuplicateBilderParams{
 		ExcludeID:     "beleg-ziel",
 		Sha256s:       []string{"sha-viel"},
 		UploadSha256s: []string{"up-ziel"},
@@ -307,7 +307,7 @@ func TestDuplicateBilderByRowStaysBoundedWhenOneHashIsOnManyReceipts(t *testing.
 
 	// And the answer the caller builds from it: one hint, naming the lowest of
 	// the receipts carrying the hash.
-	counter := &countingDBTX{DBTX: svc.DB.Read}
+	counter := &countingDBTX{DBTX: svc.DB.ReadDB()}
 	got := svc.duplicateBilderByRow(ctx, db.New(counter), "beleg-ziel", rows)
 	if len(got) != 1 {
 		t.Fatalf("%d hints for an image %d receipts share, want 1", len(got), shared)
@@ -334,7 +334,7 @@ func TestDuplicateBilderByRowPrefersTheLowerIdAcrossBothHashColumns(t *testing.T
 	seedDupBeleg(t, svc, "beleg-z-spaeter", 3, false, [][2]string{{"sha-hoch", "up-anders"}})
 	rows := dupRows(t, svc, "beleg-ziel")
 
-	got := svc.duplicateBilderByRow(ctx, db.New(svc.DB.Read), "beleg-ziel", rows)
+	got := svc.duplicateBilderByRow(ctx, db.New(svc.DB.ReadDB()), "beleg-ziel", rows)
 	hint := got["beleg-ziel-0"]
 	if hint == nil || *hint != "beleg-a-frueher" {
 		t.Fatalf("the hint is %v, want beleg-a-frueher (upload_sha256 match, lower id)", hint)
@@ -360,7 +360,7 @@ func TestDuplicateBilderByRowKeepsTheTwoHashColumnsApart(t *testing.T) {
 	seedDupBeleg(t, svc, "beleg-anders", 2, false, [][2]string{{"C", "X"}})
 	rows := dupRows(t, svc, "beleg-ziel")
 
-	got := svc.duplicateBilderByRow(ctx, db.New(svc.DB.Read), "beleg-ziel", rows)
+	got := svc.duplicateBilderByRow(ctx, db.New(svc.DB.ReadDB()), "beleg-ziel", rows)
 	if hint := got["beleg-ziel-0"]; hint != nil {
 		t.Errorf("the image with sha256 X is reported as a duplicate of %s; the match is on the other image's upload_sha256", *hint)
 	}

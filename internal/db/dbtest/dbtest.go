@@ -26,7 +26,7 @@ func Open(t *testing.T) *db.DB {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { closeAndRemove(t, database, dir) })
-	if err := db.Migrate(context.Background(), database.Write); err != nil {
+	if err := db.Migrate(context.Background(), database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
 	return database
@@ -110,8 +110,8 @@ func awaitClosed(t *testing.T, database *db.DB) {
 	t.Helper()
 	write, read := -1, -1
 	for attempt := 0; attempt < removeAttempts; attempt++ {
-		write = database.Write.Stats().OpenConnections
-		read = database.Read.Stats().OpenConnections
+		write = database.WriteDB().Stats().OpenConnections
+		read = database.ReadDB().Stats().OpenConnections
 		if write == 0 && read == 0 {
 			return
 		}
@@ -125,7 +125,7 @@ func awaitClosed(t *testing.T, database *db.DB) {
 func OpenSeeded(t *testing.T) *db.DB {
 	t.Helper()
 	database := Open(t)
-	if _, err := db.EnsureSystem(context.Background(), database.Write, nil); err != nil {
+	if _, err := db.EnsureSystem(context.Background(), database.WriteDB(), nil); err != nil {
 		t.Fatal(err)
 	}
 	return database

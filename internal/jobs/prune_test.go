@@ -22,7 +22,7 @@ var testNow = time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
 func seedJob(t *testing.T, database *db.DB, id, status string, changed time.Time) {
 	t.Helper()
 	stamp := changed.UTC().Format(time.RFC3339)
-	_, err := database.Write.ExecContext(context.Background(), `INSERT INTO jobs (
+	_, err := database.WriteDB().ExecContext(context.Background(), `INSERT INTO jobs (
 		id, typ, payload, status, versuche, naechster_versuch_am, ergebnis, fehler, erstellt_am, geaendert_am
 	) VALUES (?, 'watch', '{}', ?, 1, ?, NULL, NULL, ?, ?)`,
 		id, status, stamp, stamp, stamp)
@@ -46,7 +46,7 @@ const seedRowsPerStatement = 1000
 func seedJobsBulk(t *testing.T, database *db.DB, n int, changed time.Time) {
 	t.Helper()
 	stamp := changed.UTC().Format(time.RFC3339)
-	tx, err := database.Write.Begin()
+	tx, err := database.WriteDB().Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func seedJobsBulk(t *testing.T, database *db.DB, n int, changed time.Time) {
 
 func jobStatus(t *testing.T, database *db.DB, id string) string {
 	t.Helper()
-	row, err := db.New(database.Read).GetJob(context.Background(), id)
+	row, err := db.New(database.ReadDB()).GetJob(context.Background(), id)
 	if err != nil {
 		t.Fatalf("read %s: %v", id, err)
 	}
@@ -83,7 +83,7 @@ func jobStatus(t *testing.T, database *db.DB, id string) string {
 
 func countJobs(t *testing.T, database *db.DB, status string) int64 {
 	t.Helper()
-	n, err := db.New(database.Read).CountJobsByStatus(context.Background(), status)
+	n, err := db.New(database.ReadDB()).CountJobsByStatus(context.Background(), status)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func countJobs(t *testing.T, database *db.DB, status string) int64 {
 func countWatchJobs(t *testing.T, database *db.DB) int64 {
 	t.Helper()
 	var n int64
-	if err := database.Read.QueryRowContext(context.Background(),
+	if err := database.ReadDB().QueryRowContext(context.Background(),
 		`SELECT COUNT(*) FROM jobs WHERE typ = 'watch'`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestPruneKeepsRowsThatStillOweWork(t *testing.T) {
 		t.Fatalf("deleted %d rows that still owed work", deleted)
 	}
 	for _, id := range []string{"wartend-alt", "laeuft-alt", "wartend-zurueckgestellt"} {
-		if _, err := db.New(database.Read).GetJob(ctx, id); err != nil {
+		if _, err := db.New(database.ReadDB()).GetJob(ctx, id); err != nil {
 			t.Fatalf("%s was deleted: %v", id, err)
 		}
 	}
@@ -170,12 +170,12 @@ func TestPruneDeletesOldFinishedRowsOnly(t *testing.T) {
 		t.Fatalf("deleted %d, want the two old finished rows", deleted)
 	}
 	for _, id := range []string{"fertig-alt", "fehler-alt"} {
-		if _, err := db.New(database.Read).GetJob(ctx, id); err == nil {
+		if _, err := db.New(database.ReadDB()).GetJob(ctx, id); err == nil {
 			t.Fatalf("%s survived the prune", id)
 		}
 	}
 	for _, id := range []string{"wartend-alt", "laeuft-alt", "fertig-neu", "fehler-neu"} {
-		if _, err := db.New(database.Read).GetJob(ctx, id); err != nil {
+		if _, err := db.New(database.ReadDB()).GetJob(ctx, id); err != nil {
 			t.Fatalf("%s was deleted: %v", id, err)
 		}
 	}
@@ -231,7 +231,7 @@ func TestPruneDisabledByZeroRetention(t *testing.T) {
 	if deleted != 0 {
 		t.Fatalf("deleted %d rows with retention switched off", deleted)
 	}
-	if _, err := db.New(database.Read).GetJob(context.Background(), jobID(1)); err != nil {
+	if _, err := db.New(database.ReadDB()).GetJob(context.Background(), jobID(1)); err != nil {
 		t.Fatalf("row was deleted: %v", err)
 	}
 }
@@ -288,7 +288,7 @@ func TestPruneRunWithoutRetentionDoesNothing(t *testing.T) {
 		t.Fatal("Run blocked instead of returning")
 	}
 	cancel()
-	if _, err := db.New(database.Read).GetJob(context.Background(), jobID(1)); err != nil {
+	if _, err := db.New(database.ReadDB()).GetJob(context.Background(), jobID(1)); err != nil {
 		t.Fatalf("row was deleted: %v", err)
 	}
 }
@@ -393,12 +393,12 @@ func TestPruneShrinksTheDatabaseFile(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	ctx := context.Background()
-	if err := db.Migrate(ctx, database.Write); err != nil {
+	if err := db.Migrate(ctx, database.WriteDB()); err != nil {
 		t.Fatal(err)
 	}
 
 	var mode int
-	if err := database.Write.QueryRowContext(ctx, "PRAGMA auto_vacuum").Scan(&mode); err != nil {
+	if err := database.WriteDB().QueryRowContext(ctx, "PRAGMA auto_vacuum").Scan(&mode); err != nil {
 		t.Fatal(err)
 	}
 	if mode != 2 {
@@ -442,7 +442,7 @@ func TestPruneShrinksTheDatabaseFile(t *testing.T) {
 // the -wal sidecar would show nothing.
 func dbFileSize(t *testing.T, database *db.DB, path string) int64 {
 	t.Helper()
-	if _, err := database.Write.ExecContext(context.Background(), "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+	if _, err := database.WriteDB().ExecContext(context.Background(), "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)
@@ -466,7 +466,7 @@ func statRows(t *testing.T, database *db.DB) int {
 		return 0
 	}
 	var n int
-	if err := database.Read.QueryRowContext(context.Background(),
+	if err := database.ReadDB().QueryRowContext(context.Background(),
 		`SELECT COUNT(*) FROM sqlite_stat1`).Scan(&n); err != nil {
 		t.Fatalf("sqlite_stat1: %v", err)
 	}
@@ -476,7 +476,7 @@ func statRows(t *testing.T, database *db.DB) int {
 func statTableExists(t *testing.T, database *db.DB) bool {
 	t.Helper()
 	var n int
-	if err := database.Read.QueryRowContext(context.Background(),
+	if err := database.ReadDB().QueryRowContext(context.Background(),
 		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1'`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
@@ -521,7 +521,7 @@ func TestPruneAnalysesTheDatabase(t *testing.T) {
 	// The indexes of the tables the queue reads have to be among them, or the
 	// pass analysed something the planner will never consult.
 	var jobs int
-	if err := database.Read.QueryRowContext(ctx,
+	if err := database.ReadDB().QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl = 'jobs'`).Scan(&jobs); err != nil {
 		t.Fatal(err)
 	}
@@ -554,7 +554,7 @@ func TestPruneSurvivesAFailingAnalyze(t *testing.T) {
 	if deleted != 1 {
 		t.Fatalf("deleted %d, want the one old finished row", deleted)
 	}
-	if _, err := db.New(database.Read).GetJob(ctx, "fertig-alt"); err == nil {
+	if _, err := db.New(database.ReadDB()).GetJob(ctx, "fertig-alt"); err == nil {
 		t.Fatal("the finished row survived a prune whose ANALYZE failed")
 	}
 	if got := statRows(t, database); got != 0 {

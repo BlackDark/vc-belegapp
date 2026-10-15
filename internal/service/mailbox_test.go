@@ -49,7 +49,7 @@ func jpegAttachment(t *testing.T, r, g, b uint8) mailinbox.Attachment {
 func countBilder(t *testing.T, svc *Service) int {
 	t.Helper()
 	var n int
-	if err := svc.DB.Read.QueryRow(`SELECT COUNT(*) FROM belegbilder`).Scan(&n); err != nil {
+	if err := svc.DB.ReadDB().QueryRow(`SELECT COUNT(*) FROM belegbilder`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n
@@ -737,7 +737,7 @@ func TestPollMailboxNoSourceEnqueuesNothing(t *testing.T) {
 	svc.PollMailbox(ctx)
 
 	var n int
-	if err := svc.DB.Read.QueryRow(`SELECT COUNT(*) FROM jobs`).Scan(&n); err != nil {
+	if err := svc.DB.ReadDB().QueryRow(`SELECT COUNT(*) FROM jobs`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 0 {
@@ -805,7 +805,7 @@ func TestIngestMailboxDoesNotEnqueueRecognitionTwice(t *testing.T) {
 	}}
 	svc := mailFixture(t, box, "kasse@example.de")
 	// The setting row says recognition is on, so SaveBild queues the job.
-	if _, err := svc.DB.Write.ExecContext(ctx,
+	if _, err := svc.DB.WriteDB().ExecContext(ctx,
 		`UPDATE einstellungen SET erkennung_aktiv = 1`); err != nil {
 		t.Fatal(err)
 	}
@@ -815,7 +815,7 @@ func TestIngestMailboxDoesNotEnqueueRecognitionTwice(t *testing.T) {
 		t.Fatal(err)
 	}
 	var n int
-	if err := svc.DB.Read.QueryRow(`SELECT COUNT(*) FROM jobs WHERE typ = 'erkennung'`).Scan(&n); err != nil {
+	if err := svc.DB.ReadDB().QueryRow(`SELECT COUNT(*) FROM jobs WHERE typ = 'erkennung'`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
@@ -883,7 +883,7 @@ func waitJobStatus(t *testing.T, svc *Service, id, status string) db.Job {
 	deadline := time.Now().Add(4 * time.Second)
 	var last db.Job
 	for time.Now().Before(deadline) {
-		row, err := db.New(svc.DB.Read).GetJob(context.Background(), id)
+		row, err := db.New(svc.DB.ReadDB()).GetJob(context.Background(), id)
 		if err != nil {
 			t.Fatal(err)
 		}
