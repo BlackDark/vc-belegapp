@@ -2,6 +2,7 @@
 /pdf-out/
 /dist/
 /coverage.out
+/coverage-norace.out
 /coverage.html
 *.db
 *.db-wal

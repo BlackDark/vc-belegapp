@@ -15,4 +15,7 @@
 - KI-Standard: günstiges Vision-Modell (OpenAI gpt-5-mini o. Gemini Flash), Key per Env, Base-URL konfigurierbar.
 - Login: Passwort UND OIDC (OIDC primär für Eduard).
 - Speicher: Dateisystem UND S3 von Anfang an.
+- 2026-10-14, SPEC 19.1 Nr. 4: Eigenanteil-Variante **`standard`** – der Eigenanteil wird angerechnet, der Arbeitgeberanteil kommt auf die Erstattung obendrauf.
+- 2026-10-14, SPEC 19.1 Nr. 5: Monatslimit **15 pro Monat**, unabhängig von den tatsächlich geleisteten Arbeitstagen (gesetzlicher Mindestumfang). Keine Skalierung, keine Abwesenheitserfassung in der App.
+- 2026-10-14, SPEC 19.1 Nr. 3: Kirchensteuer **weiter offen**, nicht entschieden. Es bleibt beim bisherigen Verhalten: vereinfachtes Verfahren mit Satz je Bundesland, `bundesland` ist Pflichtfeld.
 SPEC bestätigt durch Eduard 2026-10-08; Start M0.
