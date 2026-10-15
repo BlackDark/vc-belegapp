@@ -23,4 +23,8 @@
 - 2026-10-15, SPEC 19.1 Nr. 6: **Fotos genügen.** Kein Papieroriginal, keine Einreichungsfrist, keine Unterschrift; Nachweis ist die digital bestätigte Arbeitnehmererklärung beim Export.
 - 2026-10-15, SPEC 19.1 Nr. 7: **Homeoffice und Kantine werden beide akzeptiert** (Kantine als fremd betrieben). `W_BEZUGSORT_KANTINE` bleibt nur ein Hinweis.
 - 2026-10-15: Korrektur der Rechtsgrundlage in `docs/research/tax.md` — die 25-%-Pauschalbesteuerung der Mahlzeit-Sachbezugswerte steht in **§ 40 Abs. 2 Satz 1 Nr. 1 EStG**, nicht in § 8 EStG. § 8 Abs. 2 EStG regelt nur die Bewertung (Satz 6: die Werte nach der SvEV sind maßgebend; Satz 8: die Auswärtsmahlzeit).
+- 2026-10-15, SPEC 5.3: Der Höchstzuschuss bleibt **ein gemeinsamer Wert** `zuschuss_cent`, nicht eine Spalte je Mahlzeitart. Angenommene Grenze: Frühstück über 5,47 € zu bezuschussen hieße, den Wert für alle Mahlzeitarten zu heben — jeder Beleg über dem Höchstzuschuss seiner Art bekäme dann `W_HOECHSTZUSCHUSS`.
+- 2026-10-15, SPEC 5.2/5.3: **Eine neue Jahresregel schaltet weiterhin nur `mittag` frei.** Frühstücks- und Abendscheine werden abgewiesen (`E_MAHLZEIT_NICHT_ERLAUBT`), bis die Jahresregel sie ausdrücklich einschaltet — so wird nichts versehentlich bezuschusst.
+- 2026-10-15, SPEC 19.3 Nr. 3: **Kein Entsperren.** Ein gesperrter Monat lässt sich nicht wieder öffnen; er kann nur mit Änderungsgrund auf `geaendert` gesetzt und neu exportiert werden.
+- 2026-10-15, SPEC 19.3 Nr. 11: **Datenimport ersetzt weiterhin den gesamten Bestand**, ein Merge-Modus ist nicht vorgesehen, die automatische Sicherung davor bleibt.
 SPEC bestätigt durch Eduard 2026-10-08; Start M0.
