@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -109,6 +110,76 @@ func TestLoadOIDCRequiresAllowlist(t *testing.T) {
 	if !cfg.AuthConfigured() || len(cfg.OIDCAllowedEmails) != 1 {
 		t.Fatalf("oidc not configured: %+v", cfg.OIDCAllowedEmails)
 	}
+}
+
+// The safety property: the allowlist stays required. "Everybody" is an entry
+// somebody typed, never the absence of one, so a missing list is still the
+// startup error it has always been.
+func TestLoadOIDCRequiresAnAllowlistThatAdmitsSomebody(t *testing.T) {
+	for _, value := range []string{"", "  ", ",", " , "} {
+		t.Run(fmt.Sprintf("%q", value), func(t *testing.T) {
+			clearEnv(t)
+			setOIDC(t)
+			t.Setenv("BELEGAPP_OIDC_ALLOWED_EMAILS", value)
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), "ALLOWED") {
+				t.Fatalf("emails=%q got %v, want the allowlist error", value, err)
+			}
+		})
+	}
+}
+
+// A malformed pattern is a startup error, not an entry that quietly matches
+// nobody: "te*@test.de" has to name the entry so the operator can find it.
+func TestLoadOIDCRejectsMalformedEmailPatterns(t *testing.T) {
+	entries := []string{"te*@test.de", "user@te*st.de", "*.*@test.de", "user@", "@test.de", "test.de", "user@test..de"}
+	for _, entry := range entries {
+		t.Run(entry, func(t *testing.T) {
+			clearEnv(t)
+			setOIDC(t)
+			t.Setenv("BELEGAPP_OIDC_ALLOWED_EMAILS", "eduard@test.de, "+entry)
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("emails=%q started", entry)
+			}
+			for _, want := range []string{"BELEGAPP_OIDC_ALLOWED_EMAILS", entry} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not mention %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// A typo is wrong on the day OIDC is switched on too, which is the day nobody
+// is watching the startup log. So the patterns are read even with no issuer.
+func TestLoadOIDCRejectsMalformedPatternsWithoutIssuer(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BELEGAPP_OIDC_ALLOWED_EMAILS", "te*@test.de")
+	if _, err := Load(); err == nil {
+		t.Fatal("started with a malformed pattern and no issuer")
+	}
+}
+
+// The four forms the documentation lists all start an instance.
+func TestLoadOIDCAcceptsEmailPatterns(t *testing.T) {
+	clearEnv(t)
+	setOIDC(t)
+	t.Setenv("BELEGAPP_OIDC_ALLOWED_EMAILS", "eduard@test.de, *@beispiel.de, *@*.sub.de, *")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.OIDCAllowedEmails) != 4 || cfg.OIDCAllowedEmails[0] != "eduard@test.de" || cfg.OIDCAllowedEmails[3] != "*" {
+		t.Fatalf("emails %+v", cfg.OIDCAllowedEmails)
+	}
+}
+
+func setOIDC(t *testing.T) {
+	t.Helper()
+	t.Setenv("BELEGAPP_OIDC_ISSUER_URL", "https://auth.example.de")
+	t.Setenv("BELEGAPP_OIDC_CLIENT_ID", "belegapp")
+	t.Setenv("BELEGAPP_BASE_URL", "https://belege.example.de/")
 }
 
 func TestLoadSecretFile(t *testing.T) {
