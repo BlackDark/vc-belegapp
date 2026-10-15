@@ -183,13 +183,21 @@ func (q *Queries) FindDuplicateBild(ctx context.Context, arg FindDuplicateBildPa
 }
 
 const findDuplicateBilder = `-- name: FindDuplicateBilder :many
-SELECT i.sha256, i.upload_sha256, b.id
+SELECT i.sha256 AS hash, CAST(0 AS INTEGER) AS quelle, CAST(MIN(b.id) AS TEXT) AS id
 FROM belegbilder i
 JOIN belege b ON b.id = i.beleg_id
 WHERE b.geloescht_am IS NULL
   AND (?1 = '' OR b.id != ?1)
-  AND (i.sha256 IN (/*SLICE:sha256s*/?) OR i.upload_sha256 IN (/*SLICE:upload_sha256s*/?))
-ORDER BY b.id, i.id
+  AND i.sha256 IN (/*SLICE:sha256s*/?)
+GROUP BY i.sha256
+UNION ALL
+SELECT i.upload_sha256 AS hash, CAST(1 AS INTEGER) AS quelle, CAST(MIN(b.id) AS TEXT) AS id
+FROM belegbilder i
+JOIN belege b ON b.id = i.beleg_id
+WHERE b.geloescht_am IS NULL
+  AND (?1 = '' OR b.id != ?1)
+  AND i.upload_sha256 IN (/*SLICE:upload_sha256s*/?)
+GROUP BY i.upload_sha256
 `
 
 type FindDuplicateBilderParams struct {
@@ -199,25 +207,48 @@ type FindDuplicateBilderParams struct {
 }
 
 type FindDuplicateBilderRow struct {
-	Sha256       string
-	UploadSha256 string
-	ID           string
+	Hash   string
+	Quelle int64
+	ID     string
 }
 
-// FindDuplicateBild for a whole page of images at once.
+// FindDuplicateBilder for a whole page of images at once.
 //
-// The predicate is the union of the per-image one: a row comes back exactly when
-// it would have come back for at least one of the images on the page, because
-// `sha256 IN (...) OR upload_sha256 IN (...)` holds for a row if and only if it
-// holds for one of the individual pairs. Which of the page's images a row
-// belongs to is left to the caller, which holds the pairs and would otherwise
-// have to run one query per image.
+// The predicate is the union of the per-image one: a hash comes back exactly
+// when it would have come back for at least one of the images on the page,
+// because `sha256 IN (...) OR upload_sha256 IN (...)` holds for a row if and
+// only if it holds for one of the individual pairs. Which of the page's images
+// a hash belongs to is left to the caller, which holds the pairs and would
+// otherwise have to run one query per image.
 //
-// Both columns are still indexed, so this stays an OR of index lookups rather
-// than a table scan. ORDER BY is what makes the answer reproducible:
-// FindDuplicateBild takes an arbitrary one of several candidates (LIMIT 1 with
-// no ordering), and a caller building a map has to be able to say which one it
-// picked.
+// One row per hash, never one per image that carries it. The caller asks
+// whether SOME other receipt holds the picture, so the second and the
+// thousandth receipt to turn up with the same hash add nothing but work. The
+// picture a folder watcher uploaded twice is a hash N receipts share, which is
+// exactly the case that turned this page's read into one row per receipt.
+//
+// The GROUP BY over the matched column is what collapses them, and
+// CAST(MIN(b.id) AS TEXT) names the lowest of the receipts sharing the hash.
+// That is the same row the old ORDER BY b.id, i.id put first, and a reproducible
+// answer matters: the per-image lookup takes an arbitrary one of several
+// candidates (LIMIT 1 with no ordering) and a caller building a map has to be
+// able to say which one it picked. The cast is only there to keep the column
+// TEXT for the generated code; MIN over a TEXT column already is one.
+//
+// The two columns the per-image lookup ORs together are two halves here rather
+// than one predicate, because a row can match on either and GROUP BY can only
+// pick one of them. Both columns are indexed and each half is an IN lookup on
+// its own column, so this stays two index lookups rather than a table scan.
+//
+// That split costs something the single predicate did not: a hash is only
+// comparable to the column it was matched in. The page's sha256s and its
+// upload_sha256s overlap all the time: sha256 is the digest of the normalised
+// JPEG, upload_sha256 the digest of the file that was uploaded, and a hash one
+// of a receipt's images carries in one column is routinely what another of its
+// images carries in the other. So each half says which column it matched in
+// (quelle: 0 for sha256, 1 for upload_sha256) and the caller keys its map on
+// that as well as on the hash. A caller that merged the two halves would name a
+// receipt as the duplicate of an image the per-image lookup does not match.
 func (q *Queries) FindDuplicateBilder(ctx context.Context, arg FindDuplicateBilderParams) ([]FindDuplicateBilderRow, error) {
 	query := findDuplicateBilder
 	var queryParams []interface{}
@@ -246,7 +277,7 @@ func (q *Queries) FindDuplicateBilder(ctx context.Context, arg FindDuplicateBild
 	var items []FindDuplicateBilderRow
 	for rows.Next() {
 		var i FindDuplicateBilderRow
-		if err := rows.Scan(&i.Sha256, &i.UploadSha256, &i.ID); err != nil {
+		if err := rows.Scan(&i.Hash, &i.Quelle, &i.ID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

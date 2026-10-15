@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -135,6 +136,17 @@ func TestQueueCapsJobsOfOneType(t *testing.T) {
 	})
 	q.Workers = 2
 	q.Policy = Policy{Concurrency: map[string]int{"watch": 1}}
+	// The free worker is what has to keep not starting the second job, so the
+	// test waits for its work rather than for a span of time. Now is the queue's
+	// own clock and every claim and every hand-back goes through it, so its call
+	// count is a count of what the queue did. A wall clock number cannot say
+	// that: 50ms on a loaded CI box can pass without the queue having looked at
+	// the second job once, which is a green test that proved nothing.
+	var claims atomic.Int64
+	q.Now = func() time.Time {
+		claims.Add(1)
+		return time.Now()
+	}
 	runQueue(t, q)
 
 	ctx := context.Background()
@@ -148,10 +160,13 @@ func TestQueueCapsJobsOfOneType(t *testing.T) {
 	}
 	waitRunning(t, &running, 1)
 	// Long enough for the second job to be claimed and started many times over
-	// if nothing held it back. The bar is the number of poll intervals, not a
-	// wall clock number: the queue is polled at testPoll here, so this covers
-	// hundreds of them.
-	time.Sleep(50 * testPoll)
+	// if nothing held it back. The bar is the number of queue cycles, not a
+	// wall clock number, and it is high because each claim and each hand-back
+	// spends several of them.
+	seen := claims.Load()
+	dbtest.WaitFor(t, 3*time.Second, "the free worker to keep looking at the waiting job", func() bool {
+		return claims.Load() > seen+claimsToWatch
+	})
 	if got := running.Load(); got != 1 {
 		t.Fatalf("%d watch jobs run at the same time, want 1", got)
 	}
@@ -163,6 +178,11 @@ func TestQueueCapsJobsOfOneType(t *testing.T) {
 		t.Errorf("peak of %d concurrent watch jobs, want 1", got)
 	}
 }
+
+// claimsToWatch is how many clock reads — and so how many queue cycles — the
+// cap has to survive in TestQueueCapsJobsOfOneType. A cycle spends several, so
+// this is comfortably more cycles than a claim every poll interval would give.
+const claimsToWatch = 200
 
 // A deadline turns a job that runs too long into a failed job with a reason an
 // operator can read, and it is retried no more often than any other transient
@@ -206,39 +226,114 @@ func TestQueueDeadlineFailsTheJob(t *testing.T) {
 // The deadline is a bound and not a kill switch: a handler that ignores it and
 // returns on its own is recorded as what it did. Interrupting it is the
 // handler's job, and filesystem I/O does not take a hint.
+//
+// The clock here is the product's own. A handler that sleeps for longer than
+// the deadline only proves the point as long as it really did outlast it, and
+// whether it did depends on how loaded the machine is. So the handler blocks
+// until the test lets it go, and a second job — one the policy does put a
+// deadline on — is enqueued *after* the first handler is running, so that
+// deadline expires strictly later than the first job's own. When the second
+// job has failed on it, one whole budget has passed with the first handler
+// still inside its call.
 func TestQueueDeadlineDoesNotCutAHandlerShort(t *testing.T) {
 	database := openQueueDB(t)
-	q := testQueue(database, func(context.Context, Job) (float64, string, error) {
-		time.Sleep(120 * time.Millisecond)
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	letgo := sync.OnceFunc(func() { close(release) })
+	defer letgo()
+	q := testQueue(database, func(ctx context.Context, job Job) (float64, string, error) {
+		if job.Typ != TypWatch {
+			// The control: it is the one whose deadline is allowed to fire, and
+			// its failure is the event the test waits for.
+			<-ctx.Done()
+			return 0, "", ctx.Err()
+		}
+		// A deadline that fires cancels the context — that is what a deadline
+		// is. What it must not do is end the call, so this handler never looks
+		// at the context: it is filesystem work, and work like that does not
+		// take a hint.
+		signal(started)
+		<-release
 		return 0.12, "", nil
 	})
+	q.Workers = 2
 	q.Policy = Policy{DefaultTimeout: 30 * time.Millisecond}
 	runQueue(t, q)
 
-	id, err := q.Enqueue(context.Background(), "watch", "{}")
+	ctx := context.Background()
+	id, err := q.Enqueue(ctx, TypWatch, "{}")
 	if err != nil {
 		t.Fatal(err)
 	}
+	waitStarted(t, started, "the watch job")
+	control, err := q.Enqueue(ctx, TypNotify, "{}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, database, control, "fehler")
+	if row := jobRow(t, database, id); row.Status != "laeuft" {
+		t.Fatalf("the watch job is %q after its deadline passed, want laeuft; the deadline bounds a job, it does not interrupt it", row.Status)
+	}
+	letgo()
 	waitStatus(t, database, id, "fertig")
 }
 
 // The recognition is the user-visible path and must not gain a failure mode: it
 // keeps its own BELEGAPP_LLM_TIMEOUT and gets no deadline from the queue, even
 // though every other type does.
+//
+// Which means the assertion is about a stretch of time in which nothing
+// happened, and the only clock that can say how long that is without guessing
+// is a deadline that really did fire. An intake job is enqueued after the
+// recognition is already running, so its deadline expires strictly later than
+// the one the recognition would have had — and the recognition is still in its
+// handler when it does.
+//
+// The handler is also the one that reports what its context was, because that
+// is the property. Having it return ctx.Err() instead would ask the same
+// question of its *second* attempt, whose context is milliseconds old: a
+// recognition that had been given a deadline would fail once, be retried, and
+// then sail through, and the test would be green on the bug it is here for.
 func TestQueueLeavesErkennungWithoutADeadline(t *testing.T) {
 	database := openQueueDB(t)
-	q := testQueue(database, func(context.Context, Job) (float64, string, error) {
-		time.Sleep(120 * time.Millisecond)
+	started := make(chan struct{}, 1)
+	proceed := make(chan struct{})
+	letgo := sync.OnceFunc(func() { close(proceed) })
+	defer letgo()
+	var deadlineSeen atomic.Bool
+	q := testQueue(database, func(ctx context.Context, job Job) (float64, string, error) {
+		if job.Typ != TypErkennung {
+			<-ctx.Done()
+			return 0, "", ctx.Err()
+		}
+		signal(started)
+		<-proceed
+		deadlineSeen.Store(ctx.Err() != nil)
 		return 0.12, "", nil
 	})
+	q.Workers = 2
 	q.Policy = DefaultPolicy(30*time.Millisecond, nil)
 	runQueue(t, q)
 
-	id, err := q.Enqueue(context.Background(), "erkennung", `{"bild_id":"b"}`)
+	ctx := context.Background()
+	id, err := q.Enqueue(ctx, TypErkennung, `{"bild_id":"b"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
+	waitStarted(t, started, "the recognition job")
+	control, err := q.Enqueue(ctx, TypNotify, "{}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, database, control, "fehler")
+	if row := jobRow(t, database, id); row.Status != "laeuft" {
+		t.Fatalf("the recognition is %q after an intake job failed on a deadline it was given, want laeuft", row.Status)
+	}
+	letgo()
 	waitStatus(t, database, id, "fertig")
+	if deadlineSeen.Load() {
+		t.Error("the recognition handler saw its context cancelled; it bounds its own model call and takes no deadline from the queue")
+	}
 }
 
 // The policy the application runs with, as the properties the rest of this file
@@ -289,46 +384,57 @@ func TestDefaultPolicy(t *testing.T) {
 // policy gives it none — and it is the only user-initiated type in the queue.
 func TestDataExportKeepsNoDeadline(t *testing.T) {
 	database := openQueueDB(t)
-	q := testQueue(database, func(ctx context.Context, _ Job) (float64, string, error) {
-		select {
-		case <-ctx.Done():
-		case <-time.After(10 * time.Second):
+	started := make(chan struct{}, 1)
+	proceed := make(chan struct{})
+	letgo := sync.OnceFunc(func() { close(proceed) })
+	defer letgo()
+	// What the export's own context was, once the intake deadline had provably
+	// passed, is the whole property — see the recognition test above for why it
+	// is the handler that looks rather than its return value.
+	var deadlineSeen atomic.Bool
+	q := testQueue(database, func(ctx context.Context, job Job) (float64, string, error) {
+		if job.Typ != TypDatenexport {
+			// The control: the intake deadline is allowed to fire on it, and
+			// its failure is the event that says the deadline has passed.
+			<-ctx.Done()
+			return 0, "", ctx.Err()
 		}
-		return 0.1, "", ctx.Err()
+		signal(started)
+		<-proceed
+		deadlineSeen.Store(ctx.Err() != nil)
+		return 0.1, "", nil
 	})
 	// The same operator deadline the recognition test above is measured
-	// against, only three seconds longer than the export sleeps.
+	// against.
 	q.Policy = DefaultPolicy(100*time.Millisecond, nil)
-	// Two workers, so the export that sleeps for ten seconds does not keep the
-	// mail job behind it out of the queue: the point is the deadline, not the
-	// cap.
+	// Two workers, so the export that blocks does not keep the mail job behind
+	// it out of the queue: the point is the deadline, not the cap.
 	q.Workers = 2
 	runQueue(t, q)
 
 	ctx := context.Background()
-	export, err := q.Enqueue(ctx, "datenexport", `{"akteur":"test"}`)
+	export, err := q.Enqueue(ctx, TypDatenexport, `{"akteur":"test"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mail, err := q.Enqueue(ctx, "mail", "{}")
+	waitStarted(t, started, "the data export")
+	// Enqueued after the export is already running, so this job's deadline
+	// expires strictly later than the export's own would have.
+	mail, err := q.Enqueue(ctx, TypMail, "{}")
 	if err != nil {
 		t.Fatal(err)
 	}
 	waitStatus(t, database, mail, "fehler")
-	// The export sleeps ten seconds and is still there, running: the deadline
-	// the mail job just failed on was not applied to it.
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		row := jobRow(t, database, export)
-		if row.Status == "laeuft" {
-			return
-		}
-		if row.Status == "fehler" {
-			t.Fatalf("the data export hit the intake deadline: %v", row.Fehler)
-		}
-		time.Sleep(20 * time.Millisecond)
+	// The export is still there, running: the deadline the mail job just failed
+	// on was not applied to it.
+	if row := jobRow(t, database, export); row.Status != "laeuft" {
+		t.Fatalf("the data export is %q after a mail job failed on the intake deadline: %v", row.Status, row.Fehler)
 	}
-	t.Fatalf("the data export never started")
+	letgo()
+	waitStatus(t, database, export, "fertig")
+	if deadlineSeen.Load() {
+		t.Error("the data export saw its context cancelled; an operator is waiting for that download")
+	}
 }
 
 // A per-type override is the operator's way to bound one type without touching
@@ -419,20 +525,37 @@ func TestDefaultPolicyLeavesFreeTypesUnbounded(t *testing.T) {
 // An override has to survive the trip through the queue, not just the map: a
 // mail job with its deadline removed runs past the global number that would
 // otherwise have failed it.
+//
+// The control job is enqueued after the mail job is already running, so its
+// deadline expires strictly later than the mail job's would have — which is
+// what makes "still running" a statement about time rather than about a moment
+// the test happened to look.
 func TestQueuePerTypeOverrideRunsPastTheGlobalTimeout(t *testing.T) {
 	database := openQueueDB(t)
-	q := testQueue(database, func(ctx context.Context, _ Job) (float64, string, error) {
-		select {
-		case <-ctx.Done():
+	started := make(chan struct{}, 1)
+	proceed := make(chan struct{})
+	letgo := sync.OnceFunc(func() { close(proceed) })
+	defer letgo()
+	// The handler looks at its own context rather than returning it, so that a
+	// retried attempt with a fresh context cannot pass for the first one — see
+	// the recognition test above.
+	var deadlineSeen atomic.Bool
+	q := testQueue(database, func(ctx context.Context, job Job) (float64, string, error) {
+		if job.Typ != TypMail {
+			// The control keeps the global deadline and fails on it, which is
+			// what says the override is scoped to the one type.
+			<-ctx.Done()
 			return 0, "", ctx.Err()
-		case <-time.After(10 * time.Second):
-			return 0.1, "", nil
 		}
+		signal(started)
+		<-proceed
+		deadlineSeen.Store(ctx.Err() != nil)
+		return 0.1, "", nil
 	})
 	// The global deadline is short enough to fail a mail job on its own; the
 	// override takes it off the type the job below has.
 	q.Policy = DefaultPolicy(50*time.Millisecond, map[string]time.Duration{TypMail: 0})
-	// Two workers, so the control job can start while the mail job sleeps. The
+	// Two workers, so the control job can start while the mail job blocks. The
 	// point is the deadline, not the cap.
 	q.Workers = 2
 	runQueue(t, q)
@@ -442,25 +565,20 @@ func TestQueuePerTypeOverrideRunsPastTheGlobalTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The control job keeps the global deadline and fails on it, which is what
-	// says the override is scoped to the one type.
+	waitStarted(t, started, "the mail job")
 	notify, err := q.Enqueue(ctx, TypNotify, "{}")
 	if err != nil {
 		t.Fatal(err)
 	}
 	waitStatus(t, database, notify, "fehler")
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		row := jobRow(t, database, mail)
-		if row.Status == "fehler" {
-			t.Fatalf("the mail job hit the global deadline: %v", row.Fehler)
-		}
-		if row.Status == "laeuft" {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
+	if row := jobRow(t, database, mail); row.Status != "laeuft" {
+		t.Fatalf("the mail job is %q after the global deadline passed, want laeuft: %v", row.Status, row.Fehler)
 	}
-	t.Fatalf("the mail job never started")
+	letgo()
+	waitStatus(t, database, mail, "fertig")
+	if deadlineSeen.Load() {
+		t.Error("the mail job saw the global deadline; the per-type override was not scoped to its type")
+	}
 }
 
 // internal/config holds the environment variable names, and the type strings
@@ -529,12 +647,7 @@ func jobRow(t *testing.T, database *db.DB, id string) db.Job {
 
 func waitRunning(t *testing.T, running *atomic.Int32, want int32) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if running.Load() == want {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("%d jobs in the handler, want %d", running.Load(), want)
+	dbtest.WaitFor(t, 3*time.Second, fmt.Sprintf("%d jobs in the handler", want), func() bool {
+		return running.Load() == want
+	})
 }
