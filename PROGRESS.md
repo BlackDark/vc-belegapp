@@ -207,16 +207,22 @@ Maßgeblich ist die Tabelle in [configuration](docs/configuration.md); hier nur 
 Die verbindlichen Listen stehen in [SPEC](docs/SPEC.md) §19, nicht hier. Beides braucht noch eine Antwort
 des Eigentümers:
 
-- **§19.1** — beantwortet und mit Datum in [SPEC](docs/SPEC.md) §19.1 festgehalten: **Nr. 1, 2, 6, 7** am 15.10.
-  (höchstens eine bezuschusste Mahlzeit je Tag; Höchstzuschuss `SBW + 3,10 €`; Fotos genügen; Homeoffice und
-  Kantine akzeptiert), **Nr. 4 und 5** am 14.10. (Eigenanteil-Variante `standard`, Monatslimit 15). Offen bleiben
-  **Nr. 3** (Kirchensteuerverfahren) und aus Nr. 2 die Frage „Zusätzlich oder Gehaltsumwandlung" — beide ändern die
-  Berechnung nicht. **Nr. 8** (Übergabeweg) ist unberührt; U1 beantwortet davon nur die Beschaffung der amtlichen
-  Werte aus der API. **§19.3** — am 15.10. bestätigt: **Nr. 1, Nr. 3** (kein Entsperren), **Nr. 11** (Import ersetzt
-  alles, mit Sicherung davor), **Nr. 12**; am 14.10. **Nr. 8**. Offen bleiben **Nr. 2, 4, 5, 6, 9, 10** sowie aus
-  Nr. 7 der Modus (`warnen` oder blockieren). Dazu zwei Bestätigungen außerhalb von §19, weil sie nirgends eine
+- **§19.1** — beantwortet und mit Datum in [SPEC](docs/SPEC.md) §19.1 festgehalten: **Nr. 1, 2, 6, 7, 8** am 15.10.
+  (höchstens eine bezuschusste Mahlzeit je Tag; Höchstzuschuss `SBW + 3,10 €` **als Zusatzbetrag**, nicht als
+  Gehaltsumwandlung; Fotos genügen; Homeoffice und Kantine akzeptiert; alle drei Übergabewege in Benutzung),
+  **Nr. 4 und 5** am 14.10. (Eigenanteil-Variante `standard`, Monatslimit 15). Offen bleibt allein
+  **Nr. 3** (Kirchensteuerverfahren), unverändert seit dem 14.10. **§19.3** — vollständig bestätigt: am 15.10.
+  **Nr. 1, 3** (kein Entsperren), **Nr. 2** (ein Bundesland, ein Kalender für die ganze App), **Nr. 4**
+  (Vorschau sperrt nie), **Nr. 5** (Arbeitnehmererklärung wird nicht erfasst), **Nr. 6** (Umwandlung +
+  Pauschalierung nur Warnung), **Nr. 7** (Limit-Modus `warnen`: warnt nur, blockiert nie), **Nr. 9** (Passwort nur per Env,
+  Allowlist Pflicht), **Nr. 10** (nur das normalisierte Bild), **Nr. 11** (Import ersetzt alles, mit Sicherung
+  davor), **Nr. 12**; am 14.10. **Nr. 8**. Dazu zwei Bestätigungen außerhalb von §19, weil sie nirgends eine
   offene Frage waren: der gemeinsame `zuschuss_cent` (§5.3) und die Vorgabe `mittag` allein bei einer neuen
-  Jahresregel (§5.2, §5.3). Alle vier stehen in [NOTES](docs/NOTES.md).
+  Jahresregel (§5.2, §5.3). Alle stehen in [NOTES](docs/NOTES.md).
+
+Ergänzt am 15.10. ist außerdem **Ganzlabel-Platzhalter in der OIDC-Allowlist** (`*@example.de`, `*@*.example.de`,
+`*`): eine ganze Domain oder alle zuzulassen, ohne die Allowlist optional zu machen. Siehe
+[`docs/configuration.md`](docs/configuration.md#the-oidc-email-allowlist).
 
 Diese Sitzung deckt bereits ab, was ohne Antwort auskam: die Eingangswege (IMAP, überwachter Ordner) und
 ihre Anzeige (Liste „Offene Bilder", Webhook) sind umgesetzt und in §19.2 als erledigt vermerkt.

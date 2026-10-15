@@ -32,6 +32,58 @@ func TestAllowlist(t *testing.T) {
 	}
 }
 
+// The email list holds patterns. What has to survive is the old answer: an
+// address that is not listed stays refused, however the list is spelled.
+func TestAllowlistPatterns(t *testing.T) {
+	tests := []struct {
+		name    string
+		emails  []string
+		email   string
+		allowed bool
+	}{
+		{"exact", []string{"eduard@test.de"}, "eduard@test.de", true},
+		{"exact refuses another address", []string{"eduard@test.de"}, "kollege@test.de", false},
+		{"exact is not a prefix", []string{"eduard@test.de"}, "xeduard@test.de", false},
+		{"exact is not a lookalike domain", []string{"eduard@test.de"}, "eduard@teſt.de", false},
+		{"whole domain", []string{"*@test.de"}, "irgendwer@test.de", true},
+		{"whole domain is one domain", []string{"*@test.de"}, "irgendwer@sub.test.de", false},
+		{"whole domain is not a lookalike", []string{"*@test.de"}, "irgendwer@nottest.de", false},
+		{"whole domain is not a prefix of the attacker domain", []string{"*@test.de"}, "irgendwer@test.de.evil.com", false},
+		{"whole domain is not a domain that folds to it", []string{"*@test.de"}, "irgendwer@teſt.de", false},
+		{"domain with subdomains takes the apex", []string{"*@*.test.de"}, "irgendwer@test.de", true},
+		{"domain with subdomains", []string{"*@*.test.de"}, "irgendwer@sub.test.de", true},
+		{"domain with subdomains is not a lookalike", []string{"*@*.test.de"}, "irgendwer@nottest.de", false},
+		{"everybody", []string{"*"}, "irgendwer@ueberall.example", true},
+		{"empty list admits nobody", nil, "irgendwer@test.de", false},
+		{"empty list admits nobody, not even the apex", []string{}, "irgendwer@test.de", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Allow("nope", tt.email, true, nil, tt.emails); got != tt.allowed {
+				t.Fatalf("emails=%v email=%s allowed=%v, want %v", tt.emails, tt.email, got, tt.allowed)
+			}
+		})
+	}
+}
+
+// Case-insensitivity is the matcher's, and it reaches the caller unchanged.
+func TestAllowlistPatternIgnoresCase(t *testing.T) {
+	if !Allow("nope", "Irgendwer@TEST.de", true, nil, []string{"*@test.de"}) {
+		t.Fatal("wildcard domain")
+	}
+	if !Allow("nope", "Irgendwer@Sub.TeSt.De", true, nil, []string{"*@*.test.de"}) {
+		t.Fatal("wildcard subdomain")
+	}
+}
+
+// An entry the matcher cannot read is refused at startup, so it cannot reach
+// this point — and if one ever did, it would have to admit nobody.
+func TestAllowlistSkipsUnreadableEntry(t *testing.T) {
+	if Allow("nope", "irgendwer@test.de", true, nil, []string{"te*@test.de"}) {
+		t.Fatal("an unparseable entry must not admit anybody")
+	}
+}
+
 func TestLimiter(t *testing.T) {
 	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	lim := &Limiter{Now: func() time.Time { return now }, Window: 15 * time.Minute, PerIP: 5, Global: 20}

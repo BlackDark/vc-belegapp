@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BlackDark/vc-belegapp/internal/allowlist"
 	"github.com/BlackDark/vc-belegapp/internal/export"
 )
 
@@ -178,6 +179,9 @@ func (c *Config) validateBaseURL() error {
 func (c *Config) validateOIDC() error {
 	c.OIDCAllowedSubjects = splitList(c.OIDCSubjectsRaw)
 	c.OIDCAllowedEmails = splitList(c.OIDCEmailsRaw)
+	if err := validateEmailPatterns(c.OIDCAllowedEmails); err != nil {
+		return err
+	}
 	if c.OIDCIssuerURL == "" {
 		return nil
 	}
@@ -192,13 +196,36 @@ func (c *Config) validateOIDC() error {
 		return fmt.Errorf("BELEGAPP_BASE_URL is required when OIDC is enabled")
 	}
 	if len(c.OIDCAllowedSubjects) == 0 && len(c.OIDCAllowedEmails) == 0 {
-		return fmt.Errorf("BELEGAPP_OIDC_ALLOWED_SUBJECTS or BELEGAPP_OIDC_ALLOWED_EMAILS is required when OIDC is enabled (use \"*\" to admit every verified email at the issuer)")
+		return fmt.Errorf("BELEGAPP_OIDC_ALLOWED_SUBJECTS or BELEGAPP_OIDC_ALLOWED_EMAILS is required when OIDC is enabled (use \"*@example.de\" for one whole domain, or \"*\" for every verified email at the issuer)")
 	}
 	if strings.TrimSpace(c.OIDCScopes) == "" {
 		return fmt.Errorf("BELEGAPP_OIDC_SCOPES is empty")
 	}
 	if strings.TrimSpace(c.OIDCButtonLabel) == "" {
 		return fmt.Errorf("BELEGAPP_OIDC_BUTTON_LABEL is empty")
+	}
+	return nil
+}
+
+// validateEmailPatterns refuses an allowlist entry the matcher cannot read.
+//
+// The whole-label wildcard syntax is four forms — "*", "*@domain",
+// "*@*.domain" and an exact address — and everything else is a typo. A typo is
+// a startup error rather than an entry that quietly matches nobody: whoever
+// wrote "te*@test.de" believes every colleague at test.de can log in, and the
+// symptom of an entry that quietly does nothing is that colleague standing at
+// the login screen with a list that looks perfectly fine. The allowlist is the
+// only thing between the internet and this application's data, so an entry that
+// cannot be read is a hole, not a cosmetic problem.
+//
+// It runs even when no issuer is set. The variable is read either way, and a
+// pattern that is wrong today is still wrong on the day OIDC is switched on —
+// which is the day nobody is watching the startup log.
+func validateEmailPatterns(entries []string) error {
+	for _, entry := range entries {
+		if _, err := allowlist.Parse(entry); err != nil {
+			return fmt.Errorf("BELEGAPP_OIDC_ALLOWED_EMAILS: %w", err)
+		}
 	}
 	return nil
 }
