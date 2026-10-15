@@ -16,8 +16,13 @@ import (
 // store, so the caller can log what arrived. Data holds the bytes only for the
 // picture types the source reads; it is nil for anything else, and it is capped
 // at one byte more than the source was told to allow, so the caller can tell
-// "at the cap" from "over the cap". Err is set only when the transfer itself
-// failed. Usable says whether there is something to store at all.
+// "at the cap" from "over the cap". Err is set when the transfer itself failed,
+// and on the last entry of a message the source stopped decoding: that entry
+// carries no type and no bytes, only the reason the sum of a part, or the
+// number of parts, ran past what one message may hold. The pictures decoded
+// before it are complete and usable, so a caller treats this one like any other
+// part it cannot store — log it, skip it, carry on. Usable says whether there
+// is something to store at all.
 type Attachment struct {
 	Filename string
 	MimeType string

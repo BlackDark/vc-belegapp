@@ -56,6 +56,12 @@ type Service struct {
 	MailDoneFolder     string
 	MailAllowedSenders []string
 
+	// unflagged is this process' own note of the messages it has stored and
+	// the server has not acknowledged yet. It is not operator configuration and
+	// it holds nothing but UIDs; see mailConsumed in mailbox.go for why the
+	// marker alone is not enough.
+	unflagged mailConsumed
+
 	// Notify posts the bild.pruefen webhook when an image lands unassigned. It
 	// is nil unless the operator set BELEGAPP_NOTIFY_WEBHOOK_URL, and
 	// enqueueBildPruefen returns on that check, so an instance without the
