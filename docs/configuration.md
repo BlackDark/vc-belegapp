@@ -24,7 +24,7 @@ Every variable uses the prefix `BELEGAPP_`. A secret may be set as `BELEGAPP_<NA
 | `BELEGAPP_OIDC_CLIENT_SECRET`, `BELEGAPP_OIDC_CLIENT_SECRET_FILE` | empty | Empty means a public client (PKCE only) |
 | `BELEGAPP_OIDC_SCOPES` | `openid profile email` | Space-separated scopes |
 | `BELEGAPP_OIDC_ALLOWED_SUBJECTS` | empty | Comma-separated `sub` values |
-| `BELEGAPP_OIDC_ALLOWED_EMAILS` | empty | Comma-separated emails, or `*` for every verified email at the issuer. A match also requires `email_verified`. At least one of the two allowlists must be set |
+| `BELEGAPP_OIDC_ALLOWED_EMAILS` | empty | Comma-separated addresses or wildcard patterns, or `*` for every verified email at the issuer. A match also requires `email_verified`. At least one of the two allowlists must be set — see [The OIDC email allowlist](#the-oidc-email-allowlist) |
 | `BELEGAPP_OIDC_BUTTON_LABEL` | `Mit SSO anmelden` | Label of the OIDC button |
 | `BELEGAPP_OIDC_RP_LOGOUT` | `false` | After local logout, redirect to the provider end-session endpoint when it exists |
 | `BELEGAPP_STORAGE_BACKEND` | `fs` | `fs` or `s3` |
@@ -83,6 +83,25 @@ Every variable uses the prefix `BELEGAPP_`. A secret may be set as `BELEGAPP_<NA
 <!-- config-env-end -->
 
 `serve` requires `BELEGAPP_AUTH_PASSWORD_HASH` or `BELEGAPP_OIDC_ISSUER_URL`. OIDC also needs a client id and at least one allowlist (`sub` or verified email). Incomplete OIDC or S3 configuration is a startup error. `migrate` does not need authentication. Discovery retries in the background; until it succeeds, `/api/v1/auth/config` reports OIDC as off and the process still serves password login. Redirect URI, allowlists, and the reverse proxy are in [deployment.md](deployment.md).
+
+## The OIDC email allowlist
+
+`BELEGAPP_OIDC_ALLOWED_EMAILS` is a comma-separated list of addresses and **whole-label wildcard patterns**. A `*` stands for one entire label — the whole local part, or the leading domain label — and for nothing else:
+
+| Entry | Admits | Does not admit |
+| --- | --- | --- |
+| `eduard@example.de` | `eduard@example.de` | `someone@example.de`, `xeduard@example.de`, `eduard@example.de.evil.com` |
+| `*@example.de` | every address at exactly `example.de` | `someone@sub.example.de`, `someone@notexample.de`, `someone@example.de.evil.com` |
+| `*@*.example.de` | every address at `example.de` **and** at any subdomain of it | `someone@example.de.evil.com` |
+| `*` | every verified address at the issuer | — |
+
+Matching is case-insensitive. Everything that is not `*` is compared literally, label by label — there is no substring match and no regular expression anywhere in it, which is why `example.de` never matches `notexample.de` and never matches `example.de.evil.com`. Case-insensitivity covers ASCII only: `Eduard@Example.de` matches `eduard@example.de`, but a name that merely looks like the domain — `teſt.de`, spelled with a U+017F that folds to `s` — does not, and neither does the reverse.
+
+The one form that is not obvious from the table is `*@*.example.de`. The wildcard replaces the **leading** label only, and the name below it is the apex as well: it admits `x@example.de`, `x@a.example.de` and `x@a.b.example.de`. Use it when a company runs `example.de` plus several subdomains; use `*@example.de` when it runs one domain and you mean that one and nothing under it.
+
+Anything that is not one of these forms is **refused at startup**, with the offending entry named in the message: `te*@example.de` (a `*` that is not a whole label), `user@*example.de`, `user@`, `@example.de`, `user@example..de`, `example.de`. An entry nobody can read is an allowlist hole with no error attached to it — the symptom is a colleague standing at the login screen, refused, next to a list that looks perfectly fine.
+
+The allowlist stays **required**. With OIDC enabled, an empty `BELEGAPP_OIDC_ALLOWED_EMAILS` together with an empty `BELEGAPP_OIDC_ALLOWED_SUBJECTS` is a startup error, exactly as before. `*` is how an operator says *everybody*: an explicit entry, visible in the config file, rather than a list somebody left empty.
 
 ## The job queue
 
