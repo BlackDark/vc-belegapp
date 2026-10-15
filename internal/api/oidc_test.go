@@ -47,13 +47,7 @@ func TestOIDCAllowAndDeny(t *testing.T) {
 		Secret:       secret,
 	})
 	go oidcClient.Maintain(ctx)
-	deadline := time.Now().Add(5 * time.Second)
-	for !oidcClient.Ready() {
-		if time.Now().After(deadline) {
-			t.Fatal("oidc discovery timeout")
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	dbtest.WaitFor(t, 5*time.Second, "oidc discovery", oidcClient.Ready)
 	sessions := &auth.Sessions{DB: database, Idle: time.Hour, Absolute: 2 * time.Hour}
 	h, err := server.New(server.Options{
 		Frontend: fstest.MapFS{"index.html": {Data: []byte("Belegapp")}},

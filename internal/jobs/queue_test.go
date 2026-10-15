@@ -2,14 +2,14 @@ package jobs
 
 import (
 	"context"
-	"os"
-	"path/filepath"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/BlackDark/vc-belegapp/internal/db"
+	"github.com/BlackDark/vc-belegapp/internal/db/dbtest"
 )
 
 type kindErr struct {
@@ -20,32 +20,12 @@ type kindErr struct {
 func (e *kindErr) Error() string     { return e.text }
 func (e *kindErr) RetryKind() string { return e.kind }
 
+// openQueueDB is the queue suite's database. It is dbtest.Open because that is
+// where the temp directory is created and, more to the point, where it is taken
+// away again — see databaseDir there for why the removal is not a sleep.
 func openQueueDB(t *testing.T) *db.DB {
 	t.Helper()
-	database, err := db.Open(filepath.Join(t.TempDir(), "belegapp.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Closing the pools is not quite enough to make the directory removable.
-	// database/sql opens connections on a goroutine of its own, and that
-	// goroutine can still be inside sqlite3_open_v2 when Close returns: the
-	// open recreates the -wal and -shm sidecars, and they go away again only
-	// when that connection closes. Under a test that churns connections hard
-	// the recreation can land after t.TempDir has scanned the directory, and
-	// the test then fails with "directory not empty" for a reason that has
-	// nothing to do with what it asserts. Give the opener a moment, then take
-	// the leftovers with the database file.
-	t.Cleanup(func() {
-		_ = database.Close()
-		time.Sleep(10 * time.Millisecond)
-		for _, suffix := range []string{"-wal", "-shm", "-journal"} {
-			_ = os.Remove(database.Path + suffix)
-		}
-	})
-	if err := db.Migrate(context.Background(), database.Write); err != nil {
-		t.Fatal(err)
-	}
-	return database
+	return dbtest.Open(t)
 }
 
 // testPoll is the queue poll interval every fixture in this package uses.
@@ -87,24 +67,48 @@ func runQueue(t *testing.T, q *Queue) context.CancelFunc {
 // waitStatus polls the row rather than the job's own channel, because the
 // status write is the last thing a worker does: a test that waited for the
 // handler's return would pass on a queue that never wrote the row down. The
-// poll is one millisecond because the queue is; a coarser sleep would put the
-// test's own latency in front of every retry it waits for.
+// wait is dbtest's, so a busy machine costs it time rather than correctness.
 func waitStatus(t *testing.T, database *db.DB, id, status string) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	var last string
-	for time.Now().Before(deadline) {
+	dbtest.WaitFor(t, 3*time.Second, fmt.Sprintf("job %s to reach %q", id, status), func() bool {
 		row, err := db.New(database.Write).GetJob(context.Background(), id)
 		if err != nil {
 			t.Fatal(err)
 		}
-		last = row.Status
-		if row.Status == status {
-			return
+		// "fehler" is where a job stays once it has failed, so waiting for
+		// anything else and finding it there is the answer already, and saying
+		// why beats letting the timeout report it.
+		if row.Status == "fehler" && status != "fehler" {
+			t.Fatalf("job %s failed instead of reaching %q: %v", id, status, row.Fehler)
 		}
-		time.Sleep(time.Millisecond)
+		return row.Status == status
+	})
+}
+
+// waitStarted blocks until a handler has reported that it is running.
+//
+// The moment a job is claimed and its handler is entered is the moment its
+// deadline starts counting, so a test that goes on to assert the job is still
+// running after some other job's deadline has fired has to know where that
+// clock began. Waiting on the handler's own signal is that knowledge; a sleep
+// would only guess at it.
+func waitStarted(t *testing.T, started <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("%s never started", what)
 	}
-	t.Fatalf("status %s, want %s", last, status)
+}
+
+// signal reports that a handler is running, once, and never blocks. The
+// handlers that use it outlive their own job — a retried attempt would fill
+// the buffer and then wait for a reader that has long since gone.
+func signal(started chan<- struct{}) {
+	select {
+	case started <- struct{}{}:
+	default:
+	}
 }
 
 func TestQueueRetriesTransientThenSucceeds(t *testing.T) {
@@ -251,19 +255,11 @@ func TestQueueOnResultNamesTheJobType(t *testing.T) {
 		}
 	}
 	runQueue(t, q)
-	deadline := time.Now().Add(3 * time.Second)
-	for {
+	dbtest.WaitFor(t, 3*time.Second, fmt.Sprintf("OnResult to report all %d job types", len(jobTypes)), func() bool {
 		mu.Lock()
-		done := len(results) == len(jobTypes)
-		mu.Unlock()
-		if done {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("OnResult reported %d of %d job types", len(results), len(jobTypes))
-		}
-		time.Sleep(15 * time.Millisecond)
-	}
+		defer mu.Unlock()
+		return len(results) == len(jobTypes)
+	})
 	mu.Lock()
 	defer mu.Unlock()
 	for typ, want := range map[string]string{

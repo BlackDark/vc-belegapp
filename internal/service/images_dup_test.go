@@ -267,6 +267,108 @@ func TestAttachBilderSurvivesAFailedDuplicateLookup(t *testing.T) {
 	assertLogged(t, buf.String(), "duplicate lookup failed", "beleg-ziel")
 }
 
+// The pathological case the batched lookup has to survive: one hash, many
+// receipts. A folder watcher that uploads the same file twice leaves the same
+// picture on both receipts, so the receipt being read is not the only one
+// holding its hash, and nothing bounds how many others there are.
+//
+// The hint is still one per image — that is all the answer is — so the read
+// behind it has to be bounded by the hashes the page asked about and not by the
+// receipts that happen to share them. Seeding forty is the point of this test:
+// an unbounded lookup answers with forty rows for one image, and the cost of
+// the month view grows with the archive instead of with the page.
+func TestDuplicateBilderByRowStaysBoundedWhenOneHashIsOnManyReceipts(t *testing.T) {
+	ctx := context.Background()
+	svc := openService(t, nil)
+	seedDupBeleg(t, svc, "beleg-ziel", 1, false, [][2]string{{"sha-viel", "up-ziel"}})
+	const shared = 40
+	for i := 0; i < shared; i++ {
+		seedDupBeleg(t, svc, fmt.Sprintf("beleg-%02d", i), i+2, false,
+			[][2]string{{"sha-viel", fmt.Sprintf("up-%02d", i)}})
+	}
+	rows := dupRows(t, svc, "beleg-ziel")
+	if len(rows) != 1 {
+		t.Fatalf("the receipt holds %d images, want 1", len(rows))
+	}
+
+	// The query itself: forty receipts share the hash, so an unbounded read is
+	// forty rows and a bounded one is one.
+	found, err := db.New(svc.DB.Read).FindDuplicateBilder(ctx, db.FindDuplicateBilderParams{
+		ExcludeID:     "beleg-ziel",
+		Sha256s:       []string{"sha-viel"},
+		UploadSha256s: []string{"up-ziel"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) != 1 {
+		t.Fatalf("%d rows for a hash %d receipts share, want 1", len(found), shared)
+	}
+
+	// And the answer the caller builds from it: one hint, naming the lowest of
+	// the receipts carrying the hash.
+	counter := &countingDBTX{DBTX: svc.DB.Read}
+	got := svc.duplicateBilderByRow(ctx, db.New(counter), "beleg-ziel", rows)
+	if len(got) != 1 {
+		t.Fatalf("%d hints for an image %d receipts share, want 1", len(got), shared)
+	}
+	if hint := got["beleg-ziel-0"]; hint == nil || *hint != "beleg-00" {
+		t.Errorf("the hint is %v, want beleg-00 (the lowest of the receipts sharing the hash)", hint)
+	}
+	if n := counter.total(); n != 1 {
+		t.Errorf("the lookup ran %d queries for an image %d receipts share, want 1", n, shared)
+	}
+}
+
+// The two halves the lookup ORs are two answers, and the lower receipt id is
+// the one that wins whichever half it came from. An image whose upload hash is
+// held by a receipt that sorts before the one holding its sha256 has to name
+// that earlier receipt: the old read picked the first match in id order across
+// both columns, and a hint that names a different receipt depending on which
+// column matched is one nobody can follow up.
+func TestDuplicateBilderByRowPrefersTheLowerIdAcrossBothHashColumns(t *testing.T) {
+	ctx := context.Background()
+	svc := openService(t, nil)
+	seedDupBeleg(t, svc, "beleg-ziel", 1, false, [][2]string{{"sha-hoch", "up-niedrig"}})
+	seedDupBeleg(t, svc, "beleg-a-frueher", 2, false, [][2]string{{"sha-anders", "up-niedrig"}})
+	seedDupBeleg(t, svc, "beleg-z-spaeter", 3, false, [][2]string{{"sha-hoch", "up-anders"}})
+	rows := dupRows(t, svc, "beleg-ziel")
+
+	got := svc.duplicateBilderByRow(ctx, db.New(svc.DB.Read), "beleg-ziel", rows)
+	hint := got["beleg-ziel-0"]
+	if hint == nil || *hint != "beleg-a-frueher" {
+		t.Fatalf("the hint is %v, want beleg-a-frueher (upload_sha256 match, lower id)", hint)
+	}
+}
+
+// A hash is only comparable to the column it was matched in, and the page's two
+// sets overlap: sha256 is the digest of the normalised JPEG, upload_sha256 the
+// digest of the file that was uploaded, so a hash one of a receipt's images
+// carries in one column is routinely what another of its images carries in the
+// other. A lookup that folded the two columns into one map would answer "this
+// picture is on that receipt" for a match the per-image lookup does not make —
+// here it would put the hint on the image whose sha256 is "X" because a
+// different image, and the other receipt, hold "X" as an upload hash.
+func TestDuplicateBilderByRowKeepsTheTwoHashColumnsApart(t *testing.T) {
+	ctx := context.Background()
+	svc := openService(t, nil)
+	// The page holds the hash "X" twice: once as a sha256, once as an upload
+	// hash. Only the second of its images is the duplicate.
+	seedDupBeleg(t, svc, "beleg-ziel", 1, false, [][2]string{{"X", "A"}, {"B", "X"}})
+	// The other receipt carries "X" in its upload column and nothing else that
+	// either image here shares.
+	seedDupBeleg(t, svc, "beleg-anders", 2, false, [][2]string{{"C", "X"}})
+	rows := dupRows(t, svc, "beleg-ziel")
+
+	got := svc.duplicateBilderByRow(ctx, db.New(svc.DB.Read), "beleg-ziel", rows)
+	if hint := got["beleg-ziel-0"]; hint != nil {
+		t.Errorf("the image with sha256 X is reported as a duplicate of %s; the match is on the other image's upload_sha256", *hint)
+	}
+	if hint := got["beleg-ziel-1"]; hint == nil || *hint != "beleg-anders" {
+		t.Errorf("the image with upload_sha256 X is %v, want beleg-anders", hint)
+	}
+}
+
 // countingDBTX counts the statements db.Queries sends. It embeds the pool, so
 // everything else about the connection is the one the application uses.
 type countingDBTX struct {

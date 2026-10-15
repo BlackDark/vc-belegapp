@@ -630,6 +630,13 @@ func (s *Service) attachBilder(ctx context.Context, q *db.Queries, beleg *Beleg)
 // month view of several receipts turned into a hundred duplicate lookups a
 // request.
 //
+// The answer is one row per hash the page asked about, and so is everything
+// built on top of it. That is not a detail: a picture a folder watcher uploaded
+// twice is a hash N receipts share, and an unbounded lookup returned N rows for
+// it, so the map below grew with the archive rather than with the page. Matching
+// per image is what the caller wants anyway — "does SOME other receipt hold
+// this picture" — and the rest of the matches are reads nobody looks at.
+//
 // A row without an answer is simply absent from the map, and a row that matches
 // nothing gets a nil hint — the same answer the per-image lookup gave.
 //
@@ -638,6 +645,19 @@ func (s *Service) attachBilder(ctx context.Context, q *db.Queries, beleg *Beleg)
 // the per-image version swallowed the failure for the same reason GetBild does.
 // It is logged, because a lookup that always fails is a broken feature nobody
 // would otherwise notice.
+
+// The two columns FindDuplicateBilder names a match by. A hash is only
+// comparable to the column it was matched in, and the page's two sets overlap:
+// sha256 is the digest of the normalised JPEG, upload_sha256 the digest of the
+// file that was uploaded, so a hash one of a receipt's images carries in one
+// column is routinely what another of its images carries in the other. One map
+// for both sets would answer "this image is on that receipt" for a match the
+// per-image lookup does not make.
+//
+// The query numbers the sha256 column 0 and this one; only the second is named,
+// because the other is what a row is when nothing says otherwise.
+const quelleUpload = 1
+
 func (s *Service) duplicateBilderByRow(ctx context.Context, q *db.Queries, belegID string, rows []db.Belegbilder) map[string]*string {
 	if len(rows) == 0 {
 		return nil
@@ -657,23 +677,36 @@ func (s *Service) duplicateBilderByRow(ctx context.Context, q *db.Queries, beleg
 		s.logWarn("duplicate lookup failed", "beleg_id", belegID, "err", err)
 		return nil
 	}
-	out := make(map[string]*string, len(found))
-	// The query orders by b.id, i.id, so the first hit for an image is a fixed
-	// one. FindDuplicateBild took whichever row SQLite happened to hand back
-	// first; with more than one candidate either answer is the same answer, and
-	// a deterministic one is worth more than an arbitrary repeat of the old
-	// plan's choice.
+	// The query answers per hash and per column, and the two halves it ORs can
+	// name the same hash twice, so the lowest receipt id is the one both halves
+	// agree on. Lowest is the rule the query used to express with ORDER BY b.id,
+	// i.id: an image with more than one candidate gets the same receipt every
+	// time, where FindDuplicateBild took whichever row SQLite handed back first.
+	bySHA := make(map[string]string, len(found))
+	byUpload := make(map[string]string, len(found))
 	for _, hit := range found {
-		for _, row := range rows {
-			if _, done := out[row.ID]; done {
-				continue
-			}
-			if hit.Sha256 != row.Sha256 && hit.UploadSha256 != row.UploadSha256 {
-				continue
-			}
-			other := hit.ID
-			out[row.ID] = &other
+		into := bySHA
+		if hit.Quelle == quelleUpload {
+			into = byUpload
 		}
+		if lowest, seen := into[hit.Hash]; !seen || hit.ID < lowest {
+			into[hit.Hash] = hit.ID
+		}
+	}
+	out := make(map[string]*string, len(rows))
+	for _, row := range rows {
+		other, ok := bySHA[row.Sha256]
+		// An image can match on its upload hash with a lower receipt id than the
+		// one its sha256 names, so both halves are compared rather than the first
+		// one taken.
+		if upload, hit := byUpload[row.UploadSha256]; hit && (!ok || upload < other) {
+			other, ok = upload, true
+		}
+		if !ok {
+			continue
+		}
+		hint := other
+		out[row.ID] = &hint
 	}
 	return out
 }
