@@ -23,6 +23,11 @@ type Fake struct {
 	MoveErr  error
 	// Limit caps what Fetch returns even if the caller asked for more.
 	Limit int
+	// UIDValidityValue is the mailbox epoch this fake stands for. Zero (the
+	// default) means the source tracks none, and the polled note is left alone;
+	// a test that raises it between polls simulates a server that rebuilt the
+	// mailbox and reassigned every UID.
+	UIDValidityValue uint32
 
 	mu       sync.Mutex
 	marked   map[imap.UID]bool
@@ -100,6 +105,13 @@ func (f *Fake) MovedUID(uid imap.UID) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.movedUID[uid]
+}
+
+// UIDValidity reports the mailbox epoch this fake stands for.
+func (f *Fake) UIDValidity() uint32 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.UIDValidityValue
 }
 
 // Reset forgets every mark, as a fresh process would see the same mailbox.

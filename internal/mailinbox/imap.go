@@ -49,9 +49,38 @@ type Options struct {
 	// one byte more than the cap so the caller can tell "at the cap" from
 	// "over the cap" without this package having to buffer a hostile part.
 	MaxAttachmentBytes int64
-	Timeout            time.Duration
-	Log                *slog.Logger
+	// MaxMessageBytes caps the decoded attachments of one whole message, and
+	// MaxParts how many of them one message may have. The per-attachment cap
+	// bounds one part; readBody drains every part to reach the next, so a
+	// message with two hundred of them is two hundred times that cap in the
+	// heap before the caller sees a single attachment. These two bound the sum
+	// and the count instead, while the message is being decoded.
+	MaxMessageBytes int64
+	MaxParts        int
+	Timeout         time.Duration
+	Log             *slog.Logger
 }
+
+// The bounds a message is decoded under when the caller sets none.
+//
+// MaxAttachmentBytes bounds one part, and how many parts a message carries is
+// the sender's decision: two hundred image/jpeg parts at the 15 MB default are
+// three gigabytes of heap before internal/service/mailbox.go is handed anything.
+// 64 MiB is the sum that bounds that instead — far above the ten pictures
+// BELEGAPP_MAIL_MAX_ATTACHMENTS_PER_MESSAGE keeps, and well inside the 512 MiB
+// process limit of SPEC NF-3. A forwarded receipt is nowhere near it; only a
+// mail built to be expensive runs into it, and it then keeps the pictures it
+// managed to read.
+//
+// MaxParts bounds a message of many small parts, which the byte cap does not
+// catch: a thousand ten-kilobyte attachments fit in the sum and cost a list
+// entry each. Three times the ten pictures the service keeps per message by
+// default, so the product cap stays the one that decides how many are stored
+// and these two only ever stop a mail that would be expensive to decode.
+const (
+	defaultMaxMessageBytes = 64 << 20
+	defaultMaxParts        = 32
+)
 
 // IMAP is a Source backed by a real IMAP server.
 //
@@ -75,6 +104,14 @@ type IMAP struct {
 	// a way the probe could see. Guarded by mu like the dialer and only ever
 	// touched inside with().
 	keywordUnusable bool
+	// uidValidity is the epoch of the polled mailbox as the last connection saw
+	// it. A UID only names a message inside one epoch (RFC 3501 §2.3.1.1), so
+	// the service compares this from poll to poll and drops a UID it noted
+	// across a change; a server that rebuilds the mailbox reassigns UIDs from
+	// the start, and the note would otherwise skip a brand-new message as one
+	// it had already stored. Guarded by mu like the dialer and written inside
+	// with(); zero means no connection has selected the mailbox yet.
+	uidValidity uint32
 }
 
 // Dialer opens one connection. It exists so the test can hand the client the
@@ -97,6 +134,19 @@ func New(options Options) *IMAP {
 	if options.MaxAttachmentBytes <= 0 {
 		options.MaxAttachmentBytes = 15 << 20
 	}
+	if options.MaxMessageBytes <= 0 {
+		options.MaxMessageBytes = defaultMaxMessageBytes
+	}
+	// The sum is a bound on the total and the per-part cap is a bound on one
+	// part, so the sum is never below it: an operator who allows a 100 MB
+	// picture has to be able to receive one in a mail, and a total cap under
+	// that would drop the very message the per-part cap exists to admit.
+	if options.MaxMessageBytes < options.MaxAttachmentBytes {
+		options.MaxMessageBytes = options.MaxAttachmentBytes
+	}
+	if options.MaxParts <= 0 {
+		options.MaxParts = defaultMaxParts
+	}
 	if options.Timeout <= 0 {
 		options.Timeout = 30 * time.Second
 	}
@@ -110,6 +160,16 @@ func (s *IMAP) Address() string { return s.address }
 
 // DoneFolder is where ingested messages are moved; empty means only flagging.
 func (s *IMAP) DoneFolder() string { return s.options.DoneFolder }
+
+// UIDValidity is the epoch of the polled mailbox as the last connection saw it.
+// UIDs are only unique inside one epoch, so a caller that remembers a UID across
+// polls has to drop it when this value changes. Zero means no connection has
+// selected the mailbox yet.
+func (s *IMAP) UIDValidity() uint32 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.uidValidity
+}
 
 func (s *IMAP) dialTLS(addr string, options *imapclient.Options) (*imapclient.Client, error) {
 	host, _, err := net.SplitHostPort(addr)
@@ -151,9 +211,11 @@ func (s *IMAP) with(ctx context.Context, fn func(*session) error) error {
 	if err := client.Login(s.options.Username, s.options.Password).Wait(); err != nil {
 		return classify(err)
 	}
-	if _, err := client.Select(s.options.Inbox, nil).Wait(); err != nil {
+	selected, err := client.Select(s.options.Inbox, nil).Wait()
+	if err != nil {
 		return classify(err)
 	}
+	s.uidValidity = selected.UIDValidity
 	sess := &session{src: s, client: client}
 	sess.probeKeyword()
 	if err := ctx.Err(); err != nil {
@@ -304,7 +366,7 @@ func (s *session) parseMessage(msg *imapclient.FetchMessageData) (Message, error
 		case imapclient.FetchItemDataUID:
 			out.UID = item.UID
 		case imapclient.FetchItemDataBodySection:
-			if err := readBody(&out, item.Literal, s.src.options.MaxAttachmentBytes); err != nil {
+			if err := readBody(&out, item.Literal, s.src.options); err != nil {
 				return out, err
 			}
 			seen = true
@@ -324,7 +386,21 @@ func (s *session) parseMessage(msg *imapclient.FetchMessageData) (Message, error
 
 // readBody fills the sender and the attachments from one message body. Every
 // error it returns is an *Error for the reason parseMessage gives.
-func readBody(out *Message, literal io.Reader, maxBytes int64) error {
+//
+// The two whole-message bounds are applied here, while the parts are decoded,
+// and not afterwards: a cap the caller checks on the finished list has already
+// paid for the list. What is over one of them is not the message — a receipt
+// mail with two good pictures and a third one built to be expensive still
+// yields its two good pictures — so decoding stops where the bound was reached
+// and the reason is appended as one more attachment carrying an *Error and no
+// bytes. The caller logs it and skips it like any other unusable part, which is
+// the only thing it can do with a part that has none.
+//
+// The parts behind the bound are not read. FetchMessageData.Next drains the
+// literal of the item it leaves behind, so the wire stays in sync and the bytes
+// still arrive — they go into io.Discard rather than into the heap, which is
+// the whole point of stopping.
+func readBody(out *Message, literal io.Reader, options Options) error {
 	reader, err := mail.CreateReader(literal)
 	if err != nil {
 		return transient("Der Nachrichtentext ist nicht lesbar", err)
@@ -337,6 +413,11 @@ func readBody(out *Message, literal io.Reader, maxBytes int64) error {
 	if subject, err := reader.Header.Text("Subject"); err == nil {
 		out.Subject = subject
 	}
+	// room is what the whole message may still decode. It is the sum of what
+	// the parts below read, so it is the total cap and nothing else — no part
+	// is counted twice, and the per-part cap and the total cap meet in one
+	// reader rather than in two nested ones.
+	room := options.MaxMessageBytes
 	for {
 		part, err := reader.NextPart()
 		if err == io.EOF {
@@ -350,11 +431,29 @@ func readBody(out *Message, literal io.Reader, maxBytes int64) error {
 			// The text body is not a receipt. Skip it without reading.
 			continue
 		}
-		out.Attachments = append(out.Attachments, readAttachment(header, part.Body, maxBytes))
+		if len(out.Attachments) >= options.MaxParts {
+			out.Attachments = append(out.Attachments, Attachment{
+				Err: permanent("Die Nachricht hat mehr Anhänge, als diese Anwendung liest", nil),
+			})
+			return nil
+		}
+		attachment, read := readAttachment(header, part.Body, options.MaxAttachmentBytes, room)
+		if read > room {
+			// The part did not fit into what was left of the message. It is
+			// dropped rather than handed over cut in half: a picture that
+			// normalization refuses would cost the caller a stored-then-skipped
+			// part and say nothing about the bound that stopped it.
+			out.Attachments = append(out.Attachments, Attachment{
+				Err: permanent("Die Nachricht hat mehr Bilddaten, als diese Anwendung liest", nil),
+			})
+			return nil
+		}
+		room -= read
+		out.Attachments = append(out.Attachments, attachment)
 	}
 }
 
-// readAttachment decodes one part.
+// readAttachment decodes one part and reports how many bytes it decoded.
 //
 // The declared media type is reported either way, so the caller can log that a
 // PDF arrived and skip it, but the bytes are only read for the three picture
@@ -362,14 +461,20 @@ func readBody(out *Message, literal io.Reader, maxBytes int64) error {
 // would put the memory limit of SPEC NF-3 at risk for nothing; the declared
 // type is enough to reject it.
 //
+// The part is read up to min(perPart+1, room+1) bytes: one over the per-part
+// cap so the caller can still tell "at the cap" from "over it", and never past
+// the room the whole message has left. A report of more than room therefore
+// means the part did not fit into this message at all, and the caller stops
+// there instead of handing over half a picture.
+//
 // This is where the product decision lives: MimeType carries the canonical
 // media type and Data is nil for anything the caller will not read. The caller
 // applies its own allowlist — see StorableImageType.
-func readAttachment(header *mail.AttachmentHeader, body io.Reader, limit int64) Attachment {
+func readAttachment(header *mail.AttachmentHeader, body io.Reader, perPart, room int64) (Attachment, int64) {
 	declared, _, err := header.ContentType()
 	if err != nil {
 		// A part without a Content-Type is inline text, not an attachment.
-		return Attachment{}
+		return Attachment{}, 0
 	}
 	name, err := header.Filename()
 	if err != nil {
@@ -377,18 +482,22 @@ func readAttachment(header *mail.AttachmentHeader, body io.Reader, limit int64) 
 	}
 	out := Attachment{Filename: name, MimeType: canonicalMediaType(declared)}
 	if !StorableImageType(out.MimeType) {
-		return out
+		return out, 0
 	}
-	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	allow := perPart + 1
+	if room < perPart {
+		allow = room + 1
+	}
+	data, err := io.ReadAll(io.LimitReader(body, allow))
 	if err != nil {
 		// The same rule as every other failure on this path: the caller logs
 		// this one (internal/service/mailbox.go), and a read that died inside
 		// the literal reports the connection it died on.
 		out.Err = transient("Der Anhang ist nicht lesbar", err)
-		return out
+		return out, int64(len(data))
 	}
 	out.Data = data
-	return out
+	return out, int64(len(data))
 }
 
 // readableTypes are the media types whose bytes are worth reading. It is a
