@@ -610,6 +610,264 @@ func TestIngestMailboxStorageFailureBeforeAnyImageKeepsTheMessage(t *testing.T) 
 	}
 }
 
+// errFlagFailed is what a store the server refuses looks like from here. One
+// dropped packet on the IMAP STORE command is enough to produce it, and nothing
+// about the message on the wire changes.
+var errFlagFailed = errors.New("the marker store did not survive the connection")
+
+// The flag is a network call like any other and fails on its own account. The
+// keyword it writes is the only note of a consumed message that outlives the
+// poll, so a flag that never lands hands the same messages to the next poll —
+// and SaveBild does not dedupe, so every picture behind it would reach the blob
+// store a second time. This process therefore remembers the messages whose
+// images it stored until the server takes the flag, and only offers them to the
+// marker until then.
+func TestIngestMailboxMarkFailureDoesNotDuplicateStoredImages(t *testing.T) {
+	ctx := context.Background()
+	box := &mailinbox.Fake{
+		Messages: []mailinbox.Message{
+			mailWith(1, "kasse@example.de",
+				jpegAttachment(t, 15, 25, 35),
+				jpegAttachment(t, 45, 55, 65),
+			),
+		},
+		MarkErr: errFlagFailed,
+	}
+	svc := mailFixture(t, box, "kasse@example.de")
+
+	poll, err := svc.IngestMailbox(ctx)
+	if err == nil {
+		t.Fatal("expected the failed flag to surface")
+	}
+	if poll.Bilder != 2 {
+		t.Fatalf("poll %+v", poll)
+	}
+	if len(box.Seen) != 0 {
+		t.Fatalf("seen %v, the flag did not stick", box.Seen)
+	}
+	if countBilder(t, svc) != 2 {
+		t.Fatalf("stored images %d", countBilder(t, svc))
+	}
+
+	// The server takes the flag again. The message is still unmarked, so the
+	// next poll is handed it once more — but its pictures are on disk already,
+	// and the second copy is exactly what this guards against.
+	box.MarkErr = nil
+	second, err := svc.IngestMailbox(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Geprueft != 1 || second.Bilder != 0 || second.Uebersprungen != 0 {
+		t.Fatalf("second poll %+v, want the message read and nothing stored", second)
+	}
+	if got := countBilder(t, svc); got != 2 {
+		t.Fatalf("stored images %d, want the two of the first poll and no second copy", got)
+	}
+	// The note is not a second disposition: the message is still offered to the
+	// marker, so it leaves the queue for good the moment the server accepts one.
+	if len(box.Seen) != 1 || box.Seen[0] != 1 {
+		t.Fatalf("seen %v, want the stored message flagged now that the server takes the marker", box.Seen)
+	}
+
+	third, err := svc.IngestMailbox(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Geprueft != 0 || third.Bilder != 0 {
+		t.Fatalf("third poll %+v", third)
+	}
+	if countBilder(t, svc) != 2 {
+		t.Fatalf("stored images %d, want no second copy", countBilder(t, svc))
+	}
+}
+
+// The other end of the same rule. Nothing reached the disk, so there is nothing
+// a retry could duplicate, and the receipt has to outlive an outage rather than
+// be marked done against a picture that does not exist.
+func TestIngestMailboxMarkFailureWithoutStoredImagesKeepsTheMessage(t *testing.T) {
+	ctx := context.Background()
+	store := newFailingStore(t, 0)
+	box := &mailinbox.Fake{
+		Messages: []mailinbox.Message{
+			mailWith(1, "kasse@example.de",
+				jpegAttachment(t, 15, 25, 35),
+				jpegAttachment(t, 45, 55, 65),
+			),
+		},
+		MarkErr: errFlagFailed,
+	}
+	svc := mailFixture(t, box, "kasse@example.de")
+	svc.Store = store
+
+	poll, err := svc.IngestMailbox(ctx)
+	if err == nil {
+		t.Fatal("expected the store failure to surface")
+	}
+	if poll.Bilder != 0 {
+		t.Fatalf("poll %+v", poll)
+	}
+	if len(box.Seen) != 0 {
+		t.Fatalf("seen %v, want nothing flagged", box.Seen)
+	}
+
+	store.recover()
+	box.MarkErr = nil
+	second, err := svc.IngestMailbox(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Bilder != 2 {
+		t.Fatalf("second poll %+v, want the message read from its first attachment", second)
+	}
+	if countBilder(t, svc) != 2 {
+		t.Fatalf("stored images %d, want one per attachment", countBilder(t, svc))
+	}
+	if len(box.Seen) != 1 || box.Seen[0] != 1 {
+		t.Fatalf("seen %v, want the message flagged on the retry", box.Seen)
+	}
+}
+
+// A message the service read and kept no picture from is consumed like any
+// other — the same bytes refuse the same way on every read. It still may not go
+// into the note, because there is nothing behind it to duplicate and the marker
+// is the only thing that ends the queue entry: remembering it would drop the
+// message for good after a flag failure that had nothing to do with it.
+func TestIngestMailboxMarkFailureWithoutImagesIsNotRemembered(t *testing.T) {
+	ctx := context.Background()
+	box := &mailinbox.Fake{
+		Messages: []mailinbox.Message{
+			mailWith(1, "kasse@example.de",
+				mailinbox.Attachment{Filename: "beleg.pdf", MimeType: "application/pdf", Data: []byte("%PDF")}),
+		},
+		MarkErr: errFlagFailed,
+	}
+	svc := mailFixture(t, box, "kasse@example.de")
+
+	if _, err := svc.IngestMailbox(ctx); err == nil {
+		t.Fatal("expected the failed flag to surface")
+	}
+	if len(box.Seen) != 0 {
+		t.Fatalf("seen %v", box.Seen)
+	}
+
+	box.MarkErr = nil
+	second, err := svc.IngestMailbox(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Geprueft != 1 || second.Uebersprungen != 1 {
+		t.Fatalf("second poll %+v, want the message read again", second)
+	}
+	if len(box.Seen) != 1 || box.Seen[0] != 1 {
+		t.Fatalf("seen %v, want the message flagged on the retry", box.Seen)
+	}
+}
+
+// The note itself. It is what stands in for a marker the server would not take,
+// so it has to answer the one question the poll asks it — is this message
+// already on disk here? — and to shrink again as soon as the server has the
+// flag, or it would grow with the mailbox instead of with the outage.
+// A UID is unique only inside one UIDVALIDITY epoch. A server that rebuilds the
+// mailbox reassigns UIDs from the start, so a receipt that arrives afterwards
+// can carry a UID the note already holds. Matched on the number alone, that
+// message would be skipped as already stored and flagged — a receipt lost in
+// silence. The poll drops the note when the epoch changes instead, and pays with
+// at most a second copy of the images it had noted.
+func TestIngestMailboxUIDValidityChangeDoesNotLoseANewMessage(t *testing.T) {
+	ctx := context.Background()
+	box := &mailinbox.Fake{
+		UIDValidityValue: 1000,
+		Messages: []mailinbox.Message{
+			mailWith(1, "kasse@example.de", jpegAttachment(t, 15, 25, 35)),
+		},
+		MarkErr: errFlagFailed,
+	}
+	svc := mailFixture(t, box, "kasse@example.de")
+
+	// The flag fails, so UID 1 is noted as stored-and-unflagged.
+	if _, err := svc.IngestMailbox(ctx); err == nil {
+		t.Fatal("expected the failed flag to surface")
+	}
+	if !svc.unflagged.has(1) {
+		t.Fatal("the stored message was not noted")
+	}
+
+	// The server is rebuilt: a new epoch, the old flags gone, and a different
+	// receipt now carries UID 1.
+	box.Reset()
+	box.Messages = []mailinbox.Message{
+		mailWith(1, "kasse@example.de", jpegAttachment(t, 45, 55, 65)),
+	}
+	box.MarkErr = nil
+	box.UIDValidityValue = 2000
+
+	poll, err := svc.IngestMailbox(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if poll.Bilder != 1 {
+		t.Fatalf("poll %+v, want the new receipt stored", poll)
+	}
+	if got := countBilder(t, svc); got != 2 {
+		t.Fatalf("stored images %d, want the old and the new receipt", got)
+	}
+	if len(box.Seen) != 1 || box.Seen[0] != 1 {
+		t.Fatalf("seen %v, want the new message flagged now that the marker works", box.Seen)
+	}
+}
+
+func TestMailConsumed(t *testing.T) {
+	var note mailConsumed
+	if note.has(1) {
+		t.Fatal("an empty note holds nothing")
+	}
+	note.add([]imap.UID{1, 2, 1})
+	if !note.has(1) || !note.has(2) || note.has(3) {
+		t.Fatalf("note %v, want 1 and 2", note.uids)
+	}
+	if len(note.uids) != 2 {
+		t.Fatalf("note %v, want one entry per UID", note.uids)
+	}
+	// The poll offers the remembered messages to the marker again, so the note
+	// has to keep them while the server refuses and keep the order it stored
+	// them in.
+	note.add([]imap.UID{2})
+	if len(note.uids) != 2 {
+		t.Fatalf("note %v, want no second entry for a UID already in it", note.uids)
+	}
+	note.forget([]imap.UID{1, 9})
+	if note.has(1) {
+		t.Fatal("a flagged message has to leave the note")
+	}
+	if !note.has(2) {
+		t.Fatal("a message the server still has not flagged has to stay")
+	}
+	note.forget([]imap.UID{2})
+	if note.has(2) || len(note.uids) != 0 {
+		t.Fatalf("note %v, want empty once the server has every flag", note.uids)
+	}
+	// The empty operations of an untouched note must not allocate anything.
+	note.add(nil)
+	note.forget(nil)
+	if note.has(1) || len(note.uids) != 0 {
+		t.Fatalf("note %v", note.uids)
+	}
+	// A change of UIDVALIDITY invalidates the numbering the note was written in,
+	// so its entries are dropped rather than matched against other messages. An
+	// unchanged epoch, and a source that tracks none, keep them.
+	note.observe(100)
+	note.add([]imap.UID{7})
+	note.observe(100)
+	note.observe(0)
+	if !note.has(7) {
+		t.Fatal("the note was dropped without a new epoch")
+	}
+	note.observe(101)
+	if note.has(7) || len(note.uids) != 0 {
+		t.Fatalf("note %v survived a UIDVALIDITY change", note.uids)
+	}
+}
+
 // failingStore lets puts through until its budget runs out and fails every
 // later one; recover gives the budget back. That is how a test breaks the blob
 // store in the middle of a poll and heals it again.

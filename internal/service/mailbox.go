@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 
 	"github.com/emersion/go-imap/v2"
 
@@ -65,6 +66,14 @@ type MailPoll struct {
 // stored there is nothing to duplicate, so it stays unmarked and the next poll
 // starts it over.
 //
+// Flagging is itself a network call and it fails on its own account. The marker
+// it writes is the only durable "already done" note, so a store the server
+// refuses leaves the message in the queue — and re-reading it would store every
+// picture behind it a second time. Those messages are therefore noted in this
+// process as well (mailConsumed) and only offered to the marker until the
+// server takes it; the ones that stored nothing are not noted, because a
+// receipt the store never committed has to survive the outage.
+//
 // Mail is never deleted. This method does not set \Deleted and does not expunge.
 func (s *Service) IngestMailbox(ctx context.Context) (MailPoll, error) {
 	var out MailPoll
@@ -77,7 +86,20 @@ func (s *Service) IngestMailbox(ctx context.Context) (MailPoll, error) {
 	}
 	out.Geprueft = len(messages)
 
+	// A UID only names a message inside one UIDVALIDITY epoch. If the server
+	// rebuilt the mailbox since the last note was taken, the UIDs in it name
+	// other messages now, so the note is dropped before it can skip one of them
+	// as already stored. A source that does not track an epoch leaves the note
+	// alone; see mailConsumed.observe.
+	if src, ok := s.Mail.(interface{ UIDValidity() uint32 }); ok {
+		s.unflagged.observe(src.UIDValidity())
+	}
+
 	seen := make([]imap.UID, 0, len(messages))
+	// committed is the part of seen with images on disk behind it. It is the
+	// only part a later poll may not read again, so it is what the note below
+	// remembers when the marker fails.
+	committed := make([]imap.UID, 0, len(messages))
 	var failed error
 	for _, msg := range messages {
 		if err := ctx.Err(); err != nil {
@@ -85,6 +107,16 @@ func (s *Service) IngestMailbox(ctx context.Context) (MailPoll, error) {
 			// poll reads them; the ones before it are still flagged below.
 			failed = err
 			break
+		}
+		if s.unflagged.has(msg.UID) {
+			// This process already stored this message and the server has not
+			// taken the marker since. The attachments are still on the wire,
+			// but SaveBild does not dedupe, so reading them again would put a
+			// second copy of every picture behind the flag failure. The UID is
+			// offered to the marker and nothing else, until the server accepts
+			// it and the message leaves the queue for good.
+			seen = append(seen, msg.UID)
+			continue
 		}
 		if !s.senderAllowed(msg.From) {
 			out.Abgelehnt++
@@ -109,6 +141,7 @@ func (s *Service) IngestMailbox(ctx context.Context) (MailPoll, error) {
 			// receipts that way.
 			if stored > 0 {
 				seen = append(seen, msg.UID)
+				committed = append(committed, msg.UID)
 			}
 			failed = err
 			break
@@ -119,6 +152,9 @@ func (s *Service) IngestMailbox(ctx context.Context) (MailPoll, error) {
 				"uid", msg.UID, "betreff", msg.Subject)
 		}
 		seen = append(seen, msg.UID)
+		if stored > 0 {
+			committed = append(committed, msg.UID)
+		}
 	}
 
 	// The disposition runs even for an aborted poll: every message in seen has
@@ -127,11 +163,25 @@ func (s *Service) IngestMailbox(ctx context.Context) (MailPoll, error) {
 	// the poll rather than replacing it.
 	if len(seen) > 0 {
 		if err := s.Mail.MarkIngested(ctx, seen); err != nil {
+			// The marker is the only note that survives this process, and this
+			// call is the only thing that writes it. While it fails the messages
+			// stay in the queue, so the images already on disk would be stored a
+			// second time on the next poll. The messages in committed are noted
+			// here instead and offered to the marker again on every poll until
+			// the server accepts one. A message that stored nothing is not
+			// noted: there is nothing behind it to duplicate, and the receipt
+			// it still carries has to outlive the outage.
+			s.unflagged.add(committed)
 			if failed == nil {
 				failed = err
 			} else {
-				s.warnMail("mail could not be flagged; the next poll reads it again", "err", err)
+				s.warnMail("mail could not be flagged; this process keeps the images it already stored", "err", err)
 			}
+		} else {
+			// The server has the flag now, so this process' note of it is out
+			// of date and the note shrinks back to the messages the *next*
+			// failed flag leaves behind.
+			s.unflagged.forget(seen)
 		}
 	}
 	if failed != nil {
@@ -162,6 +212,112 @@ func (s *Service) mailPollLimit() int {
 	return defaultMaxMessagesPerPoll
 }
 
+// mailConsumed is this process' own note of the messages whose images are on
+// disk and whose marker the server has not taken yet.
+//
+// The keyword on the server is the only record of that fact that outlives the
+// poll, and MarkIngested is the only thing that writes it. A store the server
+// refuses — one dropped packet on the IMAP STORE command is enough — therefore
+// hands the very same messages back on the next poll, and SaveBild does not
+// dedupe, so every picture behind it would reach the blob store a second time.
+// What is remembered here is not a guess about the message but a fact about
+// this run: those exact UIDs went through SaveBild and came out stored.
+//
+// Memory and not a column, which is a deliberate limit. The note holds one UID
+// per message the server refused to flag and nothing else; every poll offers
+// the remembered UIDs to MarkIngested again, so the first flag the server does
+// accept empties it and it grows with the outage rather than with the mailbox.
+// Restarting during a flag outage costs one duplicate of that one poll's
+// batch — the marker, once written, is what closes the window for good.
+//
+// It is guarded because a poll runs on a job worker while the ticker that
+// decides whether to enqueue one runs on another goroutine.
+type mailConsumed struct {
+	mu   sync.Mutex
+	uids []imap.UID
+	set  map[imap.UID]bool
+	// uidValidity is the mailbox epoch the entries above were assigned in. A
+	// UID is only unique inside one epoch, so entries from an older one are
+	// dropped rather than matched against a message that merely reuses the
+	// number; see observe.
+	uidValidity uint32
+}
+
+// observe records the mailbox epoch this poll read and drops the note when it
+// differs from the one the entries were noted in.
+//
+// A UID is unique only inside one UIDVALIDITY epoch (RFC 3501 §2.3.1.1). A
+// server that rebuilds the mailbox — a migration, a restore from backup, a
+// lost index — reassigns UIDs from the start, so a message that arrives after
+// the change can carry a UID the note already holds. Matching on the number
+// alone would then skip a brand-new receipt as one already stored, flag it, and
+// lose it silently; dropping the note costs at most a second copy of the one
+// poll's images, which is the same price the documented restart already pays. A
+// zero epoch means the source tracks none, which leaves the entries alone.
+func (m *mailConsumed) observe(uidValidity uint32) {
+	if uidValidity == 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.uidValidity == uidValidity {
+		return
+	}
+	m.uidValidity = uidValidity
+	m.uids = nil
+	m.set = nil
+}
+
+// has reports whether this message is already stored here and still unflagged.
+func (m *mailConsumed) has(uid imap.UID) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.set[uid]
+}
+
+// add notes the messages whose images reached the disk behind a failed flag.
+func (m *mailConsumed) add(uids []imap.UID) {
+	if len(uids) == 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.set == nil {
+		m.set = make(map[imap.UID]bool, len(uids))
+	}
+	for _, uid := range uids {
+		if m.set[uid] {
+			continue
+		}
+		m.set[uid] = true
+		m.uids = append(m.uids, uid)
+	}
+}
+
+// forget drops the messages the server has flagged, so the note only ever holds
+// what it still has to say. The slice keeps the order the messages were stored
+// in, which is what the poll hands back to the marker.
+func (m *mailConsumed) forget(uids []imap.UID) {
+	if len(uids) == 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.set == nil {
+		return
+	}
+	for _, uid := range uids {
+		delete(m.set, uid)
+	}
+	kept := m.uids[:0]
+	for _, uid := range m.uids {
+		if m.set[uid] {
+			kept = append(kept, uid)
+		}
+	}
+	m.uids = kept
+}
+
 // ingestAttachments stores one message's pictures. It returns how many became
 // Belegbilder and how many the service did not keep.
 //
@@ -181,7 +337,9 @@ func (s *Service) mailPollLimit() int {
 // The disposition in IngestMailbox is what guarantees it: a message is flagged
 // as soon as one of its images is on disk, and a message that reached the store
 // error without having stored anything is left unmarked and read again from the
-// first attachment, because there is nothing yet to duplicate.
+// first attachment, because there is nothing yet to duplicate. The flag is a
+// network call like any other, so the note in mailConsumed backs it up for the
+// case where the server refuses it.
 func (s *Service) ingestAttachments(ctx context.Context, msg mailinbox.Message) (stored, skipped int, err error) {
 	limit := s.MailMaxAttachments
 	if limit < 1 {
