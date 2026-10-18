@@ -103,84 +103,15 @@ func Serve(ctx context.Context, opt Options) error {
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	appVersion := opt.Version.Version
-	if appVersion == "" {
-		appVersion = "dev"
-	}
 	renderer := &pdf.CLI{
 		Bin:     opt.Config.TypstBin,
 		Timeout: opt.Config.PDFTimeout,
 		Log:     opt.Log,
 	}
-	svc := &service.Service{
-		DB:             database,
-		Store:          store,
-		Holidays:       holidays.NewCalendar(),
-		Loc:            opt.Config.Location,
-		UploadMax:      opt.Config.UploadMaxBytes,
-		ImageTTL:       opt.Config.UnassignedImageTTL,
-		RetentionYears: opt.Config.ExportRetentionYears,
-		Extractor:      newExtractor(opt.Config),
-		LLMMaxPX:       opt.Config.LLMMaxImagePX,
-		LLMTimeout:     opt.Config.LLMTimeout,
-		PDF:            renderer,
-		Typst:          typst.Check,
-		AppVersion:     appVersion,
-		Log:            opt.Log,
-	}
-	if box := newMailSource(opt.Config, opt.Log); box != nil {
-		svc.Mail = box
-		svc.MailInterval = opt.Config.MailInterval
-		svc.MailMaxMessages = opt.Config.MailMaxMessages
-		svc.MailMaxAttachments = opt.Config.MailMaxAttachments
-		svc.MailDoneFolder = opt.Config.MailDoneFolder
-		svc.MailAllowedSenders = opt.Config.MailAllowedSender
-		opt.Log.Info("mail intake enabled", "host", opt.Config.MailHost, "ordner", opt.Config.MailInbox, "abgelegt_in", opt.Config.MailDoneFolder)
-	}
-	if opt.Config.WatchConfigured() {
-		svc.WatchFolder = opt.Config.WatchFolder
-		svc.WatchInterval = opt.Config.WatchInterval
-		// Only the path is logged. It is operator config and the operator can
-		// see it in the environment; there is no secret in it.
-		opt.Log.Info("watched folder intake enabled",
-			"ordner", opt.Config.WatchFolder, "intervall", opt.Config.WatchInterval)
-	}
-	if opt.Config.NotifyConfigured() {
-		// The address is operator config and nothing else, so there is no
-		// request that can move it. The token is never logged and never leaves
-		// this struct.
-		svc.Notify = notify.NewWebhook(notify.WebhookOptions{
-			URL:     opt.Config.NotifyWebhookURL,
-			Token:   opt.Config.NotifyWebhookToken,
-			Timeout: opt.Config.NotifyTimeout,
-		})
-		logNotifyEnabled(opt.Log, opt.Config)
-	}
-	migrated, err := svc.MigrateBildKeys(ctx)
+	svc, queue, err := newService(ctx, opt, database, store, typst, renderer)
 	if err != nil {
 		return err
 	}
-	if migrated.Moved > 0 {
-		opt.Log.Info("image key migration", "moved", migrated.Moved)
-	}
-	if len(migrated.Skipped) > 0 {
-		opt.Log.Warn("image key migration left legacy keys", "skipped", migrated.Skipped)
-	}
-	queue := &jobs.Queue{
-		DB:      database,
-		Workers: opt.Config.JobWorkers,
-		Log:     opt.Log,
-		// All five job types share this pool, so the policy is what keeps a
-		// stuck folder poll or mailbox poll from taking both workers away from
-		// the recognition. The second argument is the per-type override, which
-		// config validated and kept separate from "unset" — an empty map leaves
-		// the defaults exactly as they were.
-		Policy:  jobs.DefaultPolicy(opt.Config.JobTimeout, opt.Config.JobTimeoutOverrides()),
-		Handle:  svc.HandleJob,
-		OnRetry: svc.JobRetry,
-		OnFail:  svc.JobFail,
-	}
-	svc.Jobs = queue
 	sessions := &auth.Sessions{
 		DB:       database,
 		Idle:     opt.Config.SessionIdleTimeout,
@@ -196,18 +127,7 @@ func Serve(ctx context.Context, opt Options) error {
 		Retention: opt.Config.JobRetention,
 		Log:       opt.Log,
 	}
-	var background sync.WaitGroup
-	background.Go(func() { sessions.Run(runCtx) })
-	background.Go(func() { svc.Sweep(runCtx) })
-	background.Go(func() { pruner.Run(runCtx) })
-	// No mailbox configured means no ticker and no mail job, ever.
-	if svc.Mail != nil {
-		background.Go(func() { svc.PollMailbox(runCtx) })
-	}
-	// Same for the watched folder: no path, no ticker and no watch job.
-	if svc.WatchFolder != "" {
-		background.Go(func() { svc.PollWatchFolder(runCtx) })
-	}
+	background := startBackground(runCtx, svc, sessions, pruner)
 	svc.StartJobs(runCtx)
 	defer func() {
 		cancel()
@@ -318,6 +238,114 @@ func Serve(ctx context.Context, opt Options) error {
 		shutdown(httpServer, metricsSrv)
 		return err
 	}
+}
+
+// newService builds the application service and the job queue it drives.
+//
+// This is a construction seam only: it starts no goroutine and owns no
+// lifecycle. The caller keeps the cancel/wait ordering and the shutdown budget,
+// because a restore waits unbounded for the workers while shutdown has a
+// fifteen-second one, and that ordering is too load-bearing to move into a
+// helper.
+func newService(ctx context.Context, opt Options, database *db.DB, store storage.BlobStore, typst pdf.Probe, renderer pdf.Renderer) (*service.Service, *jobs.Queue, error) {
+	appVersion := opt.Version.Version
+	if appVersion == "" {
+		appVersion = "dev"
+	}
+	svc := &service.Service{
+		DB:             database,
+		Store:          store,
+		Holidays:       holidays.NewCalendar(),
+		Loc:            opt.Config.Location,
+		UploadMax:      opt.Config.UploadMaxBytes,
+		ImageTTL:       opt.Config.UnassignedImageTTL,
+		RetentionYears: opt.Config.ExportRetentionYears,
+		Extractor:      newExtractor(opt.Config),
+		LLMMaxPX:       opt.Config.LLMMaxImagePX,
+		LLMTimeout:     opt.Config.LLMTimeout,
+		PDF:            renderer,
+		Typst:          typst.Check,
+		AppVersion:     appVersion,
+		Log:            opt.Log,
+	}
+	if box := newMailSource(opt.Config, opt.Log); box != nil {
+		svc.Mail = box
+		svc.MailInterval = opt.Config.MailInterval
+		svc.MailMaxMessages = opt.Config.MailMaxMessages
+		svc.MailMaxAttachments = opt.Config.MailMaxAttachments
+		svc.MailDoneFolder = opt.Config.MailDoneFolder
+		svc.MailAllowedSenders = opt.Config.MailAllowedSender
+		opt.Log.Info("mail intake enabled", "host", opt.Config.MailHost, "ordner", opt.Config.MailInbox, "abgelegt_in", opt.Config.MailDoneFolder)
+	}
+	if opt.Config.WatchConfigured() {
+		svc.WatchFolder = opt.Config.WatchFolder
+		svc.WatchInterval = opt.Config.WatchInterval
+		// Only the path is logged. It is operator config and the operator can
+		// see it in the environment; there is no secret in it.
+		opt.Log.Info("watched folder intake enabled",
+			"ordner", opt.Config.WatchFolder, "intervall", opt.Config.WatchInterval)
+	}
+	if opt.Config.NotifyConfigured() {
+		// The address is operator config and nothing else, so there is no
+		// request that can move it. The token is never logged and never leaves
+		// this struct.
+		svc.Notify = notify.NewWebhook(notify.WebhookOptions{
+			URL:     opt.Config.NotifyWebhookURL,
+			Token:   opt.Config.NotifyWebhookToken,
+			Timeout: opt.Config.NotifyTimeout,
+		})
+		logNotifyEnabled(opt.Log, opt.Config)
+	}
+	migrated, err := svc.MigrateBildKeys(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	if migrated.Moved > 0 {
+		opt.Log.Info("image key migration", "moved", migrated.Moved)
+	}
+	if len(migrated.Skipped) > 0 {
+		opt.Log.Warn("image key migration left legacy keys", "skipped", migrated.Skipped)
+	}
+	queue := &jobs.Queue{
+		DB:      database,
+		Workers: opt.Config.JobWorkers,
+		Log:     opt.Log,
+		// All five job types share this pool, so the policy is what keeps a
+		// stuck folder poll or mailbox poll from taking both workers away from
+		// the recognition. The second argument is the per-type override, which
+		// config validated and kept separate from "unset" — an empty map leaves
+		// the defaults exactly as they were.
+		Policy:  jobs.DefaultPolicy(opt.Config.JobTimeout, opt.Config.JobTimeoutOverrides()),
+		Handle:  svc.HandleJob,
+		OnRetry: svc.JobRetry,
+		OnFail:  svc.JobFail,
+	}
+	svc.Jobs = queue
+	return svc, queue, nil
+}
+
+// startBackground launches the periodic goroutines that run next to the queue:
+// the session pruner, the image TTL sweep, the job-history pruner, and — when
+// configured — the mailbox and watched-folder tickers. The launch order is the
+// one the inline block used.
+//
+// It only starts them. svc.StartJobs and the cancel/WaitJobs/background.Wait
+// shutdown sequence stay in Serve, where the shutdown budget and the unbounded
+// restore wait depend on their order.
+func startBackground(ctx context.Context, svc *service.Service, sessions *auth.Sessions, pruner *jobs.Pruner) *sync.WaitGroup {
+	var background sync.WaitGroup
+	background.Go(func() { sessions.Run(ctx) })
+	background.Go(func() { svc.Sweep(ctx) })
+	background.Go(func() { pruner.Run(ctx) })
+	// No mailbox configured means no ticker and no mail job, ever.
+	if svc.Mail != nil {
+		background.Go(func() { svc.PollMailbox(ctx) })
+	}
+	// Same for the watched folder: no path, no ticker and no watch job.
+	if svc.WatchFolder != "" {
+		background.Go(func() { svc.PollWatchFolder(ctx) })
+	}
+	return &background
 }
 
 func newExtractor(cfg config.Config) recognition.ReceiptExtractor {
