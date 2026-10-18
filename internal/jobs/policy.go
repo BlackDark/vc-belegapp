@@ -95,10 +95,12 @@ type Policy struct {
 // Three decisions are in here, and all three are about where a failure mode may
 // live: never on a job a person is waiting for.
 //
-//   - Every capped type runs at most one job at a time. Recognition is left
-//     uncapped, so the pool is always available to it. With one worker each and
-//     two workers overall, a folder poll that never returns can still occupy at
-//     most one of them.
+//   - Every capped type runs at most one job at a time, and the capped types
+//     together may never fill the pool while a type is uncapped, so one worker
+//     is always left for the recognition. With two workers a folder poll that
+//     never returns and a mail poll that never returns cannot both hold the
+//     pool — the recognition behind them still runs. A pool of one has no
+//     worker to spare, so there the per-type cap alone applies.
 //   - The deadline covers the background intake types — mail, watch and notify.
 //     These run unattended; nobody is watching them, and a poll that has been
 //     going for ten minutes is a poll that should be reported and retried.
@@ -182,6 +184,11 @@ func (e *TimeoutError) Unwrap() error { return context.DeadlineExceeded }
 // An uncapped type always gets one; a capped type that is full gets none, and
 // the caller hands the job back rather than waiting for a slot.
 //
+// The capped types also share a reservation: while the policy leaves any type
+// uncapped, the capped jobs together may hold at most one worker fewer than the
+// pool has, so the last worker stays free for the uncapped work — the jobs a
+// user waits for. A pool of one reserves nothing; see reservedCappedCap.
+//
 // It never blocks. A worker that waited here would hold its worker slot while
 // waiting, which is the very thing the cap is there to prevent: two blocked
 // workers are two fewer workers for everything else.
@@ -197,8 +204,35 @@ func (q *Queue) acquire(typ string) bool {
 	if q.slots[typ] >= q.Policy.limit(typ) {
 		return false
 	}
+	if limit := q.reservedCappedCap(); limit > 0 && q.Policy.hasUncappedType() && q.runningCapped() >= limit {
+		return false
+	}
 	q.slots[typ]++
 	return true
+}
+
+// runningCapped is the number of capped-type jobs running right now — the group
+// total the reservation is measured against. Uncapped types never enter q.slots,
+// so summing it is the whole of it. The caller holds slotsMu.
+func (q *Queue) runningCapped() int {
+	total := 0
+	for _, n := range q.slots {
+		total += n
+	}
+	return total
+}
+
+// hasUncappedType reports whether the policy leaves at least one of the types
+// the queue runs without a concurrency cap. It is what decides whether a worker
+// has to be held back: a policy that caps every type has no uncapped work to
+// reserve one for, and reserving there would only waste a worker.
+func (p Policy) hasUncappedType() bool {
+	for _, typ := range jobTypes {
+		if p.limit(typ) <= 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // release returns the slot acquire took for typ.

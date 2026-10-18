@@ -91,10 +91,7 @@ func (q *Queue) Reset(ctx context.Context) error {
 // Run processes jobs until ctx is cancelled.
 func (q *Queue) Run(ctx context.Context) {
 	_ = q.wakeCh()
-	workers := q.Workers
-	if workers < 1 {
-		workers = 1
-	}
+	workers := q.workerCount()
 	poll := q.Poll
 	if poll <= 0 {
 		poll = 200 * time.Millisecond
@@ -109,6 +106,32 @@ func (q *Queue) Run(ctx context.Context) {
 	for i := 0; i < workers; i++ {
 		<-done
 	}
+}
+
+// workerCount is the number of workers Run starts: Workers, or one when it is
+// unset, which is the floor Run has always had. It is the pool size the
+// reservation in acquire is measured against, so it has to agree with Run.
+func (q *Queue) workerCount() int {
+	if q.Workers < 1 {
+		return 1
+	}
+	return q.Workers
+}
+
+// reservedCappedCap is the most capped-type jobs that may run at the same time
+// while the pool still has to serve an uncapped type: one worker fewer than the
+// pool has, so the last worker stays free for the uncapped work.
+//
+// A pool of one has no worker to hold back and returns zero. acquire reads a
+// zero as "no reservation" rather than as "no capped job may run": a cap of
+// zero would keep every capped job in the queue for good, which is the deadlock
+// a single-worker pool must not have.
+func (q *Queue) reservedCappedCap() int {
+	workers := q.workerCount()
+	if workers <= 1 {
+		return 0
+	}
+	return workers - 1
 }
 
 func (q *Queue) loop(ctx context.Context, poll time.Duration) {
