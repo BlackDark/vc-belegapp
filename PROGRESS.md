@@ -116,9 +116,11 @@ Geändert:
   und Code aus diesem Repository ändert sich zu oft, als dass sich ein Schlüssel je Lauf lohnte — er würde
   je Lauf einige hundert MB in ein Cache-Budget von 10 GB schreiben und die Einträge verdrängen, die die
   anderen Jobs wiederherstellen.
-- **`go` wartet nicht mehr auf `web`.** Der Abgleich, dass das committete `web/dist` zum Build passt, läuft
-  jetzt im `web`-Job, direkt neben dem Build. Vorher lag die Bundle-Erstellung (46 s) vor dem längsten Job
-  des Workflows.
+- **Kein Job wartet mehr auf `web`.** Die Plattform-Jobs kompilieren aus dem committeten `web/dist` — derselben
+  Eingabe, die ein Release einbettet —, und der `go`-Job braucht das Bundle gar nicht. Der Abgleich, dass das
+  committete `web/dist` zum Build passt, läuft im `web`-Job direkt neben dem Build; er benutzt `git status`
+  statt `git diff`, weil `diff` eine hinzugekommene Datei nicht sieht. Vorher lagen Bundle-Erstellung (46 s)
+  und Artefakt (3 s je Job) vor jedem Plattform-Job und damit vor `e2e`.
 - **`release-dry-run` läuft nur noch, wenn der Push eine Datei berührt hat, die GoReleaser liest**
   (`.goreleaser.yaml`, die Dockerfiles, `LICENSE`, `README.md`, `deploy/`, die Release-Workflows, die
   Composite Action, `scripts/install-typst.sh`). Ein Kompilierfehler bleibt dabei nicht unentdeckt: die
