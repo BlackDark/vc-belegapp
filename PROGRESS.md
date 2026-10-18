@@ -127,6 +127,28 @@ Geändert:
   Plattform-Jobs bauen dieselben vier Binaries aus denselben Quellen mit denselben Flags.
 - **`e2e` cached Typst und die Playwright-Browser**, statt sie je Lauf zu laden.
 
+Gemessen nach dem zweiten Lauf auf einem Branch (Run 39127716001, Push ohne Release-Dateien, vorgewärmte
+Caches):
+
+| Job | vorher | nachher |
+| --- | --- | --- |
+| `go` | 335 s | 124 s |
+| `web` | 46 s | 41 s |
+| `linux-amd64` | 84 s | 33 s |
+| `linux-arm64` | 97 s | 32 s |
+| `darwin` | 134 s | 41 s |
+| `pdf` | 40 s | 43 s |
+| `e2e` | 106 s | 66 s |
+| `docker` | 40 s | 50 s |
+| `vuln` | 21 s | 25 s |
+| `release-dry-run` | 264–382 s | nicht gelaufen |
+
+**Wanduhr 385–409 s → 128 s.** Der kritische Pfad ist jetzt der `go`-Job; `e2e` folgt `linux-amd64` (33 s).
+Der **erste** Lauf mit neuen Cache-Schlüsseln ist teurer als vorher (`go` 349 s), weil jeder Job seinen Cache
+einmal schreibt; ab dem zweiten greift er. `release-dry-run` läuft weiterhin, sobald ein Push eine
+Release-Datei berührt — auch `.github/workflows/ci.yml` selbst —, und ist dann mit ~283 s wieder der längste
+Job.
+
 ## Arbeitsweise mit `main`
 
 `main` ist geschützt. Eine Änderung geht über einen Pull Request, wird per Squash zusammengefasst und
