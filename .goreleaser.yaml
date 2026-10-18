@@ -26,11 +26,23 @@ builds:
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
 
-# No archives, checksums, SBOM documents or blob signatures: the container
-# image is the only thing this project publishes, and an image is addressed and
-# verified by digest. The image carries its own signature (docker_signs below)
-# and its SBOM is a buildx attestation (dockers_v2.sbom, default true), which is
-# why Syft is no longer installed for the release.
+# No archives and no checksums: the container image is the only thing this
+# project publishes, and an image is addressed and verified by digest, so a
+# checksums file next to it would add nothing. The image carries its own
+# signature (docker_signs below) and its SBOM is a buildx attestation
+# (dockers_v2.sbom, default true), which is why Syft is no longer installed for
+# the release.
+#
+# Neither is off by simply leaving its key out:
+#   - archives: a missing or empty list is replaced by one default archive (a
+#     tar.gz per platform, with the README and LICENSE), so both call sites pass
+#     `--skip=archive` — the only way to skip that pipe.
+#   - checksum: writes a checksums file by default and has no skip flag, so it is
+#     disabled below. With no archives left it would checksum the bare binaries
+#     and upload those instead.
+checksum:
+  disable: true
+
 dockers_v2:
   - ids:
       - belegapp

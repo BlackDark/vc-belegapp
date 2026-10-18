@@ -88,9 +88,13 @@ jobs:
       - name: Smoke
         run: ./scripts/container-smoke.sh vc-belegapp:smoke
       # Tool install, clean-tree check, and GoReleaser. Shared with CI.
+      # --skip=archive is required, not an optimisation: an absent or empty
+      # `archives` list is replaced by GoReleaser's default archive, so without
+      # it the release would carry two tar.gz files again. `checksum.disable` in
+      # .goreleaser.yaml covers the checksums file, which has no skip flag.
       - uses: ./.github/actions/goreleaser
         with:
-          args: release --clean
+          args: release --clean --skip=archive
           token: ${{ secrets.GITHUB_TOKEN }}
       # GoReleaser's footer usually already added this line (release.mode: append).
       # Notes are written under /tmp, not the checkout.

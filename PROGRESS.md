@@ -170,6 +170,26 @@ Buildx, `dockers_v2.sbom`), aus `release.yml` die Attestation auf `checksums.txt
 `darwin`-Job und aus `build-binaries.sh` die darwin-Ziele. Einzelheiten: [releases](docs/releases.md),
 [SPEC](docs/SPEC.md) §16.2.
 
+**Nachtrag (18.10.2026): der erste Anlauf war unvollständig.** Die Schlüssel wegzulassen schaltet bei
+GoReleaser nichts ab. Der Trockenlauf baute weiterhin
+`dist/vc-belegapp_1.1.1-snapshot_linux_amd64.tar.gz`, `…_arm64.tar.gz` und `…_checksums.txt` — im Log als
+`• archives` und `• calculating checksums`, und bei einem echten Release wären alle drei **hochgeladen**
+worden. Nachgelesen im Quellcode von v2.18.2: `archive.Default` ersetzt eine fehlende **oder leere**
+`archives`-Liste durch ein Standardarchiv, und `archive.Skip` fragt ausschließlich `--skip=archive` ab;
+`UploadableBinary` entsteht nur in diesem Pipe-Zweig, die `Binary`-Artefakte des Builds sind **nicht**
+uploadbar. `checksum` hat gar keinen Skip-Schalter, aber ein `disable`. Der Fix: `--skip=archive` an beiden
+Aufrufstellen (`release.yml` und der Trockenlauf) und `checksum: {disable: true}` in der Konfiguration.
+Lokal mit `goreleaser release --snapshot --clean --skip=before,docker,archive` nachgestellt: `dist/` enthält
+nur die zwei Binaries und die Metadaten, `artifacts.json` nur `Binary` ×2 und `Metadata` — nichts, was der
+GitHub-Publisher hochladen könnte (`release.include_meta` ist aus). Damit stimmt die Aussage „das Release
+trägt keine Assets“ auch wirklich.
+
+Zwei Irrtümer aus derselben Runde, korrigiert: Der Trockenlauf **baut** die Images sehr wohl lokal
+(`--load`, ca. 17 s, „snapshot build: will not push any images“); `--skip=publish` unterbindet nur das
+Pushen, nicht das Bauen. Und „die Datei im Trockenlauf prüfen“ war der einzige Weg, das hier zu finden: die
+CI prüft `goreleaser check` und den sauberen Checkout, aber ob die richtigen Artefakte entstehen, sieht man
+nur im Log.
+
 ## Betriebshandbuch nachgezogen (18.10.2026)
 
 `docs/deployment.md` beschrieb den Container, aber nicht fünf Dinge, die im Betrieb tatsächlich beißen. Nachgetragen:
