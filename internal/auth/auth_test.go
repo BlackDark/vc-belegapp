@@ -1,10 +1,13 @@
 package auth
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -139,6 +142,52 @@ func TestSessionTimeouts(t *testing.T) {
 	now = sess.ErstelltAm.Add(2 * time.Hour)
 	if _, err := sessions.Lookup(ctx, token); !IsNoSession(err) {
 		t.Fatalf("absolute: %v", err)
+	}
+}
+
+// The touch is bookkeeping, not authentication. A request whose session is
+// valid must not fail because the last-seen timestamp could not be written —
+// a page load 500ing over a timestamp is the bug — but the failure has to be
+// visible somewhere or a broken touch is invisible forever.
+//
+// A trigger refuses only the UPDATE, so the SELECT the lookup starts with is
+// untouched: the read that authenticates succeeds, the write that bookkeeps
+// fails, and the two are told apart.
+func TestSessionTouchFailureIsLoggedButDoesNotFailLookup(t *testing.T) {
+	ctx := context.Background()
+	database := openAuthDB(t)
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	var buf bytes.Buffer
+	sessions := &Sessions{
+		DB:       database,
+		Idle:     time.Hour,
+		Absolute: 2 * time.Hour,
+		Now:      func() time.Time { return now },
+		Log:      slog.New(slog.NewJSONHandler(&buf, nil)),
+	}
+	token, err := sessions.Create(ctx, "passwort", "test", "127.0.0.1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := now
+
+	if _, err := database.WriteDB().ExecContext(ctx,
+		`CREATE TRIGGER sitzung_no_touch BEFORE UPDATE ON sitzungen BEGIN SELECT RAISE(ABORT, 'touch refused'); END`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Past touchEvery, still inside the idle window, so the only thing this
+	// Lookup does beyond the read is the touch.
+	now = now.Add(30 * time.Minute)
+	sess, err := sessions.Lookup(ctx, token)
+	if err != nil {
+		t.Fatalf("a failed touch failed the lookup: %v", err)
+	}
+	if !sess.ZuletztAktivAm.Equal(stored) {
+		t.Fatalf("the returned session claims a touch that was refused: %s", sess.ZuletztAktivAm)
+	}
+	if !strings.Contains(buf.String(), "session last-seen timestamp not updated") {
+		t.Fatalf("a refused touch left no line: %q", buf.String())
 	}
 }
 

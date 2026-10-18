@@ -374,12 +374,33 @@ func (s *Service) releaseExport(monat string) {
 	delete(s.exporting, monat)
 }
 
+// renderPDF turns a document into PDF/A bytes, telling the two failure kinds
+// apart.
+//
+// "The renderer's binary is not usable" and "this one document is bad" are
+// different operator problems. The first means every export of the instance is
+// broken and nothing but fixing the environment helps; the second means one
+// document is bad and the instance is otherwise fine. Both used to leave as one
+// E_PDF_FEHLER, so the operator could not tell which they had. The typst probe
+// the readiness check already uses is the signal for the first: when it says
+// typst cannot run, no document could have rendered and the error says so.
 func (s *Service) renderPDF(ctx context.Context, doc pdf.Document, images []pdf.Image) ([]byte, error) {
 	if s.PDF == nil {
 		return nil, problem.New(500, "E_PDF_FEHLER", "Das PDF konnte nicht erzeugt werden.")
 	}
+	if s.Typst != nil {
+		if _, err := s.Typst(ctx); err != nil {
+			// Every export fails here, so this is an environment problem and
+			// not a document one. Saying which is the whole point.
+			s.logError("PDF render unavailable: typst is not usable", "err", err)
+			return nil, problem.New(500, "E_PDF_TYPST", "Die PDF-Erzeugung ist nicht verfügbar (typst fehlt).")
+		}
+	}
 	body, err := s.PDF.Render(ctx, doc, images)
 	if err != nil {
+		// typst ran and refused this document: a document problem, not an
+		// environment one. The renderer has already logged stderr.
+		s.logError("PDF render failed", "err", err)
 		return nil, problem.New(500, "E_PDF_FEHLER", "Das PDF konnte nicht erzeugt werden.")
 	}
 	return body, nil

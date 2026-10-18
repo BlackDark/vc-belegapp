@@ -84,7 +84,10 @@ func (s *Service) prepare(ctx context.Context, q *db.Queries, in BelegInput, sel
 	if err != nil {
 		return Beleg{}, rules.Jahresregel{}, "", err
 	}
-	exportAm, exportVersion := s.latestExport(ctx, q, monat)
+	exportAm, exportVersion, err := s.latestExport(ctx, q, monat)
+	if err != nil {
+		return Beleg{}, rules.Jahresregel{}, "", err
+	}
 	built := s.assemble(in, regel, rank, status, days, exportAm, exportVersion, selfID, true, ctx, q)
 	return built, regel, status, nil
 }
@@ -207,7 +210,10 @@ func (s *Service) decorate(ctx context.Context, q *db.Queries, row db.Belege, mo
 	if err != nil {
 		return Beleg{}, err
 	}
-	exportAm, exportVersion := s.latestExport(ctx, q, row.Datum[:7])
+	exportAm, exportVersion, err := s.latestExport(ctx, q, row.Datum[:7])
+	if err != nil {
+		return Beleg{}, err
+	}
 	rank := receiptRank(monthRows, row.ID, row.Datum)
 	allowed := rules.MahlzeitErlaubt(regel, row.Mahlzeit)
 	built := s.assemble(in, regel, rank, status, days, exportAm, exportVersion, row.ID, allowed, ctx, q)
@@ -451,12 +457,24 @@ func snapshotRow(row db.Belege, ids []string) map[string]any {
 	}
 }
 
-func (s *Service) latestExport(ctx context.Context, q *db.Queries, monat string) (string, int) {
+// latestExport reads the newest export of a month. "Nothing exported yet" is
+// the empty answer and not an error; a failed read is not that answer and is
+// returned.
+//
+// The distinction matters because the result decides whether a receipt carries
+// the "geändert seit Export" warning. Treating a read error as "no export"
+// would drop that warning from every receipt of the month at once — a silent
+// change to a legally relevant note, made because a query failed. So the error
+// is returned and the caller decides; it is never folded into the empty answer.
+func (s *Service) latestExport(ctx context.Context, q *db.Queries, monat string) (string, int, error) {
 	row, err := q.LatestExportAm(ctx, monat)
-	if err != nil {
-		return "", 0
+	if isNoRows(err) {
+		return "", 0, nil
 	}
-	return row.ErstelltAm, int(row.Version)
+	if err != nil {
+		return "", 0, err
+	}
+	return row.ErstelltAm, int(row.Version), nil
 }
 
 func (s *Service) holidayList(ctx context.Context, jahr int, regel rules.Jahresregel) ([]holidays.Feiertag, error) {

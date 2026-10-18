@@ -421,6 +421,43 @@ func TestIngestWatchFolderRefusesAnOversizeFileWithoutReadingIt(t *testing.T) {
 	_ = path
 }
 
+// The size check and the read are two steps, so a file can grow between the
+// Lstat and the read. The cap has to hold against the bytes that are read, not
+// against the size that was seen once — otherwise a writer appending to the
+// file between the two pulls the whole grown file into the heap, which is the
+// one thing the check exists to prevent.
+func TestReadWatchedBoundsTheReadToTheCap(t *testing.T) {
+	dir := t.TempDir()
+	big := filepath.Join(dir, "riesig.jpg")
+	if err := os.WriteFile(big, make([]byte, 4096), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	data, tooLarge, err := readWatched(big, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tooLarge {
+		t.Fatal("a file far over the cap was not reported as too large")
+	}
+	if len(data) > 65 {
+		t.Fatalf("read %d bytes of a capped file, want at most cap+1", len(data))
+	}
+
+	// A file within the cap reads whole and is not flagged, so the cap does
+	// not refuse a legitimate file.
+	exact := filepath.Join(dir, "klein.jpg")
+	if err := os.WriteFile(exact, make([]byte, 64), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	data, tooLarge, err = readWatched(exact, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tooLarge || len(data) != 64 {
+		t.Fatalf("a file at the cap: tooLarge=%v len=%d, want false/64", tooLarge, len(data))
+	}
+}
+
 // The move failure is the hard case: the store succeeded, so the receipt is
 // safe, but the file is still in the folder and the next poll would read it
 // again. The dedupe is a lookup on upload_sha256, which FindDuplicateBild

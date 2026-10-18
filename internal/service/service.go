@@ -41,8 +41,14 @@ type Service struct {
 	LLMMaxPX       int
 	LLMTimeout     time.Duration
 	PDF            pdf.Renderer
-	AppVersion     string
-	Log            *slog.Logger
+	// Typst is the cached `typst --version` probe the readiness check uses. It
+	// answers "is the renderer's binary usable at all", which is a different
+	// question from "is this document renderable"; renderPDF consults it to
+	// tell a broken environment from a bad document. Nil means the caller
+	// wired no probe and the distinction is not made.
+	Typst      func(context.Context) (string, error)
+	AppVersion string
+	Log        *slog.Logger
 
 	// Mail is the IMAP intake. It is nil when no mailbox is configured, and
 	// IngestMailbox is a no-op in that case. MailInterval is the poll period,
