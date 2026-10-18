@@ -82,7 +82,7 @@ Decisions: [adr](adr). Specification: [SPEC.md](SPEC.md). Terms: [GLOSSARY.md](G
 
 | Workflow | When | What |
 | --- | --- | --- |
-| `ci.yml` | Push to any branch, dispatch, `workflow_call` | Web bundle, plus a check that the committed `web/dist` matches a fresh build; linux/amd64, linux/arm64, darwin; `go test` (including the Markdown link check); `govulncheck`; PDF golden + veraPDF; Playwright; multi-arch image, Trivy, read-only smoke. `release-dry-run` runs the same GoReleaser setup as a tag (`release --snapshot --clean --skip=publish,sign,announce`) and fails if the checkout is dirty; a `changes` job first decides whether the push touched a file GoReleaser reads, and skips the snapshot when it did not. |
+| `ci.yml` | Push to any branch, dispatch, `workflow_call` | Web bundle, plus a check that the committed `web/dist` matches a fresh build; linux/amd64, linux/arm64; `go test` (including the Markdown link check); `govulncheck`; PDF golden + veraPDF; Playwright; multi-arch image, Trivy, read-only smoke. `release-dry-run` runs the same GoReleaser setup as a tag (`release --snapshot --clean --skip=publish,sign,announce`) and fails if the checkout is dirty; a `changes` job first decides whether the push touched a file GoReleaser reads, and skips the snapshot when it did not. |
 | `release-please.yml` | `workflow_dispatch` | Release PR, and on a second dispatch after that PR is merged, tag `vX.Y.Z`. Dispatches `ci.yml` on the release-PR branch and `release.yml` on the tag. Merging to `main` never releases; see [releases.md](releases.md#releasing). |
 | `release.yml` | Tag `v*` | Re-runs CI, smokes the image, GoReleaser. |
 | `codeql.yml` | Push to any branch, weekly | CodeQL for Go and TypeScript |

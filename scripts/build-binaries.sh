@@ -15,7 +15,7 @@ go mod download
 # One target per runner. Parallel compiles on a single runner split the
 # cores and finish no sooner, which held up e2e.
 if [ "$#" -eq 0 ]; then
-  set -- linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
+  set -- linux/amd64 linux/arm64
 fi
 
 for target in "$@"; do
