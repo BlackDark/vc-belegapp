@@ -88,11 +88,16 @@ type Pruner struct {
 // a prune that is mid-way through a large backlog stops at the next boundary
 // and Run returns. A half-pruned table is not a failure — the next start picks
 // up where this one left off.
+//
+// A failed pass never ends the loop, but it is never dropped either: runOnce
+// writes it to the log, which is the only thing that makes an hourly prune
+// failing for weeks visible. Without that line the jobs table grows without
+// bound and nothing in the process says so.
 func (p *Pruner) Run(ctx context.Context) {
 	if p == nil || p.DB == nil || p.Retention <= 0 {
 		return
 	}
-	_, _ = p.Prune(ctx)
+	p.runOnce(ctx)
 	ticker := time.NewTicker(p.every())
 	defer ticker.Stop()
 	for {
@@ -100,8 +105,24 @@ func (p *Pruner) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_, _ = p.Prune(ctx)
+			p.runOnce(ctx)
 		}
+	}
+}
+
+// runOnce runs one Prune and reports a failure on the log instead of failing
+// the loop or dropping it.
+//
+// The failure must not stop the prune: the rows are still there and the next
+// hour has to try again. It must not be swallowed either — this is the pass
+// whose whole purpose is to keep the jobs table from growing without bound, so
+// a prune that has been failing for months is exactly the thing an operator has
+// to be able to see. A cancellation is not a failure and is not logged, the same
+// way analyze leaves the cancelled case alone.
+func (p *Pruner) runOnce(ctx context.Context) {
+	if _, err := p.Prune(ctx); err != nil && p.Log != nil && ctx.Err() == nil {
+		// German like the other lines an operator reads here.
+		p.Log.Warn("Löschung abgeschlossener Jobs fehlgeschlagen", "err", err)
 	}
 }
 

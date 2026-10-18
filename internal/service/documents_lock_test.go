@@ -131,3 +131,34 @@ func TestMoveIntoLockedMonthLeavesSourceOpen(t *testing.T) {
 		t.Fatalf("september %s %v", september.Status, err)
 	}
 }
+
+// A read that fails is not the same answer as "nothing was exported". Folding
+// the two together drops the "geändert seit Export" warning from every receipt
+// in the month while the read that decides it is broken — a silent change to a
+// legally relevant note. The failed read has to reach the caller instead.
+func TestLatestExportReadFailureIsNotNoExport(t *testing.T) {
+	ctx := context.Background()
+	svc := exportSvc(t, &fakePDF{})
+	saveRule(t, svc)
+	beleg := addBeleg(t, svc, colorPNG(t, 11, 12, 13), BelegInput{
+		Datum: "2026-10-06", Mahlzeit: "mittag", Bezugsort: "supermarkt", Arbeitsort: "betrieb",
+		HaendlerName: "REWE", HaendlerOrt: "Köln", BelegbetragCent: 840,
+	})
+	if _, err := svc.CreateExport(ctx, Actor{Name: "eduard"}, "2026-10", ExportRequest{ErklaerungBestaetigt: true, WarnungenBestaetigt: true}); err != nil {
+		t.Fatal(err)
+	}
+	// Break exactly the read the warning depends on. Nothing else in the
+	// preview path reads monatsexporte.
+	if _, err := svc.DB.WriteDB().ExecContext(ctx, `ALTER TABLE monatsexporte RENAME TO monatsexporte_weg`); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := svc.PreviewBeleg(ctx, BelegInput{
+		Datum: beleg.Datum, Mahlzeit: beleg.Mahlzeit, Bezugsort: beleg.Bezugsort, Arbeitsort: beleg.Arbeitsort,
+		HaendlerName: beleg.HaendlerName, HaendlerOrt: beleg.HaendlerOrt, BelegbetragCent: beleg.BelegbetragCent,
+		BildIDs: []string{beleg.Bilder[0].ID},
+	}, beleg.ID)
+	if err == nil {
+		t.Fatal("a failed export read was answered as 'never exported'")
+	}
+}

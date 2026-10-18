@@ -124,6 +124,7 @@ func Serve(ctx context.Context, opt Options) error {
 		LLMMaxPX:       opt.Config.LLMMaxImagePX,
 		LLMTimeout:     opt.Config.LLMTimeout,
 		PDF:            renderer,
+		Typst:          typst.Check,
 		AppVersion:     appVersion,
 		Log:            opt.Log,
 	}
@@ -185,6 +186,7 @@ func Serve(ctx context.Context, opt Options) error {
 		Idle:     opt.Config.SessionIdleTimeout,
 		Absolute: opt.Config.SessionAbsoluteTimeout,
 		Secure:   opt.Config.CookieSecure,
+		Log:      opt.Log,
 	}
 	// The prune runs next to the other tickers and not inside the queue: its
 	// own goroutine and its own ticker mean deleting a year of history cannot

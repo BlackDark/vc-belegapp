@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -424,12 +425,22 @@ func (s *Service) ingestWatchFile(ctx context.Context, name string) (stored, dup
 		return false, false, false, true, nil
 	}
 
-	data, readErr := os.ReadFile(path)
+	// The read carries the same cap the stat just checked. The two are not the
+	// same check: a file can grow between the Lstat and the read, and the cap
+	// has to hold against the bytes that are actually read, not against the
+	// size that was seen once. readWatched stops one byte over the cap, so a
+	// file that grew cannot pull more than that into the heap.
+	data, tooLarge, readErr := readWatched(path, s.UploadMax)
 	if readErr != nil {
 		if errors.Is(readErr, fs.ErrNotExist) {
 			return false, false, false, false, nil
 		}
 		return false, false, false, false, readErr
+	}
+	if tooLarge {
+		s.setAsideWatched(name, path,
+			fmt.Errorf("file grew over BELEGAPP_UPLOAD_MAX_BYTES (%d) before it was read", s.UploadMax))
+		return false, false, false, true, nil
 	}
 
 	sum, hashErr := imagingHash(data)
@@ -479,6 +490,36 @@ func (s *Service) ingestWatchFile(ctx context.Context, name string) (stored, dup
 		return true, false, false, false, nil
 	}
 	return true, false, true, false, nil
+}
+
+// readWatched reads a watched file under a byte cap that holds against the
+// bytes read, not against a size measured earlier.
+//
+// limit <= 0 means no cap: the operator disabled the upload bound, so there is
+// no intended bound for this read to enforce. Otherwise at most limit+1 bytes
+// are pulled from the file, which is enough to answer "did it exceed the cap"
+// without reading the rest of a file that did; the caller turns that into the
+// same rejection an oversized Lstat produces. This is what makes the check
+// independent of the earlier stat: the file can grow between the two, and the
+// cap is enforced on what is actually read.
+func readWatched(path string, limit int64) (data []byte, tooLarge bool, err error) {
+	if limit <= 0 {
+		data, err = os.ReadFile(path)
+		return data, false, err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { _ = file.Close() }()
+	data, err = io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(data)) > limit {
+		return nil, true, nil
+	}
+	return data, false, nil
 }
 
 // setAsideWatched moves a file this application will never store into

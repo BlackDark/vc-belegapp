@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -40,6 +41,10 @@ type Sessions struct {
 	Absolute time.Duration
 	Secure   bool
 	Now      func() time.Time
+	// Log receives the one failure that must not fail a request: the last-seen
+	// timestamp of an otherwise valid session. It is nil-safe, like the other
+	// logger fields in this process.
+	Log *slog.Logger
 }
 
 func (s *Sessions) now() time.Time {
@@ -106,9 +111,22 @@ func (s *Sessions) Lookup(ctx context.Context, token string) (Session, error) {
 	if now.Sub(sess.ZuletztAktivAm) >= touchEvery {
 		stamp := now.Format(time.RFC3339)
 		if err := db.New(s.DB.WriteDB()).TouchSitzung(ctx, db.TouchSitzungParams{ZuletztAktivAm: stamp, TokenHash: sess.TokenHash}); err != nil {
-			return Session{}, err
+			// The touch is bookkeeping, not authentication: the session was
+			// already loaded and is valid. The write pool holds one connection
+			// and a busy timeout, so a prune batch or a busy queue can make
+			// this small UPDATE fail on a request that has nothing wrong with
+			// it. Failing the request would turn a timestamp that could not be
+			// written into a 500 on a page load; dropping the error would
+			// leave nobody to notice that every touch is failing. So it is
+			// logged and the request continues, and the in-memory stamp is left
+			// alone so it does not claim a write that never happened — the
+			// next request tries the touch again.
+			if s.Log != nil {
+				s.Log.Warn("session last-seen timestamp not updated", "err", err)
+			}
+		} else {
+			sess.ZuletztAktivAm = now
 		}
-		sess.ZuletztAktivAm = now
 	}
 	return sess, nil
 }

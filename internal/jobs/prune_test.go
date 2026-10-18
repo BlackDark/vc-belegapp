@@ -1,8 +1,10 @@
 package jobs
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -266,6 +268,30 @@ func TestPruneRunStopsOnCancel(t *testing.T) {
 	seedJob(t, database, "nachher", "fertig", old)
 	if got := jobStatus(t, database, "nachher"); got != "fertig" {
 		t.Fatalf("status %s after the prune returned", got)
+	}
+}
+
+// TestPruneRunReportsAFailingPrune: a failing prune must not stop the loop, but
+// it must not vanish either. Closing the database makes the first pass fail
+// deterministically, and runOnce is the body Run calls at both of its two call
+// sites, so the assertion is about the production path rather than a test-only
+// branch.
+func TestPruneRunReportsAFailingPrune(t *testing.T) {
+	database := openQueueDB(t)
+	var buf bytes.Buffer
+	p := testPruner(database, 24*time.Hour)
+	p.Log = slog.New(slog.NewJSONHandler(&buf, nil))
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	p.runOnce(context.Background())
+
+	if !strings.Contains(buf.String(), "Löschung abgeschlossener Jobs fehlgeschlagen") {
+		t.Fatalf("a failing prune left no line: %q", buf.String())
+	}
+	if !strings.Contains(buf.String(), "database is closed") {
+		t.Fatalf("the line does not name the error: %q", buf.String())
 	}
 }
 
