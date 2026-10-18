@@ -3,11 +3,12 @@ import { useQuery, useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { toast } from "solid-sonner";
 import { CaptureInputs } from "../components/CaptureInputs";
-import { ApiError, client, type Erkennung } from "../lib/api";
+import { client, type Erkennung, fehlermeldung } from "../lib/api";
 import { todayISO } from "../lib/dates";
-import { downscale } from "../lib/image";
 import { formatCentInput } from "../lib/money";
 import { queryKeys } from "../lib/queryKeys";
+import { useEinstellungen } from "../lib/referenceData";
+import { uploadBelegbild } from "../lib/upload";
 import { type Draft, ReviewForm } from "./ReviewForm";
 
 export default function Review() {
@@ -24,11 +25,7 @@ export default function Review() {
   };
   const draftJahr = () =>
     Number(datumParam().slice(0, 4)) || new Date().getFullYear();
-  const profil = useQuery(() => ({
-    queryKey: queryKeys.einstellungen,
-    queryFn: () => client.einstellungen(),
-    enabled: !params.id,
-  }));
+  const profil = useEinstellungen(() => !params.id);
   const regel = useQuery(() => ({
     queryKey: queryKeys.regel(draftJahr()),
     queryFn: () => client.regel(draftJahr()),
@@ -36,17 +33,9 @@ export default function Review() {
     retry: false,
   }));
   const addFile = async (file: File) => {
-    try {
-      const blob = await downscale(file);
-      const first = bildIds().length === 0;
-      const bild = await client.upload(blob, first);
+    const bild = await uploadBelegbild(file, bildIds().length === 0);
+    if (bild) {
       setUploaded((ids) => [...ids, bild.id].slice(0, 3));
-    } catch (err) {
-      toast.error(
-        err instanceof ApiError
-          ? err.message
-          : "Das Bild konnte nicht hochgeladen werden.",
-      );
     }
   };
   const existing = useQuery(() => ({
@@ -130,9 +119,7 @@ export default function Review() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.bild(id) });
     } catch (err) {
       toast.error(
-        err instanceof ApiError
-          ? err.message
-          : "Erkennung konnte nicht gestartet werden.",
+        fehlermeldung(err, "Erkennung konnte nicht gestartet werden."),
       );
     }
   };

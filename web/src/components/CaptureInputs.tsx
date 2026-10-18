@@ -1,8 +1,6 @@
 import { Camera, ImagePlus } from "lucide-solid";
-import { toast } from "solid-sonner";
 
-import { ApiError, client } from "../lib/api";
-import { downscale } from "../lib/image";
+import { uploadBelegbild } from "../lib/upload";
 import { cn } from "../lib/utils";
 import { buttonVariants } from "./ui/button";
 
@@ -56,15 +54,8 @@ export async function openCaptured(
   navigate: (path: string) => void,
   file: File,
 ) {
-  try {
-    const blob = await downscale(file);
-    const bild = await client.upload(blob);
+  const bild = await uploadBelegbild(file);
+  if (bild) {
     navigate(`/belege/neu?bild=${bild.id}`);
-  } catch (err) {
-    toast.error(
-      err instanceof ApiError
-        ? err.message
-        : "Das Bild konnte nicht hochgeladen werden.",
-    );
   }
 }

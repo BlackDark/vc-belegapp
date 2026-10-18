@@ -16,6 +16,18 @@ export function useWerte() {
   }));
 }
 
+// useEinstellungen reads the single Einstellungen row. The screens that need it
+// either poll it whenever it is mounted or, like the review and export dialogs,
+// only while a dialog is open, so the caller may pass an enabled predicate. One
+// query key and one query function keep every copy of that row in sync.
+export function useEinstellungen(enabled?: () => boolean) {
+  return useQuery(() => ({
+    queryKey: queryKeys.einstellungen,
+    queryFn: () => client.einstellungen(),
+    enabled: enabled?.(),
+  }));
+}
+
 // The helpers take the query data, which is undefined until the request
 // resolves. They never hand back a raw code while loading, so a label is
 // either the right German text or nothing at all. Every list is read through an

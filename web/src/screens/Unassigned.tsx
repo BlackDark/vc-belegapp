@@ -8,7 +8,7 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
 import { Skeleton } from "../components/ui/skeleton";
-import { ApiError, client, type OffenesBild } from "../lib/api";
+import { client, fehlermeldung, type OffenesBild } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
 
 // The five belegbilder.erkennung_status values, in German. The list only ever
@@ -86,13 +86,15 @@ export default function Unassigned() {
   // file: BELEGAPP_UNASSIGNED_IMAGE_TTL is operator-configurable, and copy that
   // claims 24 hours while the sweeper waits 72 is worse than no copy at all.
   const einleitung = () => {
+    const grundsatz =
+      "Hochgeladene Bilder ohne Beleg. Zum Prüfen öffnen oder löschen.";
     const stunden = query.data?.ttl_stunden ?? 0;
     if (stunden <= 0) {
-      return "Hochgeladene Bilder ohne Beleg. Zum Prüfen öffnen oder löschen.";
+      return grundsatz;
     }
     const frist =
       stunden === 1 ? "nach einer Stunde" : `nach ${stunden} Stunden`;
-    return `Hochgeladene Bilder ohne Beleg. Zum Prüfen öffnen oder löschen. Ohne Zuordnung werden sie ${frist} entfernt.`;
+    return `${grundsatz} Ohne Zuordnung werden sie ${frist} entfernt.`;
   };
 
   return (
@@ -186,9 +188,7 @@ function Eintrag(props: { bild: OffenesBild }) {
       });
       toast.success("Bild gelöscht");
     } catch (err) {
-      toast.error(
-        err instanceof ApiError ? err.message : "Löschen fehlgeschlagen",
-      );
+      toast.error(fehlermeldung(err, "Löschen fehlgeschlagen"));
     } finally {
       setBusy(false);
     }

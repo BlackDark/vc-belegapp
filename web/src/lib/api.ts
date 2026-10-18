@@ -18,6 +18,14 @@ export class ApiError extends Error {
   }
 }
 
+// fehlermeldung turns any thrown value into the German sentence a screen should
+// show: the problem body's own detail for a failed request, the caller's own
+// fallback otherwise. Keeping the fallback here means the text stays
+// character-identical across the screens that report the same failure.
+export function fehlermeldung(err: unknown, fallback: string): string {
+  return err instanceof ApiError ? err.message : fallback;
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body && !headers.has("Content-Type")) {

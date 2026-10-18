@@ -29,6 +29,7 @@ import {
   type Beleg,
   client,
   type Erkennung,
+  fehlermeldung,
   type Warnung,
 } from "../lib/api";
 import { formatCent, formatCentInput, parseEuroToCent } from "../lib/money";
@@ -214,9 +215,7 @@ export function ReviewForm(props: {
       toast.success("Beleg gespeichert");
       props.onDone();
     } catch (err) {
-      toast.error(
-        err instanceof ApiError ? err.message : "Speichern fehlgeschlagen",
-      );
+      toast.error(fehlermeldung(err, "Speichern fehlgeschlagen"));
     } finally {
       setSaving(false);
     }
@@ -231,9 +230,7 @@ export function ReviewForm(props: {
       await client.deleteBeleg(props.beleg.id, props.beleg.version, grund);
       props.onDone();
     } catch (err) {
-      toast.error(
-        err instanceof ApiError ? err.message : "Löschen fehlgeschlagen",
-      );
+      toast.error(fehlermeldung(err, "Löschen fehlgeschlagen"));
     } finally {
       setSaving(false);
     }

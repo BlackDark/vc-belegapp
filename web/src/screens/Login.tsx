@@ -12,7 +12,7 @@ import {
   CardHeader,
 } from "../components/ui/card";
 import { Skeleton } from "../components/ui/skeleton";
-import { ApiError, client } from "../lib/api";
+import { client, fehlermeldung } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
 import { cn } from "../lib/utils";
 
@@ -40,9 +40,7 @@ export default function Login() {
       await clientQuery.invalidateQueries({ queryKey: queryKeys.me });
       navigate("/", { replace: true });
     } catch (err) {
-      setError(
-        err instanceof ApiError ? err.message : "Anmeldung fehlgeschlagen.",
-      );
+      setError(fehlermeldung(err, "Anmeldung fehlgeschlagen."));
     }
   };
 

@@ -15,7 +15,7 @@ import {
 import { Checkbox } from "../components/ui/checkbox";
 import { Skeleton } from "../components/ui/skeleton";
 import { ValuesAlert } from "../components/values-alert";
-import { ApiError, client, type Jahresregel } from "../lib/api";
+import { client, fehlermeldung, type Jahresregel } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
 import {
   bundeslaenderOf,
@@ -78,9 +78,7 @@ export default function AnnualRulePage() {
       });
       await queryClient.invalidateQueries({ queryKey: queryKeys.regeln });
     } catch (err) {
-      toast.error(
-        err instanceof ApiError ? err.message : "Speichern fehlgeschlagen",
-      );
+      toast.error(fehlermeldung(err, "Speichern fehlgeschlagen"));
     }
   };
 
