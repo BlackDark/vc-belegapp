@@ -180,7 +180,14 @@ func cmdVerifyAudit(ctx context.Context, args []string, stdout, stderr io.Writer
 	if err != nil {
 		return exitErr(2, err)
 	}
-	if err := app.Migrate(ctx, app.Options{Config: cfg, Log: logging.New(stderr, cfg.LogLevel, cfg.LogFormat)}); err != nil {
+	// Migrate brings the schema up so the chain can be read, but this command
+	// must not rewrite the file: SkipAutoVacuumMigrate keeps the one-time
+	// VACUUM out of a verification run. The next real start performs it.
+	if err := app.Migrate(ctx, app.Options{
+		Config:                cfg,
+		Log:                   logging.New(stderr, cfg.LogLevel, cfg.LogFormat),
+		SkipAutoVacuumMigrate: true,
+	}); err != nil {
 		return err
 	}
 	database, err := db.Open(cfg.DBPath)

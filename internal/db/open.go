@@ -82,10 +82,12 @@ type Options struct {
 // The write pool has a single connection. The read pool is read-only.
 //
 // Open never converts the file's auto_vacuum mode: an existing database keeps
-// the mode it already has. cmd/belegapp verify-audit opens through here, and
-// that command only reads the audit chain — it must not rewrite the database
-// file behind the operator's back. Use OpenWith with
-// Options.AutoVacuumMigrate for the one-time conversion.
+// the mode it already has. The conversion writes every page, so it stays
+// opt-in through OpenWith and Options.AutoVacuumMigrate instead of being a
+// side effect of opening a file. cmd/belegapp verify-audit relies on that: it
+// opens through here, and it opens without the conversion
+// (app.Options.SkipAutoVacuumMigrate), because a command whose job is to read
+// the audit chain must not rewrite the database.
 //
 // Open is also where auto_vacuum is decided on a new database, and the order
 // matters: this is the first connection to the file, so on a database that
