@@ -10,6 +10,7 @@ Every variable uses the prefix `BELEGAPP_`. A secret may be set as `BELEGAPP_<NA
 | `BELEGAPP_BASE_URL` | empty | Public origin. Required for OIDC. Also the CSRF trusted origin |
 | `BELEGAPP_DATA_DIR` | `/data` | Data directory |
 | `BELEGAPP_DB_PATH` | `${DATA_DIR}/belegapp.db` | SQLite file |
+| `BELEGAPP_DB_AUTO_VACUUM_MIGRATE` | `true` | Convert an existing database to `auto_vacuum = INCREMENTAL` on the first start after the upgrade. That is one `VACUUM`: a full rewrite of the file, one slower start, transient free disk about the size of the database. `false` skips it; see [The jobs table and the size of the database](#the-jobs-table-and-the-size-of-the-database) |
 | `BELEGAPP_TZ` | `Europe/Berlin` | Business time zone. Zone data is embedded |
 | `BELEGAPP_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
 | `BELEGAPP_LOG_FORMAT` | `json` | `json` or `text` |
@@ -141,13 +142,23 @@ Every job is one row, and four of the five types are created by a timer rather t
 - New databases are created with `auto_vacuum = INCREMENTAL` (`internal/db/open.go`), so the freed pages become reclaimable instead of dead weight in the middle of the file.
 - The prune runs `PRAGMA incremental_vacuum` after each pass, which is what actually truncates the file. It is bounded to 4 MiB per run; whatever is left over is reclaimed by the next one.
 
-An **existing** database does not get this automatically. SQLite ignores `auto_vacuum` on a database that already has tables — silently, by design — so an upgraded instance keeps deleting its rows correctly and keeps its file size exactly as it was. Nothing breaks, and nothing gets smaller on its own. To enable reclaiming on an existing install, stop the process and run the full vacuum once; it rewrites the file and takes as long and as much free disk as the database is large:
+**An existing database is converted on the first start after the upgrade.** SQLite ignores `auto_vacuum` on a database that already has tables — silently, by design — so a file created before this version cannot be switched with the pragma alone. The process now does the whole thing itself, once, at startup: it reads `PRAGMA auto_vacuum` and, when it is not already `INCREMENTAL`, sets the pragma and runs `VACUUM`. That conversion is a single rewrite of the database file. It costs one slower start and needs transient free disk on the same volume roughly the size of the database; the file is rebuilt compactly, so it ends up the size of the data it still holds. A failure is not fatal — the start continues, the file simply keeps its size, and the log carries a warning (`auto_vacuum konnte nicht umgestellt werden…`). A start that converts logs one info line.
+
+To skip it, set:
+
+```bash
+BELEGAPP_DB_AUTO_VACUUM_MIGRATE=false
+```
+
+That is the choice for a database too large to rewrite in the startup window, or on a volume without room for the copy. Skipping is not permanent: `false` only means the conversion does not happen, so the file keeps its size exactly as before, and the prune still holds the *growth* down. Set it back to the default `true` (or run the command below by hand) whenever the rewrite is affordable.
+
+The equivalent by hand — the same two statements, with the process stopped:
 
 ```bash
 sqlite3 /data/belegapp.db 'PRAGMA auto_vacuum=INCREMENTAL; VACUUM;'
 ```
 
-A plain `VACUUM` without the pragma is not enough, and so is `PRAGMA incremental_vacuum` alone: on a database that was created without `auto_vacuum` both are no-ops. If you would rather not rewrite the file, leaving it alone is a valid choice — the prune then only keeps the *growth* down, which is the part that was unbounded.
+A plain `VACUUM` without the pragma is not enough, and so is `PRAGMA incremental_vacuum` alone: on a database that was created without `auto_vacuum` both are no-ops. The command above is the same work the startup conversion does; run it by hand only while the automatic step is switched off.
 
 ## Ollama
 

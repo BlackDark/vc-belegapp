@@ -47,6 +47,20 @@ type Options struct {
 	Log      *slog.Logger
 	Version  Version
 	Frontend fs.FS
+
+	// SkipAutoVacuumMigrate leaves a database that predates auto_vacuum on
+	// auto_vacuum = NONE instead of rewriting the file to INCREMENTAL.
+	//
+	// verify-audit sets it. Its job is to read the audit chain, and the
+	// conversion is a VACUUM: it writes every page and needs transient free
+	// space about the size of the database. That is not something a
+	// verification command should do behind the operator's back; the next
+	// start converts anyway.
+	//
+	// The zero value converts, so a caller that does not think about this gets
+	// the ordinary behaviour. BELEGAPP_DB_AUTO_VACUUM_MIGRATE=false still turns
+	// the conversion off for every caller.
+	SkipAutoVacuumMigrate bool
 }
 
 // Migrate opens the database, applies migrations, and ensures system rows.
@@ -54,7 +68,7 @@ func Migrate(ctx context.Context, opt Options) error {
 	if err := prepareDirs(opt.Log, opt.Config); err != nil {
 		return err
 	}
-	database, err := openDB(opt.Config)
+	database, err := openDB(opt)
 	if err != nil {
 		return err
 	}
@@ -81,7 +95,7 @@ func Serve(ctx context.Context, opt Options) error {
 		return ErrAuthRequired
 	}
 
-	database, err := openDB(opt.Config)
+	database, err := openDB(opt)
 	if err != nil {
 		return err
 	}
@@ -434,8 +448,30 @@ func logStartup(opt Options, rt db.Runtime, typst pdf.Probe) {
 	opt.Log.Info("database ready", "path", opt.Config.DBPath, "instance_id", rt.InstanceID)
 }
 
-func openDB(cfg config.Config) (*db.DB, error) {
-	return db.Open(cfg.DBPath)
+func openDB(opt Options) (*db.DB, error) {
+	cfg, log := opt.Config, opt.Log
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	// Two switches, one for the deployment and one for the caller: the env var
+	// turns the conversion off everywhere, and a caller that only reads the
+	// database turns it off for itself.
+	migrate := cfg.DBAutoVacuumMigrate && !opt.SkipAutoVacuumMigrate
+	database, err := db.OpenWith(cfg.DBPath, db.Options{AutoVacuumMigrate: migrate})
+	if err != nil {
+		return nil, err
+	}
+	// One line per start and only when it says something: the conversion is a
+	// one-time file rewrite, a failure is not, and a database that was already
+	// incremental is the ordinary case and stays quiet.
+	switch {
+	case database.AutoVacuumMigrated:
+		log.Info("Datenbank auf auto_vacuum=INCREMENTAL umgestellt; die Datei wurde einmalig neu geschrieben")
+	case database.AutoVacuumMigrateErr != nil:
+		log.Warn("auto_vacuum konnte nicht umgestellt werden; Reclaim gibt weiterhin keinen Speicher zurück",
+			"err", database.AutoVacuumMigrateErr)
+	}
+	return database, nil
 }
 
 func openStore(cfg config.Config) (storage.BlobStore, error) {
@@ -521,7 +557,7 @@ func offlineService(ctx context.Context, opt Options) (*service.Service, func(),
 	if err := Migrate(ctx, opt); err != nil {
 		return nil, nil, err
 	}
-	database, err := openDB(opt.Config)
+	database, err := openDB(opt)
 	if err != nil {
 		return nil, nil, err
 	}

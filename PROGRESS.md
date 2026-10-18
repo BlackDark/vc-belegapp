@@ -177,11 +177,13 @@ Ungeschönt, weil jede davon jemanden betrifft, der die Anwendung betreibt:
   die Belegerkennung bis zum Neustart an. Ein Neustart hilft nicht: der Auftrag wird wieder eingereiht und
   hängt wieder. Die Fristen aus U9/U12 ändern daran nichts, weil eine Frist nur einen Auftrag beendet, der
   wieder im Rechner hängt, nicht einen, der noch darin steckt. Abhilfe: `BELEGAPP_WATCH_FOLDER=`.
-- **`auto_vacuum=INCREMENTAL` gilt nur für Datenbanken, die ab hier neu angelegt werden.** SQLite übergeht die
-  Einstellung auf einer Datei, die bereits Tabellen hat — stillschweigend, absichtlich. Eine bestehende
-  Installation löscht weiterhin korrekt, behält aber ihre Dateigröße, bis ein Betreiber einmalig `PRAGMA
-  auto_vacuum=INCREMENTAL; VACUUM;` bei gestopptem Prozess ausführt. Ohne diesen Schritt begrenzt das Aufräumen
-  nur das Wachstum — Schritt für Schritt in [configuration](docs/configuration.md#the-jobs-table-and-the-size-of-the-database).
+- **`auto_vacuum=INCREMENTAL` wird auf einer bestehenden Datenbank beim ersten Start umgestellt.** SQLite übergeht die
+  Einstellung auf einer Datei, die bereits Tabellen hat — stillschweigend, absichtlich. Deshalb liest der Start
+  `PRAGMA auto_vacuum` und führt bei Bedarf einmalig `PRAGMA auto_vacuum=INCREMENTAL; VACUUM;` aus. Das ist ein
+  vollständiger Neuschrieb der Datei: ein langsamerer Start und vorübergehend freier Platz in der Größe der
+  Datenbank. Ein Fehlschlag ist nicht fatal; `BELEGAPP_DB_AUTO_VACUUM_MIGRATE=false` überspringt den Schritt, dann
+  behält die Datei ihre Größe und das Aufräumen begrenzt nur das Wachstum — Schritt für Schritt in
+  [configuration](docs/configuration.md#the-jobs-table-and-the-size-of-the-database).
 - **Der Webhook ist die einzige Ankunftsanzeige für Postfach- und Ordnerbelege.** Prüft niemand einen Eingang,
   vernichtet ihn der TTL-Lauf für unzugewiesene Bilder (Vorgabe `BELEGAPP_UNASSIGNED_IMAGE_TTL=24h`, stündlicher
   Lauf, also nach 24–25 Stunden). Die Ordnerquelle ist nach `.processed` verschoben und liegt noch da; beim
@@ -231,10 +233,10 @@ bei Oberflächen-Lügen und bei kaputt gebautem `dist` bisher erfolgreich.
 - **U10** — der Statfilter musste in die Query wandern, damit ein Fehler im Aufrufer keine Zeile löschen kann,
   die noch Arbeit schuldet; der Aufräumvorgang darf nicht in der Warteschlange hängen, weil der Schreibkanal nur
   eine Verbindung hat und ein Block auf den ganzen Bestand jeden Auftrag verzögert hätte (festgehalten durch
-  `TestPruneDoesNotDelayJobExecution`); `auto_vacuum` an anderer Stelle als bei der Erstellung zu setzen wäre auf
-  einer bestehenden Datenbank wirkungslos; die Dateigrößenmessung musste das WAL erst zurückfalten; und das
-  Test-Cleanup schlug mit „directory not empty" fehl, weil `database/sql` die `-wal`-/`-shm`-Dateien nach
-  `Close` neu anlegt.
+  `TestPruneDoesNotDelayJobExecution`); `auto_vacuum` ohne das anschließende `VACUUM` wäre auf einer bestehenden
+  Datenbank wirkungslos — die einmalige Umstellung beim Start kam später dazu; die Dateigrößenmessung musste das
+  WAL erst zurückfalten; und das Test-Cleanup schlug mit „directory not empty" fehl, weil `database/sql` die
+  `-wal`-/`-shm`-Dateien nach `Close` neu anlegt.
 - **U11/U16** — die Query-Pläne wurden **nach** dem Anlegen der Migration gegen die frisch migrierte Datenbank
   gelesen, nicht vorher geschätzt; die Tests legen den Index wieder weg und messen neu, sonst wären sie grün,
   ohne dass SQLite ihn benutzt. Der als redundant verdächtigte Index blieb, weil die Messung keinen Unterschied

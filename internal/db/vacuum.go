@@ -17,11 +17,11 @@ const reclaimPagesDefault = 4096
 // Reclaim gives up to pages free pages back to the filesystem and reports how
 // many it freed.
 //
-// This is PRAGMA incremental_vacuum, which only shrinks a database created with
-// auto_vacuum=INCREMENTAL — see Open. On a database that predates it the pragma
-// is a silent no-op and Reclaim reports zero, so an existing install is never
-// broken by it; that database keeps its file size until an operator runs the
-// one-time VACUUM documented in docs/configuration.md.
+// This is PRAGMA incremental_vacuum, which only shrinks a database created
+// with auto_vacuum=INCREMENTAL — see Open. On a database that predates it the
+// pragma is a silent no-op and Reclaim reports zero, so an existing install is
+// never broken by it; OpenWith switches such a database over once at startup,
+// and until that start (or a skipped conversion) it keeps its file size.
 //
 // The page count is what keeps this from becoming the thing that stalls a
 // queue: freeing pages rewrites them, and the write pool has one connection.
