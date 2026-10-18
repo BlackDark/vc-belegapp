@@ -93,6 +93,38 @@ sonst nicht fehlschlagen könnte. Ein Berechtigungstest wird übersprungen, wenn
 
 **Die Lehre, die daraus folgt: nach jedem Push den CI-Status auf `main` prüfen, nicht nur die lokale Suite.**
 
+## CI: Laufzeit (18.10.2026)
+
+**Ein Push kostete 385–409 s Wanduhr, davon 335 s im längsten Job `go` und 264 s im Job `release-dry-run`,
+der alles noch einmal baut, was `linux-amd64`, `linux-arm64`, `darwin` und `docker` schon gebaut haben.**
+
+Im `go`-Job war die Ursache eine Cache-Falle, keine zu große Suite. `actions/setup-go` legt Modul- und
+Build-Cache unter **einen** Schlüssel je `go.sum`, und `actions/cache` schreibt einen Schlüssel nur
+**einmal**. Gewinner ist damit der Job, der zuerst fertig wird — in diesem Workflow `vuln` nach 21 s, mit
+nichts kompiliert außer `govulncheck`. Die so entstandenen 233 MB finden danach **alle** Jobs vor, und
+keiner kann sie mehr ersetzen. `go generate` baute deshalb sqlc bei jedem Lauf neu (61 s), `sqlc-diff.sh`
+das Binary (41 s) und die Testschritte jedes Paket (159 s mit `-race`). Dass daran die Kompilierung hängt
+und nicht die Prüfungen, ist lokal gemessen: dieselbe Race-Suite braucht mit kaltem Build-Cache 227 s, mit
+warmem 58 s.
+
+Geändert:
+
+- **Ein Build-Cache je Job** ([`.github/actions/go-setup`](.github/actions/go-setup/action.yml)). Der
+  Modul-Cache bleibt auf dem geteilten `setup-go`-Schlüssel — er ist eine Funktion von `go.sum` und dort
+  bereits vollständig —, der Build-Cache bekommt einen Schlüssel je Job. Der Schlüssel wechselt weiterhin
+  nur mit `go.sum`: Abhängigkeiten (`modernc.org/sqlite`), Standardbibliothek und Werkzeuge bleiben gültig,
+  und Code aus diesem Repository ändert sich zu oft, als dass sich ein Schlüssel je Lauf lohnte — er würde
+  je Lauf einige hundert MB in ein Cache-Budget von 10 GB schreiben und die Einträge verdrängen, die die
+  anderen Jobs wiederherstellen.
+- **`go` wartet nicht mehr auf `web`.** Der Abgleich, dass das committete `web/dist` zum Build passt, läuft
+  jetzt im `web`-Job, direkt neben dem Build. Vorher lag die Bundle-Erstellung (46 s) vor dem längsten Job
+  des Workflows.
+- **`release-dry-run` läuft nur noch, wenn der Push eine Datei berührt hat, die GoReleaser liest**
+  (`.goreleaser.yaml`, die Dockerfiles, `LICENSE`, `README.md`, `deploy/`, die Release-Workflows, die
+  Composite Action, `scripts/install-typst.sh`). Ein Kompilierfehler bleibt dabei nicht unentdeckt: die
+  Plattform-Jobs bauen dieselben vier Binaries aus denselben Quellen mit denselben Flags.
+- **`e2e` cached Typst und die Playwright-Browser**, statt sie je Lauf zu laden.
+
 ## Arbeitsweise mit `main`
 
 `main` ist geschützt. Eine Änderung geht über einen Pull Request, wird per Squash zusammengefasst und
