@@ -4,7 +4,7 @@
   "enforcement": "active",
   "conditions": {
     "ref_name": {
-      "include": ["refs/heads/main"],
+      "include": ["~DEFAULT_BRANCH"],
       "exclude": []
     }
   },
@@ -16,18 +16,16 @@
       "type": "non_fast_forward"
     },
     {
-      "type": "required_linear_history"
-    },
-    {
       "type": "pull_request",
       "parameters": {
         "required_approving_review_count": 0,
-        "dismiss_stale_reviews_on_push": false,
+        "dismiss_stale_reviews_on_push": true,
         "required_reviewers": [],
         "require_code_owner_review": false,
         "require_last_push_approval": false,
-        "required_review_thread_resolution": true,
-        "allowed_merge_methods": ["squash", "rebase"]
+        "required_review_thread_resolution": false,
+        "require_extra_approval_for_unattributed_changes": true,
+        "allowed_merge_methods": ["squash", "rebase", "merge"]
       }
     },
     {
@@ -36,11 +34,14 @@
         "strict_required_status_checks_policy": true,
         "do_not_enforce_on_create": false,
         "required_status_checks": [
-          {"context": "web"},
-          {"context": "go"},
-          {"context": "docker"}
+          {"context": "go", "integration_id": 15368},
+          {"context": "web", "integration_id": 15368},
+          {"context": "docker", "integration_id": 15368},
+          {"context": "e2e", "integration_id": 15368},
+          {"context": "vuln", "integration_id": 15368}
         ]
       }
     }
-  ]
+  ],
+  "bypass_actors": []
 }
