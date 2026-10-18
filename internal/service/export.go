@@ -181,15 +181,15 @@ func (s *Service) CreateExport(ctx context.Context, actor Actor, monat string, r
 			return appErr
 		}
 		hash = entry.Hash
-		regelRaw, mErr := json.Marshal(view.Jahresregel)
+		regelRaw, mErr := rawJSON(view.Jahresregel)
 		if mErr != nil {
 			return mErr
 		}
-		einstRaw, mErr := json.Marshal(einst)
+		einstRaw, mErr := rawJSON(einst)
 		if mErr != nil {
 			return mErr
 		}
-		sumRaw, mErr := json.Marshal(view.Summen)
+		sumRaw, mErr := rawJSON(view.Summen)
 		if mErr != nil {
 			return mErr
 		}
@@ -197,7 +197,7 @@ func (s *Service) CreateExport(ctx context.Context, actor Actor, monat string, r
 		for _, beleg := range view.Belege {
 			refs = append(refs, exportBelegRef{ID: beleg.ID, Version: beleg.Version})
 		}
-		idRaw, mErr := json.Marshal(refs)
+		idRaw, mErr := rawJSON(refs)
 		if mErr != nil {
 			return mErr
 		}
@@ -216,10 +216,10 @@ func (s *Service) CreateExport(ctx context.Context, actor Actor, monat string, r
 			CsvSha256:              csvSum,
 			ZipBlobKey:             zipKey,
 			ZipSha256:              zipSum,
-			RegelnSnapshot:         string(regelRaw),
-			EinstellungenSnapshot:  string(einstRaw),
-			Summen:                 string(sumRaw),
-			BelegIds:               string(idRaw),
+			RegelnSnapshot:         regelRaw,
+			EinstellungenSnapshot:  einstRaw,
+			Summen:                 sumRaw,
+			BelegIds:               idRaw,
 			ErklaerungBestaetigtAm: stamp,
 			WarnungenBestaetigt:    flag,
 			ProtokollHash:          hash,
@@ -455,6 +455,18 @@ func putBytes(ctx context.Context, store storage.BlobStore, key string, body []b
 func shaHex(body []byte) string {
 	sum := sha256.Sum256(body)
 	return hex.EncodeToString(sum[:])
+}
+
+// rawJSON marshals one snapshot value to the exact bytes that go into a
+// monatsexporte column. The four snapshots are stored as four separate columns
+// and their JSON shape is part of the stored record, so this is a marshal of
+// the same values as before and not a new combined snapshot struct.
+func rawJSON(v any) (string, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
 }
 
 func readBlob(ctx context.Context, store storage.BlobStore, key string) ([]byte, error) {

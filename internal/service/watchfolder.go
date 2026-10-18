@@ -287,25 +287,25 @@ func (s *Service) IngestWatchFolder(ctx context.Context) (WatchPoll, error) {
 			out.Uebersprungen++
 			continue
 		}
-		stored, duplicate, filed, rejected, err := s.ingestWatchFile(ctx, name)
+		outcome, err := s.ingestWatchFile(ctx, name)
 		switch {
 		case err != nil:
 			// The blob store or the database is down. Every image this poll
 			// already stored has been recorded through the dedupe hash, so the
 			// retry files those files instead of storing them a second time.
 			return out, err
-		case duplicate:
+		case outcome.duplicate:
 			// Filed without a second Belegbild, so this is deliberately not
 			// counted as Verschoben: the file is gone from the inbox and no
 			// image was written for it, which the job list must not report as
 			// ordinary progress.
 			out.BereitsGespeichert++
-		case stored:
+		case outcome.stored:
 			out.Bilder++
-			if filed {
+			if outcome.filed {
 				out.Verschoben++
 			}
-		case rejected:
+		case outcome.rejected:
 			out.Abgelehnt++
 		default:
 			// The file was no longer there when it was read, or it had
@@ -362,10 +362,29 @@ func (s *Service) watchStable(name string, entry fs.DirEntry) (bool, error) {
 	return s.watch.stable(name, watchStamp{size: info.Size(), modTime: info.ModTime()}), nil
 }
 
-// ingestWatchFile stores one file and then files it away. The return values
-// say what happened to the image, to the file's location, and to the file's
-// acceptability; a returned error is only ever a failure of the process
-// rather than of the bytes. duplicate reports the one case in which the file
+// watchOutcome is what one call to ingestWatchFile did with a file. It replaces
+// the four positional bools the method used to return, where a call site read
+// as "return false, true, true, false" and could only be understood by chasing
+// the signature. The fields keep the exact meaning the four return values had;
+// the one case in which more than one is set is duplicate+filed, which is the
+// only way a file leaves the folder without an image being written.
+type watchOutcome struct {
+	// stored is true when this call wrote a Belegbild for the file's bytes.
+	stored bool
+	// duplicate is true when the bytes were already stored, so the file was
+	// filed without a second image being written.
+	duplicate bool
+	// filed is true when the file is now in .processed.
+	filed bool
+	// rejected is true when the bytes were refused on their own merits and the
+	// file was set aside in .abgelehnt.
+	rejected bool
+}
+
+// ingestWatchFile stores one file and then files it away. The outcome says what
+// happened to the image, to the file's location, and to the file's
+// acceptability; a returned error is only ever a failure of the process rather
+// than of the bytes. A duplicate outcome reports the one case in which the file
 // leaves the folder although no image was written.
 //
 // The duplicate problem this method has to solve: SaveBildFrom succeeds, then
@@ -394,7 +413,7 @@ func (s *Service) watchStable(name string, entry fs.DirEntry) (bool, error) {
 // lookup instead of a store and a normalise. When it hits, the file is still
 // moved into .processed: the image exists, so leaving the file in the intake
 // folder would repeat the same lookup on every poll forever.
-func (s *Service) ingestWatchFile(ctx context.Context, name string) (stored, duplicate, filed, rejected bool, err error) {
+func (s *Service) ingestWatchFile(ctx context.Context, name string) (watchOutcome, error) {
 	path := filepath.Join(s.WatchFolder, name)
 
 	// The size check comes before the read. SaveBildFrom would reject these
@@ -412,17 +431,17 @@ func (s *Service) ingestWatchFile(ctx context.Context, name string) (stored, dup
 	info, statErr := os.Lstat(path)
 	if statErr != nil {
 		if errors.Is(statErr, fs.ErrNotExist) {
-			return false, false, false, false, nil
+			return watchOutcome{}, nil
 		}
-		return false, false, false, false, statErr
+		return watchOutcome{}, statErr
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return false, false, false, false, nil
+		return watchOutcome{}, nil
 	}
 	if s.UploadMax > 0 && info.Size() > s.UploadMax {
 		s.setAsideWatched(name, path,
 			fmt.Errorf("file is %d bytes, over BELEGAPP_UPLOAD_MAX_BYTES (%d)", info.Size(), s.UploadMax))
-		return false, false, false, true, nil
+		return watchOutcome{rejected: true}, nil
 	}
 
 	// The read carries the same cap the stat just checked. The two are not the
@@ -433,23 +452,23 @@ func (s *Service) ingestWatchFile(ctx context.Context, name string) (stored, dup
 	data, tooLarge, readErr := readWatched(path, s.UploadMax)
 	if readErr != nil {
 		if errors.Is(readErr, fs.ErrNotExist) {
-			return false, false, false, false, nil
+			return watchOutcome{}, nil
 		}
-		return false, false, false, false, readErr
+		return watchOutcome{}, readErr
 	}
 	if tooLarge {
 		s.setAsideWatched(name, path,
 			fmt.Errorf("file grew over BELEGAPP_UPLOAD_MAX_BYTES (%d) before it was read", s.UploadMax))
-		return false, false, false, true, nil
+		return watchOutcome{rejected: true}, nil
 	}
 
 	sum, hashErr := imagingHash(data)
 	if hashErr != nil {
-		return false, false, false, false, hashErr
+		return watchOutcome{}, hashErr
 	}
 	n, countErr := db.New(s.DB.ReadDB()).CountBelegbildByUploadSha(ctx, sum)
 	if countErr != nil {
-		return false, false, false, false, countErr
+		return watchOutcome{}, countErr
 	}
 	if n > 0 {
 		// Warn, not Info, and with the count. This is the one path on which a
@@ -463,9 +482,9 @@ func (s *Service) ingestWatchFile(ctx context.Context, name string) (stored, dup
 			// Still no duplicate: the next poll asks the same question and
 			// finds the same stored image.
 			s.warnWatch("watched file could not be filed", "datei", name, "err", moveErr)
-			return false, true, false, false, nil
+			return watchOutcome{duplicate: true}, nil
 		}
-		return false, true, true, false, nil
+		return watchOutcome{duplicate: true, filed: true}, nil
 	}
 
 	if _, saveErr := s.SaveBildFrom(ctx, notify.SourceWatch, data, true); saveErr != nil {
@@ -473,10 +492,10 @@ func (s *Service) ingestWatchFile(ctx context.Context, name string) (stored, dup
 			// The blob store or the database is down. The file stays in the
 			// folder and the retry reads it again; the hash check above is
 			// what keeps an image that did get stored from being stored twice.
-			return false, false, false, false, saveErr
+			return watchOutcome{}, saveErr
 		}
 		s.setAsideWatched(name, path, saveErr)
-		return false, false, false, true, nil
+		return watchOutcome{rejected: true}, nil
 	}
 
 	// The image is on disk and unassigned, so the file may now be filed away.
@@ -487,9 +506,9 @@ func (s *Service) ingestWatchFile(ctx context.Context, name string) (stored, dup
 	s.watch.forget(name)
 	if moveErr := s.moveWatched(path, watchProcessedDir); moveErr != nil {
 		s.warnWatch("watched file could not be moved to .processed", "datei", name, "err", moveErr)
-		return true, false, false, false, nil
+		return watchOutcome{stored: true}, nil
 	}
-	return true, false, true, false, nil
+	return watchOutcome{stored: true, filed: true}, nil
 }
 
 // readWatched reads a watched file under a byte cap that holds against the

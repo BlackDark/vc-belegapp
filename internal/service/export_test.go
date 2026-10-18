@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"image"
 	"image/color"
@@ -404,3 +405,52 @@ func docText(doc pdf.Document) string {
 
 func intPtr(v int) *int       { return &v }
 func strPtr(v string) *string { return &v }
+
+// The four snapshot columns are four separate JSON documents whose shape is
+// part of the stored export record. This pins each column to its own value, so
+// a refactor that marshals one value into the wrong column — the failure a
+// shared rawJSON helper makes easy to introduce — cannot pass. A single
+// combined snapshot struct would change the stored shape and is therefore not
+// the answer here.
+func TestExportStoresTheFourSnapshotsInTheirOwnColumns(t *testing.T) {
+	ctx := context.Background()
+	svc := exportSvc(t, &fakePDF{})
+	saveRule(t, svc)
+	beleg := addBeleg(t, svc, colorPNG(t, 5, 6, 7), BelegInput{
+		Datum: "2026-10-05", Mahlzeit: "mittag", Bezugsort: "supermarkt",
+		Arbeitsort: "betrieb", HaendlerName: "REWE", HaendlerOrt: "Köln", BelegbetragCent: 840,
+	})
+
+	created, err := svc.CreateExport(ctx, Actor{Name: "eduard"}, "2026-10", ExportRequest{ErklaerungBestaetigt: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var regelRaw, einstRaw, sumRaw, idRaw string
+	if err := svc.DB.ReadDB().QueryRowContext(ctx,
+		`SELECT regeln_snapshot, einstellungen_snapshot, summen, beleg_ids FROM monatsexporte WHERE id = ?`,
+		created.ID).Scan(&regelRaw, &einstRaw, &sumRaw, &idRaw); err != nil {
+		t.Fatal(err)
+	}
+	for name, raw := range map[string]string{
+		"regeln_snapshot":        regelRaw,
+		"einstellungen_snapshot": einstRaw,
+		"summen":                 sumRaw,
+		"beleg_ids":              idRaw,
+	} {
+		if !json.Valid([]byte(raw)) {
+			t.Fatalf("%s is not valid JSON: %q", name, raw)
+		}
+	}
+	if !strings.Contains(regelRaw, `"jahr":2026`) {
+		t.Errorf("regeln_snapshot does not hold the year rule: %q", regelRaw)
+	}
+	if !strings.Contains(einstRaw, `"arbeitnehmer_name":"Ada Beispiel"`) {
+		t.Errorf("einstellungen_snapshot does not hold the settings: %q", einstRaw)
+	}
+	if !strings.Contains(sumRaw, `"anzahl"`) || !strings.Contains(sumRaw, `"erstattung_cent"`) {
+		t.Errorf("summen does not hold the month sums: %q", sumRaw)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(idRaw), "[") || !strings.Contains(idRaw, `"id":"`+beleg.ID+`"`) {
+		t.Errorf("beleg_ids does not hold the receipt refs: %q", idRaw)
+	}
+}

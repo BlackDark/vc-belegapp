@@ -1021,6 +1021,103 @@ func TestIngestWatchFolderNeverOverwritesAFiledFile(t *testing.T) {
 	}
 }
 
+// ingestWatchFile is the decision that says whether a file is moved into
+// .processed, so every disposition it can produce is pinned here. The four
+// bools it used to return positionally are now a struct with named fields; a
+// test that reads the fields by name is what keeps a transposition from
+// compiling into the wrong disposition and either losing or duplicating a
+// receipt.
+func TestIngestWatchFileOutcomes(t *testing.T) {
+	ctx := context.Background()
+	data := colorPNG(t, 9, 8, 7)
+
+	cases := []struct {
+		name    string
+		arrange func(t *testing.T, svc *Service, folder string) string
+		want    watchOutcome
+	}{
+		{
+			name: "a fresh file is stored and filed",
+			arrange: func(t *testing.T, svc *Service, folder string) string {
+				putWatch(t, folder, "frisch.jpg", data)
+				return "frisch.jpg"
+			},
+			want: watchOutcome{stored: true, filed: true},
+		},
+		{
+			name: "a stored file whose move fails stays put",
+			arrange: func(t *testing.T, svc *Service, folder string) string {
+				blockProcessed(t, folder)
+				putWatch(t, folder, "frisch.jpg", data)
+				return "frisch.jpg"
+			},
+			want: watchOutcome{stored: true},
+		},
+		{
+			name: "known bytes are filed without a second image",
+			arrange: func(t *testing.T, svc *Service, folder string) string {
+				if _, err := svc.SaveBild(ctx, data, false); err != nil {
+					t.Fatal(err)
+				}
+				putWatch(t, folder, "doppelt.jpg", data)
+				return "doppelt.jpg"
+			},
+			want: watchOutcome{duplicate: true, filed: true},
+		},
+		{
+			name: "known bytes whose move fails are reported as duplicate",
+			arrange: func(t *testing.T, svc *Service, folder string) string {
+				if _, err := svc.SaveBild(ctx, data, false); err != nil {
+					t.Fatal(err)
+				}
+				blockProcessed(t, folder)
+				putWatch(t, folder, "doppelt.jpg", data)
+				return "doppelt.jpg"
+			},
+			want: watchOutcome{duplicate: true},
+		},
+		{
+			name: "non-image bytes are rejected and set aside",
+			arrange: func(t *testing.T, svc *Service, folder string) string {
+				putWatch(t, folder, "keinbild.jpg", []byte("this is not an image"))
+				return "keinbild.jpg"
+			},
+			want: watchOutcome{rejected: true},
+		},
+		{
+			name: "a name that vanished is not an error",
+			arrange: func(t *testing.T, svc *Service, folder string) string {
+				return "gibtsnicht.jpg"
+			},
+			want: watchOutcome{},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, folder := watchFixture(t)
+			name := tc.arrange(t, svc, folder)
+			got, err := svc.ingestWatchFile(ctx, name)
+			if err != nil {
+				t.Fatalf("ingestWatchFile(%q) error: %v", name, err)
+			}
+			if got != tc.want {
+				t.Fatalf("ingestWatchFile(%q) = %+v, want %+v", name, got, tc.want)
+			}
+		})
+	}
+}
+
+// blockProcessed makes every move into .processed fail by putting an ordinary
+// file where that directory has to go. MkdirAll then fails with ENOTDIR, which
+// is what a read-only mount or a full disk looks like from inside the process.
+func blockProcessed(t *testing.T, folder string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(folder, watchProcessedDir), []byte("blocked"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // A cancelled context ends the poll before the next file is read. Whatever
 // was already stored is recorded, so the retry files those files rather than
 // storing them again.

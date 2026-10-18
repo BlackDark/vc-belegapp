@@ -88,49 +88,80 @@ func (s *Service) prepare(ctx context.Context, q *db.Queries, in BelegInput, sel
 	if err != nil {
 		return Beleg{}, rules.Jahresregel{}, "", err
 	}
-	built := s.assemble(in, regel, rank, status, days, exportAm, exportVersion, selfID, true, ctx, q)
+	built := s.assemble(assembleInput{
+		in:            in,
+		regel:         regel,
+		rank:          rank,
+		status:        status,
+		days:          days,
+		exportAm:      exportAm,
+		exportVersion: exportVersion,
+		selfID:        selfID,
+		allowed:       true,
+		ctx:           ctx,
+		q:             q,
+	})
 	return built, regel, status, nil
+}
+
+// assembleInput is the complete input of one assemble call. The view is built
+// from eleven values of mixed types, and several of them share a type (rank and
+// exportVersion are both int, status and selfID both string), so the call is
+// written as a struct literal: a transposed pair then cannot compile and the
+// call site reads as the list of values it passes.
+type assembleInput struct {
+	in            BelegInput
+	regel         rules.Jahresregel
+	rank          int
+	status        string
+	days          []holidays.Feiertag
+	exportAm      string
+	exportVersion int
+	selfID        string
+	allowed       bool
+	ctx           context.Context
+	q             *db.Queries
 }
 
 // assemble builds the receipt view once, from the day formula to the warnings.
 // allowed is false only when decorate renders a stored receipt whose meal type
 // the year rule no longer subsidises: the day result then collapses to zero and
 // the subsidy warnings are replaced by a single W_MAHLZEIT_NICHT_BEZUSCHUSST.
-func (s *Service) assemble(in BelegInput, regel rules.Jahresregel, rank int, status string, days []holidays.Feiertag, exportAm string, exportVersion int, selfID string, allowed bool, ctx context.Context, q *db.Queries) Beleg {
-	anerkannt := in.BelegbetragCent
-	if in.KorrigierterBetragCent != nil {
-		anerkannt = *in.KorrigierterBetragCent
+func (s *Service) assemble(ai assembleInput) Beleg {
+	anerkannt := ai.in.BelegbetragCent
+	if ai.in.KorrigierterBetragCent != nil {
+		anerkannt = *ai.in.KorrigierterBetragCent
 	}
 	tag := calc.Tag(calc.TagesInput{
 		AnerkanntCent:   anerkannt,
-		BelegbetragCent: in.BelegbetragCent,
-		ZuschussCent:    regel.ZuschussCent,
-		SBWCent:         rules.SBWCent(regel, in.Mahlzeit),
-		AufschlagCent:   regel.HoechstzuschussAufschlagCent,
-		Variante:        regel.EigenanteilVariante,
-		Erlaubt:         allowed,
+		BelegbetragCent: ai.in.BelegbetragCent,
+		ZuschussCent:    ai.regel.ZuschussCent,
+		SBWCent:         rules.SBWCent(ai.regel, ai.in.Mahlzeit),
+		AufschlagCent:   ai.regel.HoechstzuschussAufschlagCent,
+		Variante:        ai.regel.EigenanteilVariante,
+		Erlaubt:         ai.allowed,
 	})
-	warnungen := s.warnungen(ctx, q, in, regel, tag, rank, days, selfID)
-	if !allowed {
+	warnungen := s.warnungen(ai.ctx, ai.q, ai.in, ai.regel, tag, ai.rank, ai.days, ai.selfID)
+	if !ai.allowed {
 		warnungen = withoutSubsidy(warnungen)
 	}
 	return Beleg{
-		Datum:                  in.Datum,
-		Mahlzeit:               in.Mahlzeit,
-		Bezugsort:              in.Bezugsort,
-		Arbeitsort:             in.Arbeitsort,
-		HaendlerName:           in.HaendlerName,
-		HaendlerOrt:            in.HaendlerOrt,
-		BelegbetragCent:        in.BelegbetragCent,
-		KorrigierterBetragCent: in.KorrigierterBetragCent,
-		KorrekturGrund:         in.KorrekturGrund,
-		Notiz:                  in.Notiz,
+		Datum:                  ai.in.Datum,
+		Mahlzeit:               ai.in.Mahlzeit,
+		Bezugsort:              ai.in.Bezugsort,
+		Arbeitsort:             ai.in.Arbeitsort,
+		HaendlerName:           ai.in.HaendlerName,
+		HaendlerOrt:            ai.in.HaendlerOrt,
+		BelegbetragCent:        ai.in.BelegbetragCent,
+		KorrigierterBetragCent: ai.in.KorrigierterBetragCent,
+		KorrekturGrund:         ai.in.KorrekturGrund,
+		Notiz:                  ai.in.Notiz,
 		Bilder:                 []Bild{},
 		Berechnung: Berechnung{
-			Jahr:                regel.Jahr,
-			ZuschussCent:        regel.ZuschussCent,
-			SBWCent:             rules.SBWCent(regel, in.Mahlzeit),
-			HoechstzuschussCent: rules.HoechstzuschussCent(regel, in.Mahlzeit),
+			Jahr:                ai.regel.Jahr,
+			ZuschussCent:        ai.regel.ZuschussCent,
+			SBWCent:             rules.SBWCent(ai.regel, ai.in.Mahlzeit),
+			HoechstzuschussCent: rules.HoechstzuschussCent(ai.regel, ai.in.Mahlzeit),
 			AnerkanntCent:       tag.AnerkanntCent,
 			ErstattungCent:      tag.ErstattungCent,
 			EigenanteilCent:     tag.EigenanteilCent,
@@ -139,10 +170,10 @@ func (s *Service) assemble(in BelegInput, regel rules.Jahresregel, rank int, sta
 			RegulaerCent:        tag.RegulaerCent,
 		},
 		Warnungen:     warnungen,
-		MonatStatus:   status,
+		MonatStatus:   ai.status,
 		tag:           tag,
-		exportAm:      exportAm,
-		exportVersion: exportVersion,
+		exportAm:      ai.exportAm,
+		exportVersion: ai.exportVersion,
 	}
 }
 
@@ -216,7 +247,19 @@ func (s *Service) decorate(ctx context.Context, q *db.Queries, row db.Belege, mo
 	}
 	rank := receiptRank(monthRows, row.ID, row.Datum)
 	allowed := rules.MahlzeitErlaubt(regel, row.Mahlzeit)
-	built := s.assemble(in, regel, rank, status, days, exportAm, exportVersion, row.ID, allowed, ctx, q)
+	built := s.assemble(assembleInput{
+		in:            in,
+		regel:         regel,
+		rank:          rank,
+		status:        status,
+		days:          days,
+		exportAm:      exportAm,
+		exportVersion: exportVersion,
+		selfID:        row.ID,
+		allowed:       allowed,
+		ctx:           ctx,
+		q:             q,
+	})
 	built.ID = row.ID
 	built.Quelle = row.Quelle
 	built.Version = int(row.Version)
