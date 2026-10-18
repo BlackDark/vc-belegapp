@@ -24,6 +24,8 @@ How `release-please` dispatches CI, and why `ci.yml` triggers on every branch pu
 
 **The image is the only artifact.** No binary tarballs, no `checksums.txt`, no Syft documents, no macOS build. An image is addressed by digest, so a checksum beside it would add nothing, and the two binaries inside it are the same ones CI builds; the SBOM and the provenance attestation describe the image itself. The previous profile published four tarballs and their signatures, and nothing but the image was ever deployed — recorded in [PROGRESS.md](../PROGRESS.md).
 
+Two switches hold that, and both are needed, because leaving a key out does not switch anything off. GoReleaser replaces an absent or empty `archives` list with one default archive — a `tar.gz` per platform — so both invocations pass `--skip=archive`, the only way to skip that pipe. A `checksum` section writes a checksums file by default and has no skip flag, so `.goreleaser.yaml` carries `disable: true`; without it the file would list the bare binaries and upload them. The release itself therefore has no assets at all.
+
 The release notes name `ghcr.io/blackdark/vc-belegapp:<version>` (no `v`). Git tag `v1.1.1` is the image tag `1.1.1`.
 
 ## Verify a release
