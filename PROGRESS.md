@@ -152,10 +152,11 @@ Job.
 ## Arbeitsweise mit `main`
 
 `main` ist geschützt. Eine Änderung geht über einen Pull Request, wird per Squash zusammengefasst und
-automatisch gemergt, sobald die erforderlichen Checks grün sind; erforderlich sind `web`, `go`, `pdf` und
-`docker` (0 Reviews, Single-Maintainer, lineare Historie, kein Force-Push, kein Löschen, Konversationen
-aufgelöst — die vollständige Regel steht in [SPEC](docs/SPEC.md) §16.4). `gh` ist über seinen
-Anmeldedatenspeicher authentifiziert:
+automatisch gemergt, sobald die erforderlichen Checks grün sind; erforderlich sind `go`, `web`, `docker`,
+`e2e` und `vuln`, und der Branch muss auf dem Stand von `main` sein (0 Reviews, Single-Maintainer, kein
+Force-Push, kein Löschen — die vollständige Regel steht als
+[.github/rulesets/main.json](.github/rulesets/main.json) und in [SPEC](docs/SPEC.md) §16.4). `gh` ist über
+seinen Anmeldedatenspeicher authentifiziert:
 
 ```bash
 gh pr create --base main --head <branch> --title "..." --body "..."

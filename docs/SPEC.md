@@ -1089,8 +1089,8 @@ Actions per Commit-SHA gepinnt; `permissions: contents: read` als Default, Relea
 ### 16.3 Renovate (`renovate.json`)
 `extends: ["config:best-practices", ":semanticCommits"]`, Zeitplan wöchentlich, `postUpdateOptions: ["gomodTidy"]`, Gruppen: `go`, `web (prod)`, `web (dev)`, `github-actions`, `docker`; Automerge für Patch/Minor von Dev-Dependencies und Actions nach grüner CI; Custom-Regex-Manager für `TYPST_VERSION`/SHA in Dockerfiles; Solid 2.x und Kobalte-Major nicht automatisch (`matchUpdateTypes: major` → manuelles Review).
 
-### 16.4 Branch-Schutz (Vorschlag, Ruleset auf `main`)
-PR erforderlich (0 Reviews, Single-Maintainer), Status-Checks `web`, `go`, `pdf`, `docker` erforderlich, lineare Historie, kein Force-Push/Löschen, Konversationen aufgelöst; Tag-Ruleset `v*` nur durch release-please/Maintainer; Secret Scanning + Push Protection, Dependabot Security Alerts an.
+### 16.4 Branch-Schutz (angewandt: [`.github/rulesets/main.json`](../.github/rulesets/main.json))
+PR erforderlich (0 Reviews, Single-Maintainer), Status-Checks `go`, `web`, `docker`, `e2e` und `vuln` erforderlich und der Branch muss auf dem Stand von `main` sein (`strict_required_status_checks_policy`); kein Force-Push, kein Löschen, offene Konversationen blockieren nicht, Merge-Methoden `squash`, `rebase` und `merge`. Secret Scanning + Push Protection, Dependabot Security Alerts an. Ein Tag-Ruleset für `v*` liegt nur als Vorschlag in [`.github/rulesets/tags.json`](../.github/rulesets/tags.json) und ist **nicht** angewandt.
 
 ---
 
