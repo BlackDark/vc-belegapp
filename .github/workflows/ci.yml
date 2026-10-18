@@ -124,25 +124,6 @@ jobs:
           path: dist/linux/arm64/belegapp
           if-no-files-found: error
 
-  darwin:
-    name: darwin
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/go-setup
-        with:
-          scope: darwin
-      - run: ./scripts/build-binaries.sh darwin/amd64 darwin/arm64
-        env:
-          VERSION: ci
-          COMMIT: ${{ github.sha }}
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: belegapp-darwin
-          path: dist/darwin/
-          if-no-files-found: error
-
   go:
     name: go
     runs-on: ubuntu-latest
@@ -394,12 +375,12 @@ jobs:
           path: e2e/screenshots
           if-no-files-found: error
 
-  # GoReleaser compiles the same four binaries the linux-amd64, linux-arm64
-  # and darwin jobs compile and builds the same image the docker job builds,
-  # from the same sources with the same flags: that part is a duplicate, about
-  # 260 s a push. What the snapshot adds on top is GoReleaser's own work — the
-  # archives, checksums and SBOMs, the before-hooks, the dockers_v2 build — and
-  # that only reads the files the filter below names.
+  # GoReleaser compiles the same two binaries the linux-amd64 and linux-arm64
+  # jobs compile and builds the same image the docker job builds, from the same
+  # sources with the same flags: that part is a duplicate, about 260 s a push.
+  # What the snapshot adds on top is GoReleaser's own work — the before-hooks
+  # and the dockers_v2 build — and that only reads the files the filter below
+  # names.
   changes:
     name: changes
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'

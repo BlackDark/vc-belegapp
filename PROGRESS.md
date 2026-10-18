@@ -126,6 +126,7 @@ Geändert:
   Composite Action, `scripts/install-typst.sh`). Ein Kompilierfehler bleibt dabei nicht unentdeckt: die
   Plattform-Jobs bauen dieselben vier Binaries aus denselben Quellen mit denselben Flags.
 - **`e2e` cached Typst und die Playwright-Browser**, statt sie je Lauf zu laden.
+- **Der `darwin`-Job ist entfallen.** Er baute nur macOS-Tarballs; mit dem neuen Release-Profil (siehe unten) gibt es keinen Abnehmer, und die CI hat einen Job weniger.
 
 Gemessen nach dem zweiten Lauf auf einem Branch (Run 39127716001, Push ohne Release-Dateien, vorgewärmte
 Caches):
@@ -136,7 +137,6 @@ Caches):
 | `web` | 46 s | 41 s |
 | `linux-amd64` | 84 s | 33 s |
 | `linux-arm64` | 97 s | 32 s |
-| `darwin` | 134 s | 41 s |
 | `pdf` | 40 s | 43 s |
 | `e2e` | 106 s | 66 s |
 | `docker` | 40 s | 50 s |
@@ -153,6 +153,22 @@ die Caches von `main` weiter — ein neuer Branch findet den Schlüssel also vor
 gefüllt hat, und zahlt den kalten Lauf nur, wenn er `main` zuvorkommt. `release-dry-run` läuft weiterhin,
 sobald ein Push eine Release-Datei berührt — auch `.github/workflows/ci.yml` selbst —, und ist dann mit
 ~283 s wieder der längste Job.
+
+## Release-Profil (18.10.2026)
+
+**Veröffentlicht wird nur noch das Container-Image.** Das Release trug vorher vier `tar.gz` (linux und darwin,
+je amd64/arm64) mit `LICENSE`, `README.md` und `deploy/`, dazu `checksums.txt` mit cosign-Blob-Signatur, ein
+Syft-SBOM je Archiv und eine `actions/attest-build-provenance`-Attestation auf `checksums.txt`. Deployt wurde
+von all dem immer nur das Image. Ein Image wird über seinen Digest adressiert und über diesen verifiziert;
+ein Checksum daneben fügt nichts hinzu, und die beiden Binaries im Image sind dieselben, die die CI baut.
+
+Jetzt: `linux/amd64` und `linux/arm64`, das Multi-Arch-Image `ghcr.io/blackdark/vc-belegapp`, die
+Digest-Signatur, die Buildx-SBOM-Attestierung und die Provenance-Attestation. Das GitHub-Release selbst
+besteht aus den release-please-Notes plus dem Image-Footer. Aus `.goreleaser.yaml` sind `archives`,
+`checksum`, `signs` und `sboms` entfallen, aus der Release-Action das Syft-Install (die Image-SBOM kommt von
+Buildx, `dockers_v2.sbom`), aus `release.yml` die Attestation auf `checksums.txt`, aus der CI der
+`darwin`-Job und aus `build-binaries.sh` die darwin-Ziele. Einzelheiten: [releases](docs/releases.md),
+[SPEC](docs/SPEC.md) §16.2.
 
 ## Arbeitsweise mit `main`
 

@@ -111,7 +111,7 @@ Umsetzung: Ein Interface `PDFRenderer` mit der Implementierung `typstcli` (`os/e
   - Backend: `sqlc diff` bzw. `sqlc vet`, `golangci-lint run`, `go test -race ./...`, `govulncheck` (x/vuln v1.8.0)
   - Optional: Playwright-Smoke-Test gegen das gebaute Binary
   - Docker-Build ohne Push (Buildx, amd64 und arm64)
-- **`release.yml`** (Tag `v*`): Frontend bauen, dann **GoReleaser v2**: Binaries für linux/amd64, arm64 (optional darwin), Archive und Checksums, `dockers_v2` multi-arch nach `ghcr.io/blackdark/vc-belegapp:{version,latest}`, **SBOM** (syft), **cosign keyless**-Signatur, `actions/attest-build-provenance`. Rechte: `contents: write`, `packages: write`, `id-token: write`, `attestations: write`.
+- **`release.yml`** (Tag `v*`): Frontend bauen, dann **GoReleaser v2**: `dockers_v2` multi-arch nach `ghcr.io/blackdark/vc-belegapp:{version,latest}` mit **cosign keyless**-Signatur auf den Digest, Buildx-**SBOM**- und `actions/attest-build-provenance`-Attestation. Rechte: `contents: write`, `packages: write`, `id-token: write`, `attestations: write`. **Nachtrag 18.10.2026:** Binaries, Archive, Checksums und Syft-SBOMs sind entfallen — das Image ist das einzige Artefakt (siehe `docs/releases.md`).
 - **Versionierung**: Conventional Commits und **release-please**, das Tags und Changelog erzeugt (optional, alternativ manuelle Tags).
 - **Renovate** (`renovate.json`): `config:best-practices` (pinnt Actions und Docker-Digests), Gruppen für Go-Module, npm, Actions und Docker. Automerge für Patch und Minor von Dev-Dependencies nach grüner CI. `postUpdateOptions: ["gomodTidy"]`.
 - **Repo-Hygiene**: Branch-Protection, Dependabot-Security-Alerts, CodeQL (Go und JS/TS), `SECURITY.md`, `LICENSE`.
