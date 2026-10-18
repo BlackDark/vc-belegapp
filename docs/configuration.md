@@ -1,6 +1,6 @@
 # Configuration
 
-Every variable uses the prefix `BELEGAPP_`. A secret may be set as `BELEGAPP_<NAME>_FILE` (path; contents trimmed) instead of the value. Setting both is an error. [internal/config/readme_test.go](../internal/config/readme_test.go) fails `go test` when a variable in code is missing from the table below, or when a default in code is not the backticked default cell.
+Every variable uses the prefix `BELEGAPP_`. A secret may be set as `BELEGAPP_<NAME>_FILE` (path; contents trimmed) instead of the value. Setting both is an error. [internal/config/readme_test.go](../internal/config/readme_test.go) fails `go test` when a variable in code is missing from the table below, or when a default in code is not the backticked default cell. The process also reads the standard `TMPDIR`, which has no prefix because it is not ours — see [Temporary files](#temporary-files).
 
 <!-- config-env-start -->
 
@@ -318,6 +318,10 @@ The document carries **no** image bytes, no blob key, no SHA-256, no mailbox hos
 ### Retries
 
 The delivery is a `notify` queue job. A `5xx`, a `429`, a `408`, a timeout, or a refused connection is retried by the job queue with its backoff; a `4xx` is a decision by the receiver and is never repeated. The HTTP client itself never retries, so a recipient sees one message per job attempt. The response body is ignored — any `2xx` counts as delivered.
+
+## Temporary files
+
+One name in this environment is not ours: `TMPDIR`, which the Go runtime reads and which defaults to `/tmp`. Every archive larger than one request passes through it — a Datenexport writes its zip there before moving it to the store, a Datenimport stages the upload there, and the SQLite snapshot of a backup is taken there. It is therefore the path that decides whether a large import fits at all, and on a read-only root filesystem it has to be pointed somewhere writable. [deployment.md](deployment.md#writable-space) lists what lands there, how big each entry gets, and what the deployment examples give it.
 
 ## Metrics
 
