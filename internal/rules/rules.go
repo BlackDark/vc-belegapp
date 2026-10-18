@@ -59,9 +59,6 @@ const (
 // Amtlich holds the Sachbezugswerte shipped with the binary, keyed by year.
 var Amtlich = amtlichMap()
 
-// KistVorschlagBP is the simplified church-tax rate in basis points (2026 table).
-var KistVorschlagBP = kistMap()
-
 func amtlichMap() map[int]SBW {
 	out := make(map[int]SBW, len(amtlichListe))
 	for _, eintrag := range amtlichListe {
@@ -71,14 +68,6 @@ func amtlichMap() map[int]SBW {
 			Abend:       eintrag.Abend,
 			Status:      eintrag.Status,
 		}
-	}
-	return out
-}
-
-func kistMap() map[string]int {
-	out := make(map[string]int, len(kistListe))
-	for _, satz := range kistListe {
-		out[satz.Land] = satz.SatzBP
 	}
 	return out
 }
@@ -162,7 +151,13 @@ func SBWFor(jahr int) (SBW, bool) {
 }
 
 // Vorschlag builds an unsaved year rule. Employer fields come from the previous
-// year when present. Without a previous year the Bundesland defaults to NW.
+// year when present. Without a previous year the Bundesland defaults to NW and
+// the church-tax rate to zero: the Bundesland is also the holiday calendar
+// (SPEC 19.3 Nr. 2), so the default is not a statement about church membership.
+// The simplified rate of a Bundesland is a suggestion the editor applies when
+// the Bundesland is changed, never a value this proposal imposes — a fresh rule
+// without a previous year must not deduct a church tax nobody asked for
+// (SPEC 19.1 Nr. 3, 5.4).
 func Vorschlag(jahr int, vor *Jahresregel) Jahresregel {
 	out := Jahresregel{
 		Jahr:                         jahr,
@@ -173,7 +168,7 @@ func Vorschlag(jahr int, vor *Jahresregel) Jahresregel {
 		PauschsteuersatzBP:           2500,
 		SoliSatzBP:                   550,
 		Bundesland:                   DefaultBundesland,
-		KistSatzBP:                   KistVorschlagBP[DefaultBundesland],
+		KistSatzBP:                   0,
 		EigenanteilVariante:          "standard",
 		Monatslimit:                  15,
 		LimitModus:                   "warnen",
