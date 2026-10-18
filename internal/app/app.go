@@ -54,7 +54,7 @@ func Migrate(ctx context.Context, opt Options) error {
 	if err := prepareDirs(opt.Log, opt.Config); err != nil {
 		return err
 	}
-	database, err := openDB(opt.Config)
+	database, err := openDB(opt.Config, opt.Log)
 	if err != nil {
 		return err
 	}
@@ -81,7 +81,7 @@ func Serve(ctx context.Context, opt Options) error {
 		return ErrAuthRequired
 	}
 
-	database, err := openDB(opt.Config)
+	database, err := openDB(opt.Config, opt.Log)
 	if err != nil {
 		return err
 	}
@@ -434,8 +434,25 @@ func logStartup(opt Options, rt db.Runtime, typst pdf.Probe) {
 	opt.Log.Info("database ready", "path", opt.Config.DBPath, "instance_id", rt.InstanceID)
 }
 
-func openDB(cfg config.Config) (*db.DB, error) {
-	return db.Open(cfg.DBPath)
+func openDB(cfg config.Config, log *slog.Logger) (*db.DB, error) {
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	database, err := db.OpenWith(cfg.DBPath, db.Options{AutoVacuumMigrate: cfg.DBAutoVacuumMigrate})
+	if err != nil {
+		return nil, err
+	}
+	// One line per start and only when it says something: the conversion is a
+	// one-time file rewrite, a failure is not, and a database that was already
+	// incremental is the ordinary case and stays quiet.
+	switch {
+	case database.AutoVacuumMigrated:
+		log.Info("Datenbank auf auto_vacuum=INCREMENTAL umgestellt; die Datei wurde einmalig neu geschrieben")
+	case database.AutoVacuumMigrateErr != nil:
+		log.Warn("auto_vacuum konnte nicht umgestellt werden; Reclaim gibt weiterhin keinen Speicher zurück",
+			"err", database.AutoVacuumMigrateErr)
+	}
+	return database, nil
 }
 
 func openStore(cfg config.Config) (storage.BlobStore, error) {
@@ -521,7 +538,7 @@ func offlineService(ctx context.Context, opt Options) (*service.Service, func(),
 	if err := Migrate(ctx, opt); err != nil {
 		return nil, nil, err
 	}
-	database, err := openDB(opt.Config)
+	database, err := openDB(opt.Config, opt.Log)
 	if err != nil {
 		return nil, nil, err
 	}
