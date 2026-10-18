@@ -1,1 +1,0 @@
-import{Pt as e,Rt as t}from"./button-CriwJ6vF.js";import{o as n,s as r}from"./card-D53UYeyX.js";function i(i){return t(e,{get when(){return i.error},get children(){return t(n,{get children(){return t(r,{children:`Die Referenzwerte konnten nicht geladen werden. Codes werden stattdessen angezeigt.`})}})}})}export{i as t};

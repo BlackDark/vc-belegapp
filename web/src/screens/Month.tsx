@@ -27,11 +27,20 @@ import {
   TableHeader,
   TableRow,
 } from "../components/ui/table";
-import { ApiError, client, type Monat as MonthData } from "../lib/api";
+import {
+  ApiError,
+  client,
+  fehlermeldung,
+  type Monat as MonthData,
+} from "../lib/api";
 import { currentMonth, todayISO } from "../lib/dates";
 import { formatCent } from "../lib/money";
 import { queryKeys } from "../lib/queryKeys";
-import { mahlzeitLabelOf, useWerte } from "../lib/referenceData";
+import {
+  mahlzeitLabelOf,
+  useEinstellungen,
+  useWerte,
+} from "../lib/referenceData";
 
 const statusLabel: Record<string, string> = {
   offen: "Offen",
@@ -331,11 +340,7 @@ function ExportDialog(props: {
   const [strict, setStrict] = createSignal<MonthData["pruefpunkte"] | null>(
     null,
   );
-  const settings = useQuery(() => ({
-    queryKey: queryKeys.einstellungen,
-    queryFn: () => client.einstellungen(),
-    enabled: props.open,
-  }));
+  const settings = useEinstellungen(() => props.open);
   createEffect(() => {
     const row = settings.data;
     if (row && props.open && !seeded()) {
@@ -371,9 +376,7 @@ function ExportDialog(props: {
       link.click();
       URL.revokeObjectURL(url);
     } catch (err) {
-      setError(
-        err instanceof ApiError ? err.message : "Vorschau fehlgeschlagen",
-      );
+      setError(fehlermeldung(err, "Vorschau fehlgeschlagen"));
     } finally {
       setBusy(false);
     }
@@ -392,7 +395,7 @@ function ExportDialog(props: {
       props.onOpenChange(false);
       await props.onDone();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Export fehlgeschlagen");
+      setError(fehlermeldung(err, "Export fehlgeschlagen"));
       if (
         err instanceof ApiError &&
         err.code === "E_PRUEFPUNKT_FEHLGESCHLAGEN"
