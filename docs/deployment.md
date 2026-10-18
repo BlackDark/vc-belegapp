@@ -1,6 +1,6 @@
 # Deployment
 
-The process runs as UID/GID 65532, with a read-only root filesystem, no capabilities, and no new privileges. Writable paths are the data volume and a tmpfs on `/tmp`. A named volume inherits ownership from the image. A bind mount needs `chown -R 65532:65532` first. `serve` exits 2 until a password hash or OIDC is configured. Variables: [configuration.md](configuration.md).
+The process runs as UID/GID 65532, with a read-only root filesystem, no capabilities, and no new privileges. Writable paths are the data volume and the temporary directory — a tmpfs on `/tmp` in the examples, which is RAM; [Writable space](#writable-space) says how big it has to be. A named volume inherits ownership from the image. A bind mount needs `chown -R 65532:65532` first. `serve` exits 2 until a password hash or OIDC is configured. Variables: [configuration.md](configuration.md).
 
 Image tags have no `v` prefix. Git tag `v1.1.1` is the image `ghcr.io/blackdark/vc-belegapp:1.1.1`, plus `1.1`, `1`, and `latest`.
 
@@ -97,6 +97,89 @@ Two caveats an operator should know before sizing a volume:
   sqlite3 /data/belegapp.db 'PRAGMA auto_vacuum=INCREMENTAL; VACUUM;'
   ```
 - **Deleted rows never grow the file, but the file also does not shrink on a healthy database without the reclaim.** On a database with `auto_vacuum` the hourly prune runs `PRAGMA incremental_vacuum` (4 MiB per pass), which does shrink it. Skipping that (for example by giving the data volume far more space than needed) costs nothing but disk.
+
+## Writable space
+
+The data directory (`/data`) and the temporary directory (`/tmp`, or whatever `TMPDIR` names) are the only writable paths. The root filesystem is read-only, so `/tmp` is a tmpfs in the examples — and a tmpfs is RAM.
+
+Everything bigger than one request passes through the temporary directory:
+
+| File | Written by | Size |
+| --- | --- | --- |
+| `belegapp-import-*.zip` | a Datenimport upload, staged before it is validated | up to `BELEGAPP_IMPORT_MAX_BYTES`, 4 GiB by default |
+| `belegapp-fetch-*.zip` | that archive read back from the store when the import is confirmed | the same |
+| `belegapp-safety-*.zip` | the safety copy taken before an import replaces the dataset | an export |
+| `belegapp-member-*` | the database and CSV members extracted from an import | the database |
+| `belegapp-snap-*/` | the SQLite snapshot inside an export — the CLI `backup` included — and inside the safety copy | the database |
+| `belegapp-export-*.zip` | the archive of a **Datenexport**, the in-app one. `belegapp backup --out` streams straight to its destination and never writes the zip here | an export |
+| `belegapp-pdf-*` | the Typst run behind a Monatsexport | a few pages |
+
+An export is the database plus every referenced image, so size the temporary directory for the dataset. Confirming a Datenimport is the peak: the uploaded archive, the safety copy and the extracted members are there at once — the dataset twice over, plus the upload.
+
+`BELEGAPP_IMPORT_MAX_BYTES` bounds the upload, not the free space. An import that does not fit fails as `500 E_INTERN`, with the reason only in the log, because a short write is not a request that exceeded its limit. The Ingress example advertises `proxy-body-size: 4g` to match that limit, so a 4 GiB import is meant to be possible: budget the temporary directory for it, or set `BELEGAPP_IMPORT_MAX_BYTES` down to what the instance can actually stage.
+
+| Example | `/tmp` | Note |
+| --- | --- | --- |
+| the `docker run` line above | `--tmpfs … size=64m` | RAM. Enough for a smoke test and a small instance |
+| [deploy/docker-compose.yml](../deploy/docker-compose.yml) | tmpfs, 512 MiB | RAM, and it counts against `mem_limit: 512m` |
+| [deploy/k8s](../deploy/k8s) | `emptyDir`, `sizeLimit: 1Gi` | Node disk, in the Deployment and in the backup CronJob alike |
+
+A tmpfs page is memory, so an archive on a tmpfs competes with the process itself: the container is killed rather than told its disk ran out. Give the temporary directory disk before a large import is attempted — a `--mount type=volume` or a bind mount in Docker, a larger `emptyDir` (or a volume) in Kubernetes — and size the memory limit for the process, not for the archive. The CLI backup is the mild case: its zip goes wherever `--out` points, and only the snapshot lands here.
+
+**`TMPDIR` moves all of it onto the data volume.** Go writes its temporary files where `TMPDIR` says:
+
+```yaml
+environment:
+  TMPDIR: /data/tmp # mkdir -p data/tmp && chown 65532:65532 data/tmp
+```
+
+Then one volume has to hold the data and the archives, `/tmp` can stay small, and the ceiling is the volume rather than the memory limit. The directory has to exist and belong to UID 65532: startup creates `/data`, the blob directory and the directory of `BELEGAPP_DB_PATH`, and nothing else. Every file in the table is removed when its operation ends, so what a crash leaves behind is a `belegapp-*` file that is safe to delete by hand.
+
+## Blob storage
+
+`BELEGAPP_STORAGE_BACKEND` is `fs` (default) or `s3`. The store holds more than the receipt images: the same backend also carries every Datenexport archive (`datenexporte/…`) and every staged Datenimport (`importe/…`), because those are objects too.
+
+- **`fs`** writes under `BELEGAPP_STORAGE_FS_DIR` (`${DATA_DIR}/blobs`): `bilder/<first two hex>/<sha256>.jpg` for a normalised receipt, `thumbs/…` for its thumbnail, `datenexporte/…` for the archives. All three sit inside the data volume, so backing up the volume is enough — but the archives, not the images, are what makes it grow. Nothing deletes an export: `BELEGAPP_EXPORT_RETENTION_YEARS` writes a retention *date* (10 years by default) and no sweeper acts on it. An instance that exports every month accumulates one archive per export until an operator removes old ones. The retention decision is in [SPEC.md](SPEC.md) §19.4.
+- **`s3`** requires `BELEGAPP_S3_ENDPOINT`, `BELEGAPP_S3_REGION` and `BELEGAPP_S3_BUCKET`; a missing one is a startup error, not a degraded mode. `BELEGAPP_S3_PREFIX` (default `belegapp/`) namespaces the keys inside the bucket, so one bucket can hold several instances. Path-style addressing is the default and is what MinIO wants; turn it off for a bucket addressed by virtual host. `BELEGAPP_S3_SSE=true` asks for SSE-S3 — encryption with a KMS key is a bucket setting, not this one. Credentials are the two variables (each also as `_FILE`) and nothing else: the client is built with static credentials, so a workload identity or an instance role is never consulted.
+- **The database stays on the data volume either way**, which is why a bucket copied on its own is not a backup. A Datenexport is the consistent unit: it snapshots the database and reads the referenced images through the store, so database and images always belong to the same point in time. See [backup.md](backup.md).
+
+## Egress
+
+The instance dials out to five hosts, and to nothing else besides DNS and the answers to inbound requests. [deploy/k8s/networkpolicy.yaml](../deploy/k8s/networkpolicy.yaml) is an example that allows DNS only, because these hosts differ per installation.
+
+| Destination | Opened by | Why |
+| --- | --- | --- |
+| `BELEGAPP_OIDC_ISSUER_URL` | `serve` | Discovery at startup, then JWKS refreshes, over HTTPS |
+| `BELEGAPP_LLM_BASE_URL` | the `erkennung` job | The receipt itself, see below |
+| `BELEGAPP_S3_ENDPOINT` | the blob store | Only with `BELEGAPP_STORAGE_BACKEND=s3` |
+| `BELEGAPP_MAIL_HOST:BELEGAPP_MAIL_PORT` | the `mail` job | Only with `BELEGAPP_MAIL_ENABLED=true` |
+| `BELEGAPP_NOTIFY_WEBHOOK_URL` | the `notify` job | Only when the webhook is set |
+
+The second line is the one to think about. **Receipts go to whatever that base URL is.** With the default it is `api.openai.com`, so every recognised receipt — the normalised JPEG, EXIF removed and rescaled to `BELEGAPP_LLM_MAX_IMAGE_PX` — leaves the host. Pointing `BELEGAPP_LLM_BASE_URL` at an Ollama instance on the same network keeps the images inside it; that is a supported setup, not a fallback, and [configuration.md](configuration.md#ollama) has the variables. The request body is one user message: the extraction prompt and a base64 `data:` URL of that JPEG. It carries no Beleg, no database row, no user name and no credential.
+
+## Metrics
+
+Setting `BELEGAPP_METRICS_ADDR` (for example `:9090`) starts a second listener for Prometheus. The metric names are in [configuration.md](configuration.md#metrics).
+
+That listener has **no authentication**, and it is a separate port from the application — which is the point: publish it to the scrape network only, never through the reverse proxy and never with an Ingress. Nothing in [deploy/k8s](../deploy/k8s) exposes it. The Service publishes `8080`, the Deployment declares no metrics port, and the Ingress has no rule for one, so enabling scraping means either adding the port to the Service or scraping the pod address directly.
+
+## Upgrading
+
+`serve` applies the database migrations before it listens (`migrate` is that same step on its own, for a deployment that wants it outside the start window). An upgrade is a new image and a restart:
+
+```bash
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml pull
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
+```
+
+In Kubernetes the Deployment is `Recreate` with one replica, so the pod is replaced, not rolled; `kubectl rollout status deploy/belegapp` reports when it is back.
+
+Two things to know before jumping a tag:
+
+- **Take a Datenexport first** ([backup.md](backup.md)). The shipped migrations only ever move forward — there is no down migration — so the zip is what a roll-back restores, and it is the only roll-back there is.
+- **A release that changes the physical layout of the file does a one-off rewrite on the first start**, which is slower and needs transient free disk on the data volume. The `auto_vacuum` conversion above is the current example, and a release that adds another such step says so in its notes.
+
+Image tags are `X.Y.Z`, `X.Y`, `X`, and `latest`; the Compose and Kubernetes examples use `:1`. That follows every 1.x release, which is what an instance wants when security fixes should not wait for an edit; pin `:1.1.1` when each upgrade should be a decision. The database is only ever moved by a **start**, so a container that was pulled but never started leaves the instance exactly as it was.
 
 ## Binary
 

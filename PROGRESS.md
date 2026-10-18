@@ -170,6 +170,42 @@ Buildx, `dockers_v2.sbom`), aus `release.yml` die Attestation auf `checksums.txt
 `darwin`-Job und aus `build-binaries.sh` die darwin-Ziele. Einzelheiten: [releases](docs/releases.md),
 [SPEC](docs/SPEC.md) §16.2.
 
+## Betriebshandbuch nachgezogen (18.10.2026)
+
+`docs/deployment.md` beschrieb den Container, aber nicht fünf Dinge, die im Betrieb tatsächlich beißen. Nachgetragen:
+
+- **`Writable space`.** Der Anlass war ein Widerspruch in den eigenen Unterlagen: die Ingress-Vorlage wirbt mit
+  `proxy-body-size: 4g`, passend zu `BELEGAPP_IMPORT_MAX_BYTES` (4 GiB), während `/tmp` in den Vorlagen 64 MiB
+  (`docker run`), 512 MiB (Compose — und das als tmpfs, also **RAM**, gegen `mem_limit: 512m`) und `emptyDir
+  sizeLimit: 1Gi` (Kubernetes, dort auch im Backup-CronJob) bekommt. Ein Datenimport wird aber **vollständig** nach
+  `$TMPDIR` geschrieben, bevor er überhaupt geprüft wird; beim Bestätigen kommen die Sicherungskopie und die
+  entpackten Mitglieder dazu. Passt es nicht, antwortet der Server `500 E_INTERN`, und der Grund steht nur im Log —
+  ein kurzer Schreibvorgang ist kein zu großer Request, also greift die 413-Behandlung nicht. Die neue Tabelle nennt
+  jede Datei (`belegapp-import-*`, `-fetch-*`, `-safety-*`, `-member-*`, `-snap-*`, `-export-*`, `-pdf-*`), wer sie
+  schreibt und wie groß sie wird, dazu die drei Zahlen der Vorlagen und den Ausweg `TMPDIR=/data/tmp`, mit dem alles
+  auf dem Datenvolume landet. Das Verzeichnis muss vorher existieren und UID 65532 gehören: `prepareDirs` legt
+  `/data`, das Blob-Verzeichnis und das Verzeichnis von `BELEGAPP_DB_PATH` an, sonst nichts.
+- **`Blob storage`.** `fs` gegen `s3`, und was der Store außer Belegbildern noch trägt (`datenexporte/`, `importe/`).
+  Ausdrücklich festgehalten: **nichts löscht je einen Export**, `BELEGAPP_EXPORT_RETENTION_YEARS` schreibt nur ein
+  Datum — wer monatlich exportiert, sammelt ein Archiv je Export —, und mit `s3` bleibt die Datenbank auf dem
+  Datenvolume, weshalb ein kopierter Bucket allein keine Sicherung ist.
+- **`Egress`.** Die fünf Gegenstellen (IdP, LLM, S3, IMAP, Webhook), passend zur `networkpolicy.yaml`, die bisher nur
+  „DNS erlauben“ sagte. Der LLM-Eintrag spricht aus, dass der Beleg selbst den Host verlässt, und der Aufruf trägt
+  außer Prompt und JPEG nichts.
+- **`Metrics`.** Der zweite Listener hat keine Authentifizierung; die Vorlagen veröffentlichen ihn nirgends, der
+  Service kennt nur 8080.
+- **`Upgrading`.** `serve` migriert vor dem Zuhören, es gibt **keine Down-Migration**, also ist der Datenexport der
+  einzige Rückweg; und ein Container, der nur gepullt und nie gestartet wurde, hat die Datenbank nicht angefasst.
+
+`docs/configuration.md` hatte genau eine Lücke: die Variablentabelle wird von
+[`internal/config/readme_test.go`](internal/config/readme_test.go) gegen den Code erzwungen, aber `TMPDIR` ist keine
+`BELEGAPP_*`-Variable und stand nirgends. Dafür gibt es jetzt den kurzen Abschnitt *Temporary files*, der auf die
+Betriebsseite zeigt.
+
+**Nicht geändert:** die Werte in `deploy/`. Sie zu erhöhen wäre eine Verhaltensänderung an RAM-Limit und Volume-Größe
+und gehört nicht in eine Dokumentationsrunde; die neue Tabelle nennt sie stattdessen beim Namen und macht die
+Entscheidung sichtbar.
+
 ## Arbeitsweise mit `main`
 
 `main` ist geschützt. Eine Änderung geht über einen Pull Request, wird per Squash zusammengefasst und
@@ -318,6 +354,10 @@ Offen bleiben und eine eigene Entscheidung brauchen (alle in [ROADMAP](docs/ROAD
   ist. Dazu die Frage aus §19.2, wie sich eine prüfpflichtige Belegzuordnung überhaupt abbilden soll.
 - **Mehrbenutzerbetrieb, Rollen, Mandanten** — das Datenmodell ist dafür offengehalten, gebaut ist nichts.
 - **Offline-Erfassung mit Sync-Warteschlange** und **Regelzeiträume mitten im Jahr** (Teilbelege gehören dazu).
+- **Die `/tmp`-Größen in `deploy/` passen nicht zu `BELEGAPP_IMPORT_MAX_BYTES`.** Ein 4-GiB-Import, den die
+  Ingress-Vorlage bewirbt, passt weder in 64 MiB (`docker run`), noch in 512 MiB tmpfs (Compose), noch in die
+  1 GiB `emptyDir` (Kubernetes). [deployment.md](docs/deployment.md#writable-space) nennt die Zahlen jetzt
+  ausdrücklich; die Vorlagen selbst anzupassen ist eine Entscheidung über RAM- und Volume-Grenzen.
 
 ## Verwandte Dokumente
 
@@ -325,4 +365,4 @@ Offen bleiben und eine eigene Entscheidung brauchen (alle in [ROADMAP](docs/ROAD
 - [`docs/SPEC.md`](docs/SPEC.md) — §16.4 Branch-Schutz, §18 Meilensteine, §19 offene Punkte, §5.2 Warteschlange
 - [`docs/FEATURES.md`](docs/FEATURES.md) — Changelog je Version
 - [`docs/configuration.md`](docs/configuration.md) — alle `BELEGAPP_*`-Variablen
-- [`docs/deployment.md`](docs/deployment.md) — Betrieb, Datenbankgröße
+- [`docs/deployment.md`](docs/deployment.md) — Betrieb, Datenbankgröße, temporärer Speicher, Objektspeicher, Upgrade
