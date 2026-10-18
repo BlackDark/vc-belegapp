@@ -144,10 +144,15 @@ Caches):
 | `release-dry-run` | 264–382 s | nicht gelaufen |
 
 **Wanduhr 385–409 s → 128 s.** Der kritische Pfad ist jetzt der `go`-Job; `e2e` folgt `linux-amd64` (33 s).
+Derselbe Wert auf `main` selbst (Run 39128949622, 129 s, `go` 126 s), also nicht nur auf einem Branch, der
+seinen Cache schon zweimal gefüllt hat.
+
 Der **erste** Lauf mit neuen Cache-Schlüsseln ist teurer als vorher (`go` 349 s), weil jeder Job seinen Cache
-einmal schreibt; ab dem zweiten greift er. `release-dry-run` läuft weiterhin, sobald ein Push eine
-Release-Datei berührt — auch `.github/workflows/ci.yml` selbst —, und ist dann mit ~283 s wieder der längste
-Job.
+einmal schreibt; ab dem zweiten greift er. Caches gelten zwar je Branch, GitHub reicht einem Lauf aber auch
+die Caches von `main` weiter — ein neuer Branch findet den Schlüssel also vor, sobald `main` ihn einmal
+gefüllt hat, und zahlt den kalten Lauf nur, wenn er `main` zuvorkommt. `release-dry-run` läuft weiterhin,
+sobald ein Push eine Release-Datei berührt — auch `.github/workflows/ci.yml` selbst —, und ist dann mit
+~283 s wieder der längste Job.
 
 ## Arbeitsweise mit `main`
 
