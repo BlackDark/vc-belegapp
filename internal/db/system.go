@@ -13,6 +13,13 @@ import (
 const (
 	systemInstanceID = "instanz_id"
 	systemSecretKey  = "secret_key"
+	// systemPasswordHash is the argon2id hash of the instance password.
+	//
+	// It is a row and not an environment variable: a password is data, and the
+	// operator who sets it should never handle a PHC string. The key is English
+	// on purpose — it is infrastructure, like secret_key, and not one of the
+	// German domain columns.
+	systemPasswordHash = "password_hash"
 )
 
 // Runtime holds the instance id and the secret key resolved at startup.
@@ -92,4 +99,29 @@ func resolveSecret(ctx context.Context, q *Queries, envSecret []byte) ([]byte, e
 		return nil, err
 	}
 	return buf, nil
+}
+
+// PasswordHash returns the stored argon2id hash, or "" when no password has
+// been set.
+//
+// It is a method on Queries, so the places that ask the question — the startup
+// check, the login path and the change-password transaction — all read the one
+// row the same way, inside a transaction when they need one.
+func (q *Queries) PasswordHash(ctx context.Context) (string, error) {
+	value, err := q.GetSystemValue(ctx, systemPasswordHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
+// SetPasswordHash stores the argon2id hash the caller computed.
+func (q *Queries) SetPasswordHash(ctx context.Context, hash string) error {
+	if hash == "" {
+		return errors.New("db: password hash is empty")
+	}
+	return q.UpsertSystemValue(ctx, UpsertSystemValueParams{Key: systemPasswordHash, Value: hash})
 }

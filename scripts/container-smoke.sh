@@ -8,9 +8,7 @@ port=${SMOKE_PORT:-18080}
 name="belegapp-smoke-$$"
 vol="belegapp-smoke-$$"
 base="http://127.0.0.1:${port}"
-# Low-cost PHC for the password "belegapp-e2e" (m=8192). Production hashes
-# stay on the hash-password parameters.
-password_hash='$argon2id$v=19$m=8192,t=1,p=1$ZTJlc2FsdGUyZXNhbHQ$fpwELKXJzuNANkbVeL78/95t50JZd5M7U094xSidoBM'
+password='belegapp-e2e'
 workdir=$(mktemp -d)
 cookie="$workdir/cookies"
 body="$workdir/body"
@@ -38,6 +36,19 @@ png = base64.b64decode(
 pathlib.Path(sys.argv[1]).write_bytes(png)
 PY
 
+# The instance password is a row, so it is written before the server starts, on
+# the same volume the server will use. The command reads the first line of
+# stdin when stdin is not a terminal.
+printf '%s\n' "$password" | docker run --rm -i \
+  --read-only \
+  --user 65532:65532 \
+  --cap-drop ALL \
+  --security-opt no-new-privileges:true \
+  --tmpfs /tmp:rw,nosuid,size=128m \
+  -v "$vol:/data" \
+  -e BELEGAPP_TZ=Europe/Berlin \
+  "$image" set-password
+
 docker run -d --name "$name" \
   --read-only \
   --user 65532:65532 \
@@ -50,7 +61,6 @@ docker run -d --name "$name" \
   -e BELEGAPP_COOKIE_SECURE=false \
   -e BELEGAPP_BASE_URL="$base" \
   -e BELEGAPP_TZ=Europe/Berlin \
-  -e BELEGAPP_AUTH_PASSWORD_HASH="$password_hash" \
   -e BELEGAPP_LLM_ENABLED=false \
   -e BELEGAPP_LOG_FORMAT=text \
   -e BELEGAPP_LOG_LEVEL=info \

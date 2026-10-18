@@ -43,17 +43,16 @@ type Info struct {
 
 // API serves authenticated JSON endpoints.
 type API struct {
-	Log          *slog.Logger
-	Svc          *service.Service
-	Sessions     *auth.Sessions
-	Limiter      *auth.Limiter
-	PasswordHash string
-	OIDC         *auth.OIDC
-	OIDCLabel    string
-	Trusted      []net.IPNet
-	UploadMax    int64
-	ImportMax    int64
-	Info         Info
+	Log       *slog.Logger
+	Svc       *service.Service
+	Sessions  *auth.Sessions
+	Limiter   *auth.Limiter
+	OIDC      *auth.OIDC
+	OIDCLabel string
+	Trusted   []net.IPNet
+	UploadMax int64
+	ImportMax int64
+	Info      Info
 }
 
 type principal struct {
@@ -77,6 +76,7 @@ func (a *API) Handler() http.Handler {
 		r.Use(a.requireSession)
 		r.Post("/auth/logout", a.logout)
 		r.Get("/auth/me", a.me)
+		r.Put("/auth/passwort", a.putPasswort)
 		r.Get("/auth/sitzungen", a.listSessions)
 		r.Delete("/auth/sitzungen", a.deleteOtherSessions)
 		r.Get("/einstellungen", a.getEinstellungen)
@@ -156,9 +156,14 @@ func (a *API) requireSession(next http.Handler) http.Handler {
 	})
 }
 
-func (a *API) authConfig(w http.ResponseWriter, _ *http.Request) {
+func (a *API) authConfig(w http.ResponseWriter, r *http.Request) {
+	passwort, err := a.Svc.HasPassword(r.Context())
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
 	a.writeJSON(w, http.StatusOK, map[string]any{
-		"passwort":   a.PasswordHash != "",
+		"passwort":   passwort,
 		"oidc":       a.OIDC != nil && a.OIDC.Ready(),
 		"oidc_label": a.OIDCLabel,
 	})
@@ -177,7 +182,12 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		a.writeErr(w, r, err)
 		return
 	}
-	if a.PasswordHash == "" || !auth.VerifyPassword(body.Passwort, a.PasswordHash) {
+	ok, err := a.Svc.CheckPassword(r.Context(), body.Passwort)
+	if err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	if !ok {
 		if blocked, wait := a.Limiter.Fail(ip); blocked {
 			a.tooMany(w, r, wait)
 			return
@@ -192,6 +202,33 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.Sessions.SetCookie(w, token)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// putPasswort changes the instance password from the settings screen.
+//
+// Every other session was opened with the old password and is dropped, so a
+// change also ends the logins that were already running elsewhere.
+func (a *API) putPasswort(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Aktuell string `json:"aktuell"`
+		Neu     string `json:"neu"`
+	}
+	if err := a.readJSON(w, r, &body); err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	p := principalFrom(r)
+	if err := a.Svc.ChangePassword(r.Context(), p.actor, body.Aktuell, body.Neu); err != nil {
+		a.writeErr(w, r, err)
+		return
+	}
+	// The password is changed either way; a failure here leaves sessions that
+	// the next change will drop. Failing the request would report the change as
+	// failed when it is not.
+	if err := a.Sessions.DeleteOthers(r.Context(), p.token); err != nil && a.Log != nil {
+		a.Log.Error("password change: other sessions not dropped", "err", err)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

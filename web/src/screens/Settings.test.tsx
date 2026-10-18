@@ -140,3 +140,85 @@ describe("Settings theme", () => {
     expect(document.documentElement.classList.contains("dark")).toBe(false);
   });
 });
+
+describe("Settings password", () => {
+  it("sends the current password with the new one and clears the form", async () => {
+    const sent: { method: string; body: unknown }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === "/api/v1/auth/passwort") {
+          sent.push({
+            method: init?.method ?? "GET",
+            body: JSON.parse(String(init?.body)),
+          });
+          return new Response(null, { status: 204 });
+        }
+        const body = responses[url];
+        if (body === undefined) {
+          return new Response(null, { status: 404 });
+        }
+        return new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }),
+    );
+    const history = createMemoryHistory();
+    history.set({ value: "/einstellungen", replace: true });
+    render(() => (
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <MemoryRouter history={history}>
+          <Route path="/einstellungen" component={Settings} />
+        </MemoryRouter>
+      </QueryClientProvider>
+    ));
+
+    fireEvent.input(await screen.findByLabelText("Aktuelles Passwort"), {
+      target: { value: "altes-langes-passwort" },
+    });
+    fireEvent.input(screen.getByLabelText("Neues Passwort"), {
+      target: { value: "neues-langes-passwort" },
+    });
+    fireEvent.input(screen.getByLabelText("Neues Passwort wiederholen"), {
+      target: { value: "neues-langes-passwort" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Passwort ändern" }));
+
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]).toEqual({
+      method: "PUT",
+      body: {
+        aktuell: "altes-langes-passwort",
+        neu: "neues-langes-passwort",
+      },
+    });
+    await vi.waitFor(() =>
+      expect(
+        (screen.getByLabelText("Aktuelles Passwort") as HTMLInputElement).value,
+      ).toBe(""),
+    );
+  });
+
+  it("refuses a new password that was typed twice differently", async () => {
+    renderSettings();
+    fireEvent.input(await screen.findByLabelText("Neues Passwort"), {
+      target: { value: "neues-langes-passwort" },
+    });
+    fireEvent.input(screen.getByLabelText("Neues Passwort wiederholen"), {
+      target: { value: "etwas-anderes-langes" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Passwort ändern" }));
+    // The two fields already disagree, so the card asks the server for nothing.
+    const fetchMock = globalThis.fetch as unknown as {
+      mock: { calls: unknown[][] };
+    };
+    expect(
+      fetchMock.mock.calls.some((call) => call[0] === "/api/v1/auth/passwort"),
+    ).toBe(false);
+  });
+});

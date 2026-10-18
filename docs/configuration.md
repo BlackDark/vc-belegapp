@@ -19,7 +19,6 @@ Every variable uses the prefix `BELEGAPP_`. A secret may be set as `BELEGAPP_<NA
 | `BELEGAPP_COOKIE_SECURE` | `true` | `false` only for local HTTP. The cookie then drops the `__Host-` prefix |
 | `BELEGAPP_SESSION_IDLE_TIMEOUT` | `720h` | Idle session lifetime |
 | `BELEGAPP_SESSION_ABSOLUTE_TIMEOUT` | `2160h` | Absolute session lifetime. Must be at least the idle timeout |
-| `BELEGAPP_AUTH_PASSWORD_HASH`, `BELEGAPP_AUTH_PASSWORD_HASH_FILE` | empty | argon2id PHC from `belegapp hash-password`. Empty disables password login |
 | `BELEGAPP_OIDC_ISSUER_URL` | empty | Issuer. Empty disables OIDC |
 | `BELEGAPP_OIDC_CLIENT_ID` | empty | Client id. Required when an issuer is set |
 | `BELEGAPP_OIDC_CLIENT_SECRET`, `BELEGAPP_OIDC_CLIENT_SECRET_FILE` | empty | Empty means a public client (PKCE only) |
@@ -83,7 +82,22 @@ Every variable uses the prefix `BELEGAPP_`. A secret may be set as `BELEGAPP_<NA
 
 <!-- config-env-end -->
 
-`serve` requires `BELEGAPP_AUTH_PASSWORD_HASH` or `BELEGAPP_OIDC_ISSUER_URL`. OIDC also needs a client id and at least one allowlist (`sub` or verified email). Incomplete OIDC or S3 configuration is a startup error. `migrate` does not need authentication. Discovery retries in the background; until it succeeds, `/api/v1/auth/config` reports OIDC as off and the process still serves password login. Redirect URI, allowlists, and the reverse proxy are in [deployment.md](deployment.md).
+`serve` requires either the instance password or `BELEGAPP_OIDC_ISSUER_URL`. There is no password variable — the password is a row in the database, see [The instance password](#the-instance-password). OIDC also needs a client id and at least one allowlist (`sub` or verified email). Incomplete OIDC or S3 configuration is a startup error. `migrate` does not need authentication. Discovery retries in the background; until it succeeds, `/api/v1/auth/config` reports OIDC as off and the process still serves password login. Redirect URI, allowlists, and the reverse proxy are in [deployment.md](deployment.md).
+
+## The instance password
+
+The password is not configuration. It is an argon2id hash (m=65536, t=3, p=2) in one row of the `system` table, so it lives where the Belege live: it travels with the data volume, survives a container replacement, and is in every backup that contains the database.
+
+```sh
+docker compose run --rm belegapp set-password   # against ./data
+belegapp set-password                            # or directly, on the host
+```
+
+The command applies the schema, reads the password, hashes it and writes the row. It needs no running server, which is why a fresh deployment runs it before the first `up`. On a terminal it asks twice and hides what you type; when stdin is not a terminal it reads the first line, so a script or a container setup can pipe it in. The one rule is length — at least twelve characters — and it is deliberately the only rule: there is a single account and nobody to enforce a character-class policy on.
+
+Changing it happens in `Einstellungen → Passwort`. The current password is required there even though the browser is already signed in, because a session says who signed in once, not who is sitting in front of the screen. Every other session is dropped with the change, and the change is written to the audit trail as `zugang/passwort_geaendert` — which names the event and never the password or its hash.
+
+`serve` refuses to start when neither a password nor OIDC is configured: an instance that comes up with no way in is a bug report waiting to happen. `BELEGAPP_AUTH_PASSWORD_HASH` and `BELEGAPP_AUTH_PASSWORD_HASH_FILE` no longer exist.
 
 ## The OIDC email allowlist
 

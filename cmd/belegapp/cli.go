@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"golang.org/x/term"
@@ -31,7 +33,7 @@ const usageText = `Usage: belegapp <command>
   migrate         Apply database migrations and exit
   healthcheck     GET /readyz and exit 0 when it returns 200
   version         Print build information
-  hash-password   Print an argon2id PHC hash read from stdin
+  set-password    Store a new instance password (read from stdin)
   backup          Write a data export: backup --out <zip>
   restore         Restore a data export: restore <zip> --yes
   verify-audit    Verify the audit hash chain
@@ -54,8 +56,8 @@ func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return cmdMigrate(ctx, args[1:], stderr)
 	case "healthcheck":
 		return cmdHealthcheck(args[1:], stdout, stderr)
-	case "hash-password":
-		return cmdHashPassword(args[1:], stdout, stderr)
+	case "set-password":
+		return cmdSetPassword(ctx, args[1:], stderr)
 	case "backup":
 		return cmdBackup(ctx, args[1:], stderr)
 	case "restore":
@@ -141,20 +143,79 @@ func cmdServe(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	return err
 }
 
-func cmdHashPassword(args []string, stdout, stderr io.Writer) error {
-	if err := parseFlags("hash-password", args, stderr); err != nil {
+// cmdSetPassword stores the instance password.
+//
+// The hash goes into the database, so the operator never handles a PHC string
+// and no secret lives in the compose file. The command works on the file
+// directly and needs no running server: on a fresh deployment the data volume
+// gets its password before `docker compose up` starts the app, which is the
+// order the documentation asks for.
+func cmdSetPassword(ctx context.Context, args []string, stderr io.Writer) error {
+	if err := parseFlags("set-password", args, stderr); err != nil {
 		return err
 	}
-	password, err := readSecret(stderr)
+	cfg, err := config.Load()
+	if err != nil {
+		return exitErr(2, err)
+	}
+	// Migrate brings the schema up, and the auto_vacuum conversion is skipped
+	// like verify-audit skips it: storing one row is not a reason to rewrite
+	// the file. The next serve or migrate converts.
+	if err := app.Migrate(ctx, app.Options{
+		Config:                cfg,
+		Log:                   logging.New(stderr, cfg.LogLevel, cfg.LogFormat),
+		SkipAutoVacuumMigrate: true,
+	}); err != nil {
+		return err
+	}
+	password, err := readNewSecret(stderr)
 	if err != nil {
 		return exitErr(1, err)
+	}
+	if err := auth.ValidatePassword(string(password)); err != nil {
+		return exitf(2, "password must be at least %d characters", auth.MinPasswordLen)
 	}
 	hash, err := auth.HashPassword(password)
 	if err != nil {
 		return exitErr(1, err)
 	}
-	_, err = fmt.Fprintln(stdout, hash)
+	database, err := db.Open(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = database.Close() }()
+	if err := db.New(database.WriteDB()).SetPasswordHash(ctx, hash); err != nil {
+		return exitErr(1, err)
+	}
+	_, err = fmt.Fprintf(stderr, "Password stored in %s\n", cfg.DBPath)
 	return err
+}
+
+// readNewSecret reads a password twice on a terminal, so a typo cannot replace
+// the only way into the instance with something nobody knows. A pipe carries
+// one password: there is nobody to ask a second time and nobody whose typo it
+// could be.
+func readNewSecret(stderr io.Writer) ([]byte, error) {
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		return readSecret(stderr)
+	}
+	_, _ = fmt.Fprintln(stderr, "Neues Passwort:")
+	first, err := term.ReadPassword(fd)
+	_, _ = fmt.Fprintln(stderr)
+	if err != nil {
+		return nil, err
+	}
+	_, _ = fmt.Fprintln(stderr, "Neues Passwort wiederholen:")
+	second, err := term.ReadPassword(fd)
+	_, _ = fmt.Fprintln(stderr)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(first, second) {
+		return nil, errors.New("die Passwörter stimmen nicht überein")
+	}
+	return first, nil
 }
 
 func readSecret(stderr io.Writer) ([]byte, error) {
@@ -165,11 +226,15 @@ func readSecret(stderr io.Writer) ([]byte, error) {
 		_, _ = fmt.Fprintln(stderr)
 		return password, err
 	}
-	password, err := io.ReadAll(io.LimitReader(os.Stdin, 1024))
-	if err != nil {
+	// A pipe carries the password on its first line; everything after it is
+	// ignored, so a here-document with a trailing line cannot end up inside the
+	// password.
+	reader := bufio.NewReader(io.LimitReader(os.Stdin, 1024))
+	password, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
-	return bytes.TrimRight(password, "\r\n"), nil
+	return []byte(strings.TrimRight(password, "\r\n")), nil
 }
 
 func cmdVerifyAudit(ctx context.Context, args []string, stdout, stderr io.Writer) error {

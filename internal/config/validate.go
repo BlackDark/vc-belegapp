@@ -5,15 +5,12 @@ import (
 	"net"
 	"net/url"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/BlackDark/vc-belegapp/internal/allowlist"
 	"github.com/BlackDark/vc-belegapp/internal/export"
 )
-
-var argon2idPHC = regexp.MustCompile(`^\$argon2id\$v=19\$m=[1-9][0-9]*,t=[1-9][0-9]*,p=[1-9][0-9]*\$[A-Za-z0-9+/]+={0,2}\$[A-Za-z0-9+/]+={0,2}$`)
 
 func (c *Config) validate() error {
 	if _, err := splitHostPort(c.ListenAddr); err != nil {
@@ -77,10 +74,6 @@ func (c *Config) validate() error {
 	}
 	if c.SessionIdleTimeout > c.SessionAbsoluteTimeout {
 		return fmt.Errorf("BELEGAPP_SESSION_IDLE_TIMEOUT must not exceed BELEGAPP_SESSION_ABSOLUTE_TIMEOUT")
-	}
-
-	if c.AuthPasswordHash != "" && !argon2idPHC.MatchString(c.AuthPasswordHash) {
-		return fmt.Errorf("BELEGAPP_AUTH_PASSWORD_HASH must be an argon2id PHC string")
 	}
 
 	if err := c.validateBaseURL(); err != nil {

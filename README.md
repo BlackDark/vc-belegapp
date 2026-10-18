@@ -75,17 +75,20 @@ Dark theme. October 2026 sample from [docs/SPEC.md](docs/SPEC.md) §6.5: REWE 8,
 
 ## Quickstart
 
-The process runs as UID/GID 65532, with a read-only root filesystem, no capabilities, and no new privileges. Writable paths are the data volume and a tmpfs on `/tmp`. A named volume inherits ownership from the image. A bind mount needs `chown -R 65532:65532` first. `serve` exits 2 until a password hash or OIDC is configured.
+The process runs as UID/GID 65532, with a read-only root filesystem, no capabilities, and no new privileges. Writable paths are the data volume and a tmpfs on `/tmp`. A named volume inherits ownership from the image. A bind mount needs `chown -R 65532:65532` first. `serve` exits 2 until a password or OIDC is configured; the password is an argon2id hash in the database, set once with `set-password`.
 
 Image tags have no `v` prefix. Git tag `v1.1.1` is the image `1.1.1`, plus `1.1`, `1`, and `latest`.
 
 ### Docker
 
 ```bash
-printf '%s' 'a-long-password' | docker run --rm -i --entrypoint /belegapp \
-  ghcr.io/blackdark/vc-belegapp:1.1.1 hash-password
-
 docker volume create belegapp-data
+
+printf '%s\n' 'a-long-password' | docker run --rm -i \
+  --user 65532:65532 \
+  -v belegapp-data:/data \
+  ghcr.io/blackdark/vc-belegapp:1.1.1 set-password
+
 docker run -d --name belegapp \
   --read-only \
   --user 65532:65532 \
@@ -94,7 +97,6 @@ docker run -d --name belegapp \
   --tmpfs /tmp:rw,nosuid,size=64m \
   -v belegapp-data:/data \
   -p 127.0.0.1:8080:8080 \
-  -e BELEGAPP_AUTH_PASSWORD_HASH='<argon2id PHC>' \
   ghcr.io/blackdark/vc-belegapp:1.1.1
 ```
 
@@ -102,9 +104,10 @@ Open `http://127.0.0.1:8080`. `/healthz` returns `ok`. `/readyz` is 200 when SQL
 
 ### Docker Compose
 
-Copy [deploy/.env.example](deploy/.env.example) to `deploy/.env` and point the secret files at an OIDC client secret, an argon2id hash, and an LLM API key. `${VAR:?}` makes Compose refuse to start while a required value is empty.
+Copy [deploy/.env.example](deploy/.env.example) to `deploy/.env` and point the secret files at an LLM API key (and at an OIDC client secret if OIDC is used). `${VAR:?}` makes Compose refuse to start while a required value is empty. Set the password once, then start:
 
 ```bash
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml run --rm belegapp set-password
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
 ```
 

@@ -263,6 +263,11 @@ export const client = {
       body: json({ passwort }),
     }),
   logout: () => api<void>("/api/v1/auth/logout", { method: "POST" }),
+  changePassword: (aktuell: string, neu: string) =>
+    api<void>("/api/v1/auth/passwort", {
+      method: "PUT",
+      body: json({ aktuell, neu }),
+    }),
   me: () =>
     api<{ akteur: string; methode: string; sitzung_seit: string }>(
       "/api/v1/auth/me",

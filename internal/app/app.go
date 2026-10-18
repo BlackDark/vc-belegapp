@@ -31,8 +31,9 @@ import (
 	"github.com/BlackDark/vc-belegapp/internal/storage"
 )
 
-// ErrAuthRequired means serve was started without a password hash or OIDC issuer.
-var ErrAuthRequired = errors.New("no authentication method configured; set BELEGAPP_AUTH_PASSWORD_HASH or BELEGAPP_OIDC_ISSUER_URL")
+// ErrAuthRequired means serve was started with neither a stored password nor an
+// OIDC issuer.
+var ErrAuthRequired = errors.New("no authentication method configured; run `belegapp set-password` or set BELEGAPP_OIDC_ISSUER_URL")
 
 // Version is stamped into the binary with -X main.version.
 type Version struct {
@@ -91,9 +92,6 @@ func Serve(ctx context.Context, opt Options) error {
 	if err := prepareDirs(opt.Log, opt.Config); err != nil {
 		return err
 	}
-	if !opt.Config.AuthConfigured() {
-		return ErrAuthRequired
-	}
 
 	database, err := openDB(opt)
 	if err != nil {
@@ -105,6 +103,12 @@ func Serve(ctx context.Context, opt Options) error {
 	}
 	rt, err := db.EnsureSystem(ctx, database.WriteDB(), opt.Config.SecretKey)
 	if err != nil {
+		return err
+	}
+	// The password is a row, so "could anyone log in" is a question for the
+	// schema and not for the environment. It is asked after the migration for
+	// exactly that reason.
+	if err := requireAuth(ctx, opt.Config, database); err != nil {
 		return err
 	}
 
@@ -167,16 +171,15 @@ func Serve(ctx context.Context, opt Options) error {
 		background.Go(func() { oidcClient.Maintain(runCtx) })
 	}
 	httpAPI := &api.API{
-		Log:          opt.Log,
-		Svc:          svc,
-		Sessions:     sessions,
-		Limiter:      &auth.Limiter{},
-		PasswordHash: opt.Config.AuthPasswordHash,
-		OIDC:         oidcClient,
-		OIDCLabel:    opt.Config.OIDCButtonLabel,
-		Trusted:      opt.Config.TrustedProxies,
-		UploadMax:    opt.Config.UploadMaxBytes,
-		ImportMax:    opt.Config.ImportMaxBytes,
+		Log:       opt.Log,
+		Svc:       svc,
+		Sessions:  sessions,
+		Limiter:   &auth.Limiter{},
+		OIDC:      oidcClient,
+		OIDCLabel: opt.Config.OIDCButtonLabel,
+		Trusted:   opt.Config.TrustedProxies,
+		UploadMax: opt.Config.UploadMaxBytes,
+		ImportMax: opt.Config.ImportMaxBytes,
 		Info: api.NewInfo(opt.Config, api.Build{
 			Version:      opt.Version.Version,
 			Commit:       opt.Version.Commit,
@@ -446,6 +449,26 @@ func logStartup(opt Options, rt db.Runtime, typst pdf.Probe) {
 		opt.Log.Info("typst", "version", typst.Version)
 	}
 	opt.Log.Info("database ready", "path", opt.Config.DBPath, "instance_id", rt.InstanceID)
+}
+
+// requireAuth refuses to serve an instance nobody can log into: either the
+// database holds a password or an OIDC issuer is configured.
+//
+// The OIDC half is still environment configuration and is answered without a
+// query; the password half is one row of the system table, which is why the
+// check can no longer happen before the database is open.
+func requireAuth(ctx context.Context, cfg config.Config, database *db.DB) error {
+	if cfg.OIDCIssuerURL != "" {
+		return nil
+	}
+	hash, err := db.New(database.ReadDB()).PasswordHash(ctx)
+	if err != nil {
+		return err
+	}
+	if hash == "" {
+		return ErrAuthRequired
+	}
+	return nil
 }
 
 func openDB(opt Options) (*db.DB, error) {

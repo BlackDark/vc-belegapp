@@ -327,7 +327,7 @@ Jeder Typ hat eine eigene Variable `BELEGAPP_JOB_TIMEOUT_<TYPE>` mit `MAIL`, `WA
 
 Eine Frist beendet keine blockierende Dateisystem-I/O. Ein `watch`-Job auf einem hängenden NFS-/SMB-Mount kehrt erst zurück, wenn der Mount antwortet, und behält bis dahin seinen Worker. Genau deshalb gilt die Parallelitätsgrenze: sie begrenzt, wie viele Jobs eines Typs gleichzeitig festhängen können. Hängen mehrere Typen gleichzeitig fest, kann der Pool trotzdem voll sein. Ein geordnetes Herunterfahren wartet deshalb höchstens 15 Sekunden auf die Worker und protokolliert, wenn sie nicht enden; die von ihnen gehaltenen Jobs setzt der nächste Start ohnehin auf `wartend` zurück. Ein laufender Datenimport wartet dagegen unbegrenzt, weil er gleich die Datenbankdatei ersetzt.
 
-**`system`** (Key/Value): `secret_key` (32 Byte, beim ersten Start erzeugt, falls `BELEGAPP_SECRET_KEY` leer), `instanz_id`.
+**`system`** (Key/Value): `secret_key` (32 Byte, beim ersten Start erzeugt, falls `BELEGAPP_SECRET_KEY` leer), `instanz_id`, `password_hash` (argon2id-PHC des Instanzpassworts; fehlt die Zeile, ist kein Passwort gesetzt — 9.2).
 
 ### 5.3 Amtliche Voreinstellungen (im Binary)
 | Jahr | SBW Frühstück | SBW Mittag/Abend | Status |
@@ -534,6 +534,7 @@ Die Monatsansicht prüft `P_BILDER_VOLLSTAENDIG` per Stat (Blob vorhanden, Grö�
 | GET | `/auth/oidc/start` | `302` zum IdP (PKCE, state, nonce) |
 | GET | `/auth/oidc/callback` | Code-Austausch → `302 /` mit Cookie; Fehler → `302 /login?fehler=…` |
 | GET | `/auth/me` | `{akteur, methode, sitzung_seit}` |
+| PUT | `/auth/passwort` | `{aktuell, neu}` → `204`; `422 E_PASSWORT_FALSCH` / `422 E_PASSWORT_ZU_KURZ`; beendet alle anderen Sitzungen |
 | GET | `/auth/sitzungen` | Liste eigener Sitzungen (ohne Token) |
 | DELETE | `/auth/sitzungen` | alle anderen Sitzungen beenden |
 | GET/PUT | `/einstellungen` | Objekt 5.2 `einstellungen` |
@@ -693,12 +694,13 @@ Antwort `201`: `{id, monat, version, erstellt_am, pdf_url, csv_url, zip_url, pdf
 ## 9. Authentifizierung und Sicherheit
 
 ### 9.1 Login-Methoden
-- Beide Methoden sind gleichzeitig nutzbar. Passwort aktiv, wenn `BELEGAPP_AUTH_PASSWORD_HASH(_FILE)` gesetzt; OIDC aktiv, wenn `BELEGAPP_OIDC_ISSUER_URL` gesetzt. Start bricht ab, wenn keine Methode konfiguriert ist.
+- Beide Methoden sind gleichzeitig nutzbar. Passwort aktiv, wenn in der Datenbank ein Hash liegt (`system.password_hash`, gesetzt mit `belegapp set-password`); OIDC aktiv, wenn `BELEGAPP_OIDC_ISSUER_URL` gesetzt ist. Start bricht ab, wenn keine Methode konfiguriert ist. Die Prüfung läuft nach der Migration, weil das Passwort eine Zeile und keine Umgebungsvariable ist.
 - Login-Seite: OIDC-Button primär (oben, groß), Passwortfeld darunter (falls aktiv). Verstecktes Feld `username` (Wert „belegapp“, `autocomplete=username`) für Passwortmanager.
 
 ### 9.2 Passwort
-- Hash: argon2id, PHC-String `$argon2id$v=19$m=65536,t=3,p=2$<salt>$<hash>`; Erzeugung `belegapp hash-password` (liest von stdin, kein Echo). Vergleich konstantzeitig.
-- Kein Passwortwechsel in der UI (Konfiguration per Env/Secret).
+- Hash: argon2id, PHC-String `$argon2id$v=19$m=65536,t=3,p=2$<salt>$<hash>`, abgelegt als Zeile `password_hash` in der Tabelle `system`. Es gibt keinen Env-/Secret-Weg mehr: `BELEGAPP_AUTH_PASSWORD_HASH(_FILE)` und `belegapp hash-password` entfallen. Vergleich konstantzeitig.
+- Gesetzt wird es mit `belegapp set-password`: am Terminal zweimal verdeckt, sonst die erste Zeile von stdin (Pipe, Container-Setup), dann Migration und Schreiben der Zeile — kein laufender Server nötig. Mindestlänge 12 Zeichen; darunter Exit 2 ohne Schreibvorgang.
+- Wechsel in der UI: `Einstellungen → Passwort`, `PUT /api/v1/auth/passwort` mit `{aktuell, neu}`. Das aktuelle Passwort ist Pflicht — eine Sitzung sagt, wer sich einmal angemeldet hat, nicht wer gerade davorsitzt. Falsch → `422 E_PASSWORT_FALSCH`; zu kurz → `422 E_PASSWORT_ZU_KURZ`. Bei Erfolg werden alle anderen Sitzungen gelöscht und die Änderung als `zugang/passwort_geaendert` protokolliert (ohne Passwort und ohne Hash; Entität `zugang` betrifft keinen Monat und erscheint damit nicht im Monatsexport).
 - Rate-Limit: 5 Fehlversuche je IP / 15 min → `429` mit `Retry-After`; zusätzlich global 20 / 15 min. Client-IP nur aus `X-Forwarded-For`, wenn Remote-Adresse in `BELEGAPP_TRUSTED_PROXIES`.
 
 ### 9.3 Sitzungen
@@ -907,7 +909,7 @@ Letzte Zeile `summe;…` mit Summen. Für den Datenexport zusätzlich Spalte `be
 | Monat | Monatsauswahl, Status-Badge, Kalender (Tageszellen mit Betrag/Wochenende/Feiertag/Warnung), Summenkarte, Belegliste, Buttons Vorschau/Exportieren, Banner bei `geaendert` |
 | Offene Bilder | Liste der nicht zugeordneten Bilder (Thumbnail, Hochladezeitpunkt, Erkennungsstatus-Badge, Fehlertext), je Eintrag Sprung in **Prüfen** mit `?bild={id}`; Leerzustand, wenn alles zugeordnet ist |
 | Export-Dialog | Prüfpunkte, Warnungen, Optionen CSV/ZIP, Arbeitnehmererklärung (Checkbox, Volltext), „Warnungen geprüft“, Vorschau, Final exportieren; bei `E_PRUEFPUNKT_FEHLGESCHLAGEN` die Export-Prüfpunkte neu laden; Liste der Exportversionen mit Downloads und Aufbewahrungsuhr |
-| Einstellungen | Profil; Monatsexport-Standards `export_csv_standard` / `export_zip_standard`; Jahresregeln (Liste; Editor mit Abschnitten Zuschuss, Sachbezugswerte (Button „amtliche Werte übernehmen“), Steuer (Pauschalierung, Gehaltsumwandlung, Bundesland → Kirchensteuer-Vorschlag, Satz), Berechnung (Eigenanteil-Variante mit Erklärung), Monatslimit + Modus, Eigene Feiertage); Belegerkennung (an/aus, Modell, Basis-URL read-only, „Verbindung testen“); Speicher (Backend read-only); Sitzungen; Datenexport/-import; Änderungsprotokoll (Liste, „Kette prüfen“); Darstellung; Über |
+| Einstellungen | Profil; Monatsexport-Standards `export_csv_standard` / `export_zip_standard`; Jahresregeln (Liste; Editor mit Abschnitten Zuschuss, Sachbezugswerte (Button „amtliche Werte übernehmen“), Steuer (Pauschalierung, Gehaltsumwandlung, Bundesland → Kirchensteuer-Vorschlag, Satz), Berechnung (Eigenanteil-Variante mit Erklärung), Monatslimit + Modus, Eigene Feiertage); Belegerkennung (an/aus, Modell, Basis-URL read-only, „Verbindung testen“); Speicher (Backend read-only); Sitzungen; **Passwort** (aktuelles, neues, Wiederholung → `PUT /api/v1/auth/passwort`); Datenexport/-import; Änderungsprotokoll (Liste, „Kette prüfen“); Darstellung; Über |
 
 ### 13.3 PWA
 - `vite-plugin-pwa`: `registerType: "prompt"` (Toast „Neue Version – neu laden“), Manifest `name: "Belegapp"`, `short_name: "Belege"`, `lang: "de"`, `display: "standalone"`, `start_url: "/"`, Theme-Farben `light`/`dark`, Icons 192/512 + maskable (generiert mit `@vite-pwa/assets-generator`), iOS-`apple-touch-icon`.
@@ -933,7 +935,6 @@ Alle Variablen mit Präfix `BELEGAPP_`; für Geheimnisse zusätzlich `<NAME>_FIL
 | `BELEGAPP_COOKIE_SECURE` | `true` | nur lokal `false` |
 | `BELEGAPP_SESSION_IDLE_TIMEOUT` | `720h` | |
 | `BELEGAPP_SESSION_ABSOLUTE_TIMEOUT` | `2160h` | |
-| `BELEGAPP_AUTH_PASSWORD_HASH(_FILE)` | `` | argon2id-PHC; leer = Passwort-Login aus |
 | `BELEGAPP_OIDC_ISSUER_URL` | `` | leer = OIDC aus |
 | `BELEGAPP_OIDC_CLIENT_ID` | `` | |
 | `BELEGAPP_OIDC_CLIENT_SECRET(_FILE)` | `` | leer = Public Client (nur PKCE) |
@@ -993,7 +994,7 @@ Alle Variablen mit Präfix `BELEGAPP_`; für Geheimnisse zusätzlich `<NAME>_FIL
 | `BELEGAPP_WATCH_FOLDER` | `` | überwachter Ordner für Belegbilder, z. B. `/watch`. Leer = aus: kein Ticker, kein Job |
 | `BELEGAPP_WATCH_INTERVAL` | `30s` | Abtasttakt |
 
-CLI: `belegapp serve` (Default) · `hash-password` · `healthcheck [--url]` · `migrate` · `backup --out <zip>` · `restore <zip> --yes` · `verify-audit` · `version`.
+CLI: `belegapp serve` (Default) · `set-password` · `healthcheck [--url]` · `migrate` · `backup --out <zip>` · `restore <zip> --yes` · `verify-audit` · `version`.
 
 ---
 
@@ -1010,7 +1011,7 @@ CLI: `belegapp serve` (Default) · `hash-password` · `healthcheck [--url]` · `
 - Metriken (optional, `BELEGAPP_METRICS_ADDR`, eigener Port, kein Auth): `belegapp_http_requests_total{route,method,code}`, `belegapp_http_request_duration_seconds`, `belegapp_erkennung_total{ergebnis}`, `belegapp_erkennung_dauer_seconds`, `belegapp_pdf_dauer_seconds`, `belegapp_belege_total`, `belegapp_jobs_wartend` + Go-Runtime-Metriken.
 
 ### 15.3 Docker Compose (Beispiel, `deploy/docker-compose.yml`)
-Pflichtwerte kommen aus `deploy/.env` (Vorlage `deploy/.env.example`). `${VAR:?}` bricht `docker compose` ab, solange der Wert leer ist. Der Prozess selbst startet mit Passwort-Hash oder OIDC; das Beispiel setzt beides und den LLM-Key.
+Pflichtwerte kommen aus `deploy/.env` (Vorlage `deploy/.env.example`). `${VAR:?}` bricht `docker compose` ab, solange der Wert leer ist. Der Prozess selbst startet mit Passwort oder OIDC; das Passwort ist eine Datenbankzeile und wird einmalig mit `docker compose run --rm belegapp set-password` auf dasselbe Volume geschrieben. Das Beispiel setzt den LLM-Key und lässt die OIDC-Zeilen auskommentiert.
 ```yaml
 services:
   belegapp:
@@ -1031,13 +1032,13 @@ services:
     environment:
       BELEGAPP_BASE_URL: ${BELEGAPP_BASE_URL:?set BELEGAPP_BASE_URL}
       BELEGAPP_TRUSTED_PROXIES: ${BELEGAPP_TRUSTED_PROXIES:-172.16.0.0/12}
-      BELEGAPP_OIDC_ISSUER_URL: ${BELEGAPP_OIDC_ISSUER_URL:?set BELEGAPP_OIDC_ISSUER_URL}
-      BELEGAPP_OIDC_CLIENT_ID: ${BELEGAPP_OIDC_CLIENT_ID:?set BELEGAPP_OIDC_CLIENT_ID}
-      BELEGAPP_OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_secret
-      BELEGAPP_OIDC_ALLOWED_EMAILS: ${BELEGAPP_OIDC_ALLOWED_EMAILS:-}
-      BELEGAPP_AUTH_PASSWORD_HASH_FILE: /run/secrets/pw_hash
+      # OIDC ist optional; zum Aktivieren einkommentieren (dann OIDC_SECRET_FILE setzen):
+      # BELEGAPP_OIDC_ISSUER_URL: ${BELEGAPP_OIDC_ISSUER_URL:?set BELEGAPP_OIDC_ISSUER_URL}
+      # BELEGAPP_OIDC_CLIENT_ID: ${BELEGAPP_OIDC_CLIENT_ID:?set BELEGAPP_OIDC_CLIENT_ID}
+      # BELEGAPP_OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_secret
+      # BELEGAPP_OIDC_ALLOWED_EMAILS: ${BELEGAPP_OIDC_ALLOWED_EMAILS:?set BELEGAPP_OIDC_ALLOWED_EMAILS}
       BELEGAPP_LLM_API_KEY_FILE: /run/secrets/openai_key
-    secrets: [oidc_secret, pw_hash, openai_key]
+    secrets: [oidc_secret, openai_key]
     healthcheck:
       test: ["CMD", "/belegapp", "healthcheck"]
       interval: 30s
@@ -1045,10 +1046,9 @@ services:
       retries: 3
       start_period: 10s
 secrets:
+  # Wird nur mit den OIDC-Zeilen oben gelesen; OIDC_SECRET_FILE setzen.
   oidc_secret:
-    file: ${OIDC_SECRET_FILE:?path to the OIDC client secret}
-  pw_hash:
-    file: ${PASSWORD_HASH_FILE:?path to the argon2id password hash}
+    file: ${OIDC_SECRET_FILE:-/dev/null}
   openai_key:
     file: ${LLM_API_KEY_FILE:?path to the LLM API key}
 ```
@@ -1058,7 +1058,7 @@ secrets:
 - Volumes: PVC `ReadWriteOnce` für `/data` (kein NFS/CIFS), `emptyDir` (`sizeLimit: 1Gi`) für `/tmp`.
 - Probes: liveness `/healthz` (period 20 s), readiness `/readyz` (period 10 s), startup `/readyz` (failureThreshold 30).
 - Ressourcen: requests `50m`/`64Mi`, limits `1` CPU / `512Mi` (Deployment und Backup-CronJob).
-- `Secret` für Hash/OIDC/LLM/S3; `ConfigMap` für übrige Env; `Service` + `Ingress` (TLS via cert-manager, Body-Limit ≥ Import-Größe, z. B. `nginx.ingress.kubernetes.io/proxy-body-size: 4g`).
+- `Secret` für OIDC/LLM/S3; `ConfigMap` für übrige Env; `Service` + `Ingress` (TLS via cert-manager, Body-Limit ≥ Import-Größe, z. B. `nginx.ingress.kubernetes.io/proxy-body-size: 4g`). Das Passwort steht in keinem Secret, sondern als Zeile in der Datenbank auf dem PVC: `kubectl exec -it deploy/belegapp -- /belegapp set-password`.
 - Optional `NetworkPolicy`: Egress nur DNS, IdP, LLM, S3.
 - Optional Litestream-Sidecar für SQLite-Replikation (dokumentiert, nicht Teil von v1).
 
@@ -1156,7 +1156,7 @@ Coverage-Ziel: `internal/calc` 100 %, Backend gesamt ≥ 70 %.
 6. Gehaltsumwandlung + Pauschalierung gleichzeitig: nur Warnung, Berechnung folgt der Konfiguration. **Bestätigt 2026-10-15:** unverändert — es ist **nur** die Warnung `W_REGEL_GEHALTSUMWANDLUNG` (7.2), **nichts blockiert**, und die Berechnung folgt weiter der Jahresregel (6.3).
 7. Monatslimit standardmäßig **warnen** (nicht blockieren). **Wert bestätigt 2026-10-14** (19.1 Nr. 5): 15 bezuschusste Belegtage je Kalendermonat, unabhängig von den geleisteten Arbeitstagen. **Modus bestätigt 2026-10-15: `warnen`.** In diesem Modus warnt das Überschreiten **nur** und blockiert **nie**: bei Überschreitung steht `P_MONATSLIMIT` auf `warnung` (`internal/service/month.go`), und ein `warnung` ist kein `fehler` — `rejectFinal` weist einen finalen Export nur bei `fehler` ab. `limit_modus` bleibt je Jahresregel schaltbar (Vorgabe `warnen`, 5.2); der zweite von der Jahresregel erlaubte Wert `blockieren` weist den Beleg dagegen mit `E_LIMIT_ERREICHT` ab (`internal/service/document_prepare.go`, Vorschau wie Speichern, 5.2) und ist nicht Teil des bestätigten Betriebs. Der Punkt ist für den bestätigten Modus entschieden und fällt als offener weg.
 8. Standard-Eigenanteil-Variante `standard` (Eigenanteil wird angerechnet). **Bestätigt 2026-10-14** (19.1 Nr. 4): der Arbeitgeber fährt `standard`. Die Annahme ist damit keine Annahme mehr und fällt als offener Punkt weg.
-9. Passwort nur per Env/Secret (kein Setup-Assistent, kein Passwortwechsel in der UI); OIDC verlangt Allowlist (`sub` oder verifizierte E-Mail). **Bestätigt 2026-10-15:** beides unverändert. Das Passwort kommt ausschließlich aus `BELEGAPP_AUTH_PASSWORD_HASH(_FILE)`; in der Web-App gibt es keinen Weg, es zu setzen oder zu ändern (9.2, 13). Die OIDC-Allowlist bleibt Pflicht: ohne `BELEGAPP_OIDC_ALLOWED_SUBJECTS` **und** ohne `BELEGAPP_OIDC_ALLOWED_EMAILS` startet die App nicht (9.5). **Ergänzt 2026-10-15:** die E-Mail-Allowlist versteht Ganzlabel-Platzhalter (`*@example.de`, `*@*.example.de`, `*`) — siehe 9.5 und `docs/configuration.md`. Eine leere Liste bleibt ein Startfehler; `*` ist der ausdrückliche Weg, alle zuzulassen.
+9. Passwort nur per Env/Secret (kein Setup-Assistent, kein Passwortwechsel in der UI); OIDC verlangt Allowlist (`sub` oder verifizierte E-Mail). **Bestätigt 2026-10-15:** beides unverändert. Das Passwort kommt ausschließlich aus `BELEGAPP_AUTH_PASSWORD_HASH(_FILE)`; in der Web-App gibt es keinen Weg, es zu setzen oder zu ändern (9.2, 13). Die OIDC-Allowlist bleibt Pflicht: ohne `BELEGAPP_OIDC_ALLOWED_SUBJECTS` **und** ohne `BELEGAPP_OIDC_ALLOWED_EMAILS` startet die App nicht (9.5). **Ergänzt 2026-10-15:** die E-Mail-Allowlist versteht Ganzlabel-Platzhalter (`*@example.de`, `*@*.example.de`, `*`) — siehe 9.5 und `docs/configuration.md`. Eine leere Liste bleibt ein Startfehler; `*` ist der ausdrückliche Weg, alle zuzulassen. **Umgestellt 2026-10-18 (Issue #47):** der Passwort-Teil ist **überholt**. Der Hash ist keine Konfiguration mehr, sondern eine Zeile `password_hash` in der Tabelle `system`; gesetzt wird er mit `belegapp set-password` (Terminal zweimal verdeckt, sonst erste stdin-Zeile, Mindestlänge 12), geändert in `Einstellungen → Passwort` (`PUT /api/v1/auth/passwort`, aktuelles Passwort Pflicht, andere Sitzungen fallen weg, Protokolleintrag `zugang/passwort_geaendert`). `BELEGAPP_AUTH_PASSWORD_HASH(_FILE)` und `belegapp hash-password` entfallen ersatzlos; `serve` bricht weiter ab, wenn weder Passwort noch OIDC vorhanden ist (9.1, 9.2). Der Grund: ein PHC-String in einem Secret ist für den Betreiber unhandlich, und ein Passwort, das im Env steht, lässt sich nicht wechseln. Die OIDC-Allowlist bleibt unverändert Pflicht.
 10. Gespeichert wird das normalisierte Bild (≤ 2400 px, ohne EXIF/GPS), nicht das Original. **Bestätigt 2026-10-15:** unverändert — abgelegt werden ausschließlich das normalisierte JPEG und das Thumbnail (`internal/service/images.go` schreibt `norm.JPEG` und `norm.Thumb` aus `internal/imaging`), die hochgeladenen Bytes werden nirgends aufbewahrt. `upload_sha256` ist nur ein Hash des Uploads, keine Datei (5.2, 11.2).
 11. Datenimport ersetzt immer den gesamten Bestand (kein Zusammenführen) und legt vorher automatisch eine Sicherung an. **Bestätigt 2026-10-15:** es bleibt beim vollständigen Ersetzen — ein Merge-Modus ist nicht vorgesehen, die automatische Sicherung davor bleibt Pflichtbestandteil (11.4).
 12. Bezugsorte: Supermarkt, Restaurant, Kantine, Bäckerei, Lieferdienst, Sonstiges; Arbeitsort Betrieb/Homeoffice als zusätzliches Feld. **Bestätigt 2026-10-15** (19.1 Nr. 7): der Arbeitgeber akzeptiert Homeoffice-Tage und eine fremd betriebene Kantine. Beide Felder bleiben, `bezugsort = kantine` erzeugt weiter nur den Hinweis `W_BEZUGSORT_KANTINE`.

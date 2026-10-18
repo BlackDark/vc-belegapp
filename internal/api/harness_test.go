@@ -38,6 +38,7 @@ func newTestService(t *testing.T, database *db.DB, store storage.BlobStore, now 
 // newTestAPI wraps a service in the production middleware stack.
 func newTestAPI(t *testing.T, svc *service.Service, store storage.BlobStore) http.Handler {
 	t.Helper()
+	seedPassword(t, svc.DB)
 	sessions := &auth.Sessions{DB: svc.DB, Idle: time.Hour, Absolute: 2 * time.Hour, Secure: false}
 	handler, err := server.New(server.Options{
 		Frontend: fstest.MapFS{"index.html": {Data: []byte("<title>Belegapp</title>")}},
@@ -49,17 +50,26 @@ func newTestAPI(t *testing.T, svc *service.Service, store storage.BlobStore) htt
 			Typst:      func(context.Context) (string, error) { return "typst test", nil },
 		},
 		API: (&API{
-			Svc:          svc,
-			Sessions:     sessions,
-			Limiter:      &auth.Limiter{},
-			PasswordHash: lightHash("geheim"),
-			OIDCLabel:    "Mit SSO anmelden",
+			Svc:       svc,
+			Sessions:  sessions,
+			Limiter:   &auth.Limiter{},
+			OIDCLabel: "Mit SSO anmelden",
 		}).Handler(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return handler
+}
+
+// seedPassword writes the fixture password into the system table, which is
+// where the production password lives too. Only the argon2 cost differs, so the
+// suites go through the real lookup and comparison instead of a field.
+func seedPassword(t *testing.T, database *db.DB) {
+	t.Helper()
+	if err := db.New(database.WriteDB()).SetPasswordHash(context.Background(), lightHash("geheim")); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // newTestServer starts the handler and returns it with a client whose cookie

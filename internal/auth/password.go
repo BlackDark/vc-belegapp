@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -18,6 +19,22 @@ const (
 	passwordKeyLen  = 32
 	passwordSaltLen = 16
 )
+
+// MinPasswordLen is the shortest password the setup and change flows accept.
+//
+// One rule, deliberately: the instance has a single account, so length is the
+// only property an operator can be told to satisfy without inventing a policy
+// nobody asked for. Both `belegapp set-password` and the change-password
+// endpoint go through ValidatePassword, so the two cannot drift apart.
+const MinPasswordLen = 12
+
+// ValidatePassword reports why a password may not be used yet.
+func ValidatePassword(password string) error {
+	if utf8.RuneCountInString(password) < MinPasswordLen {
+		return fmt.Errorf("password must be at least %d characters", MinPasswordLen)
+	}
+	return nil
+}
 
 // HashPassword returns an argon2id PHC string (m=65536, t=3, p=2).
 func HashPassword(password []byte) (string, error) {

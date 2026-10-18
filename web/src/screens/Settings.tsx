@@ -9,6 +9,7 @@ import { DarstellungCard } from "../components/settings/DarstellungCard";
 import { DatenexportCard } from "../components/settings/DatenexportCard";
 import { DatenimportCard } from "../components/settings/DatenimportCard";
 import { JahresregelnCard } from "../components/settings/JahresregelnCard";
+import { PasswortCard } from "../components/settings/PasswortCard";
 import { SitzungenCard } from "../components/settings/SitzungenCard";
 import { SpeicherCard } from "../components/settings/SpeicherCard";
 import { Alert, AlertDescription } from "../components/ui/alert";
@@ -198,6 +199,7 @@ export default function Settings() {
       <DatenexportCard />
       <DatenimportCard />
       <SitzungenCard sitzungen={sitzungen.data} />
+      <PasswortCard />
       <div class="flex flex-col gap-2">
         <Button
           variant="outline"

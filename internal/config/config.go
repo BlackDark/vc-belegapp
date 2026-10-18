@@ -51,8 +51,9 @@ type Config struct {
 	SessionIdleTimeout     time.Duration `env:"BELEGAPP_SESSION_IDLE_TIMEOUT" envDefault:"720h"`
 	SessionAbsoluteTimeout time.Duration `env:"BELEGAPP_SESSION_ABSOLUTE_TIMEOUT" envDefault:"2160h"`
 
-	AuthPasswordHash string `env:"BELEGAPP_AUTH_PASSWORD_HASH"`
-
+	// No password variable exists. The instance password is an argon2id hash in
+	// the database, set with `belegapp set-password` and changed in the
+	// settings screen; see docs/configuration.md.
 	OIDCIssuerURL       string `env:"BELEGAPP_OIDC_ISSUER_URL"`
 	OIDCClientID        string `env:"BELEGAPP_OIDC_CLIENT_ID"`
 	OIDCClientSecret    string `env:"BELEGAPP_OIDC_CLIENT_SECRET"`
@@ -358,12 +359,6 @@ func unknownJobTimeoutVars(known map[string]bool) []string {
 	return unknown
 }
 
-// AuthConfigured reports whether password login or OIDC is configured.
-// serve refuses to start when this is false.
-func (c Config) AuthConfigured() bool {
-	return c.AuthPasswordHash != "" || c.OIDCIssuerURL != ""
-}
-
 // MailConfigured reports whether the IMAP intake may run. It is the single
 // gate: app.go starts no ticker and enqueues no mail job when this is false,
 // so a leftover BELEGAPP_MAIL_HOST in the environment does not by itself turn
@@ -394,7 +389,6 @@ func applySecretFiles(cfg *Config) error {
 		dest *string
 	}{
 		{"BELEGAPP_SECRET_KEY", &cfg.SecretKeyRaw},
-		{"BELEGAPP_AUTH_PASSWORD_HASH", &cfg.AuthPasswordHash},
 		{"BELEGAPP_OIDC_CLIENT_SECRET", &cfg.OIDCClientSecret},
 		{"BELEGAPP_S3_ACCESS_KEY_ID", &cfg.S3AccessKeyID},
 		{"BELEGAPP_S3_SECRET_ACCESS_KEY", &cfg.S3SecretAccessKey},

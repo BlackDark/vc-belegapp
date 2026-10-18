@@ -47,7 +47,7 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.JobRetention != 168*time.Hour {
 		t.Fatalf("job retention %s", cfg.JobRetention)
 	}
-	if cfg.OIDCButtonLabel != "Mit SSO anmelden" || cfg.AuthConfigured() {
+	if cfg.OIDCButtonLabel != "Mit SSO anmelden" {
 		t.Fatalf("auth defaults")
 	}
 	if !cfg.OpenAIKeyMissing() {
@@ -67,7 +67,6 @@ func TestLoadRejectsInvalid(t *testing.T) {
 		{"timezone", "BELEGAPP_TZ", "Not/AZone", "BELEGAPP_TZ"},
 		{"cidr", "BELEGAPP_TRUSTED_PROXIES", "10.0.0.1", "CIDR"},
 		{"secret length", "BELEGAPP_SECRET_KEY", "aaaa", "BELEGAPP_SECRET_KEY"},
-		{"password hash", "BELEGAPP_AUTH_PASSWORD_HASH", "plaintext", "argon2id"},
 		{"storage", "BELEGAPP_STORAGE_BACKEND", "nfs", "BELEGAPP_STORAGE_BACKEND"},
 		{"s3 bucket", "BELEGAPP_STORAGE_BACKEND", "s3", "BELEGAPP_S3_BUCKET"},
 		{"llm format", "BELEGAPP_LLM_RESPONSE_FORMAT", "text", "BELEGAPP_LLM_RESPONSE_FORMAT"},
@@ -107,7 +106,7 @@ func TestLoadOIDCRequiresAllowlist(t *testing.T) {
 	if cfg.BaseURL != "https://belege.example.de" {
 		t.Fatalf("base url %s", cfg.BaseURL)
 	}
-	if !cfg.AuthConfigured() || len(cfg.OIDCAllowedEmails) != 1 {
+	if len(cfg.OIDCAllowedEmails) != 1 {
 		t.Fatalf("oidc not configured: %+v", cfg.OIDCAllowedEmails)
 	}
 }

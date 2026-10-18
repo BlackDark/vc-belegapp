@@ -226,6 +226,45 @@ Betriebsseite zeigt.
 und gehört nicht in eine Dokumentationsrunde; die neue Tabelle nennt sie stattdessen beim Namen und macht die
 Entscheidung sichtbar.
 
+## Instanzpasswort in der Datenbank (18.10.2026)
+
+Anlass war [Issue #47](https://github.com/BlackDark/vc-belegapp/issues/47), Frage 1: *„why argon2password hash via env var?
+not user friendly?"* Die Frage war berechtigt. Der Betreiber musste den Hash mit `belegapp hash-password` erzeugen, ihn in
+ein Secret legen, dieses in Compose und Kubernetes einhängen — und konnte ihn danach nie wieder ändern, ohne den Dienst
+neu mit einem neuen Secret zu starten. **Entschieden: die Datenbank ist die einzige Quelle.** Der Hash liegt als Zeile
+`password_hash` in `system`, also dort, wo die Belege liegen: auf dem Datenvolume, in jeder Sicherung, ohne Datei und
+ohne Env-Variable.
+
+- **`serve` prüft nach der Migration**, ob ein Passwort oder `BELEGAPP_OIDC_ISSUER_URL` existiert, sonst Exit 2 wie
+  vorher. Die Prüfung kann nicht mehr vor dem Öffnen der Datenbank laufen, weil die Antwort eine Zeile ist.
+- **`belegapp set-password`** ersetzt `hash-password`: Schema anwenden, Passwort lesen (am Terminal zweimal verdeckt,
+  sonst die erste Zeile von stdin — Pipe und Container-Setup), hashen, schreiben. Mindestlänge 12 Zeichen, darunter Exit
+  2 ohne Schreibvorgang. Kein laufender Server nötig, deshalb ist `docker compose run --rm belegapp set-password` der
+  Bootstrap-Schritt.
+- **Wechsel in der UI:** `Einstellungen → Passwort`, `PUT /api/v1/auth/passwort` mit `{aktuell, neu}`. Das aktuelle
+  Passwort ist Pflicht — eine Sitzung sagt, wer sich einmal angemeldet hat, nicht wer gerade davorsitzt. Bei Erfolg
+  fallen alle anderen Sitzungen weg, und die Änderung steht als `zugang/passwort_geaendert` im Protokoll: die Entität
+  `zugang` betrifft keinen Monat und taucht damit **nicht** im Monatsexport auf, und weder Passwort noch Hash stehen im
+  Eintrag. Hash und Protokollzeile entstehen in derselben Transaktion, damit die Kette keine Änderung behaupten kann,
+  die es nicht gab.
+- **Entfallen:** `BELEGAPP_AUTH_PASSWORD_HASH`, `BELEGAPP_AUTH_PASSWORD_HASH_FILE`, `belegapp hash-password`,
+  `config.AuthConfigured()`, die PHC-Prüfung beim Start und der Hash-Eintrag in `applySecretFiles`.
+- **Vorlagen:** Compose und Kubernetes halten kein Passwort mehr. Die OIDC-Zeilen im Compose-Beispiel sind
+  auskommentiert, damit ein Passwort-only-Start nicht an `OIDC_SECRET_FILE` scheitert; der `oidc_secret`-Mount zeigt
+  dann auf `/dev/null`. SPEC §5.2 (`system`), §9.1/§9.2, §12.1 (`PUT /auth/passwort`), §13.2 (Passwortkarte), §15.3,
+  §15.4 und §19.1 Nr. 9 tragen die Umstellung samt Datum; `docs/configuration.md` hat den neuen Abschnitt *The instance
+  password*, `docs/deployment.md`, `README.md` und `docs/FEATURES.md` den neuen Ablauf.
+
+**Geprüft:** `internal/db/system_test.go` (Round-trip, Upsert, leerer Hash wird verweigert),
+`internal/auth/password_test.go` (Längengrenze, auch mit Mehrbyte-Zeichen), `internal/service/credentials_test.go`
+(Wechsel, falsches aktuelles Passwort, zu kurzes neues, keine Protokollspur ohne Änderung),
+`internal/api/password_test.go` (HTTP-Ablauf einschließlich Ende der anderen Sitzung) und `cmd/belegapp/cli_test.go`
+(`set-password` über eine Pipe, verweigert zu Kurzes, der geschriebene Hash verifiziert das Passwort). Die API-Suiten
+setzen ihr Passwort über dieselbe Zeile statt über das frühere Feld, `scripts/container-smoke.sh` und `e2e/fixtures.ts`
+rufen `set-password` auf, statt eine Variable zu setzen.
+
+**Nicht geändert:** die OIDC-Seite. Die Allowlist bleibt Pflicht, `serve` akzeptiert weiter beide Methoden gleichzeitig.
+
 ## Arbeitsweise mit `main`
 
 `main` ist geschützt. Eine Änderung geht über einen Pull Request, wird per Squash zusammengefasst und
@@ -351,8 +390,8 @@ des Eigentümers:
   Jahresregel ohne Vorjahr beginnt bei 0). Damit ist **§19.1 vollständig entschieden.** **§19.3** — vollständig bestätigt: am 15.10.
   **Nr. 1, 3** (kein Entsperren), **Nr. 2** (ein Bundesland, ein Kalender für die ganze App), **Nr. 4**
   (Vorschau sperrt nie), **Nr. 5** (Arbeitnehmererklärung wird nicht erfasst), **Nr. 6** (Umwandlung +
-  Pauschalierung nur Warnung), **Nr. 7** (Limit-Modus `warnen`: warnt nur, blockiert nie), **Nr. 9** (Passwort nur per Env,
-  Allowlist Pflicht), **Nr. 10** (nur das normalisierte Bild), **Nr. 11** (Import ersetzt alles, mit Sicherung
+  Pauschalierung nur Warnung), **Nr. 7** (Limit-Modus `warnen`: warnt nur, blockiert nie), **Nr. 9** (Passwort: am 18.10.
+  überholt — es liegt als Zeile in der Datenbank und wird in der UI gewechselt, die Allowlist bleibt Pflicht), **Nr. 10** (nur das normalisierte Bild), **Nr. 11** (Import ersetzt alles, mit Sicherung
   davor), **Nr. 12**; am 14.10. **Nr. 8**. Dazu zwei Bestätigungen außerhalb von §19, weil sie nirgends eine
   offene Frage waren: der gemeinsame `zuschuss_cent` (§5.3) und die Vorgabe `mittag` allein bei einer neuen
   Jahresregel (§5.2, §5.3). Alle stehen in [NOTES](docs/NOTES.md).
