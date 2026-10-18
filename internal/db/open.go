@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -25,6 +26,19 @@ type DB struct {
 	write *sql.DB
 	read  *sql.DB
 	Path  string
+
+	// AutoVacuumMigrated reports that OpenWith converted this database to
+	// auto_vacuum = INCREMENTAL on this start. It is only ever true when
+	// Options.AutoVacuumMigrate was set, and never when the database already
+	// had the setting. A caller logs it once, because the conversion is the
+	// one start that rewrote the file.
+	AutoVacuumMigrated bool
+	// AutoVacuumMigrateErr is the conversion failure, if there was one. It is
+	// never fatal: OpenWith returns a usable *DB either way, and this is the
+	// caller's signal to log that the database still keeps its file size and
+	// that the one-time VACUUM from MigrateAutoVacuum still has to run. It is
+	// nil when nothing had to be converted and when the conversion succeeded.
+	AutoVacuumMigrateErr error
 }
 
 // WriteDB returns the pool every write and every migration goes through.
@@ -53,16 +67,47 @@ func (d *DB) ReadDB() *sql.DB {
 	return d.read
 }
 
+// Options selects the work OpenWith does beyond opening the file. The zero
+// value opens the database exactly as Open does.
+type Options struct {
+	// AutoVacuumMigrate switches an existing database to
+	// auto_vacuum = INCREMENTAL at startup, the one-time conversion SQLite's
+	// own pragma cannot do (see MigrateAutoVacuum). It is a full rewrite of
+	// the file, so a caller may leave it off on a large database or one on a
+	// volume without room for the transient copy.
+	AutoVacuumMigrate bool
+}
+
 // Open creates or opens the SQLite database at path.
 // The write pool has a single connection. The read pool is read-only.
 //
-// Open is also where auto_vacuum is decided, and the order matters: this is the
-// first connection to the file, so on a database that does not exist yet the
-// pragma in dsn lands before the first migration creates a table. SQLite only
-// accepts auto_vacuum on a database that has no tables — on an existing one it
-// is silently ignored, which is exactly what keeps an upgrade harmless, and
-// dsn says more about what an operator can do about that.
+// Open never converts the file's auto_vacuum mode: an existing database keeps
+// the mode it already has. The conversion writes every page, so it stays
+// opt-in through OpenWith and Options.AutoVacuumMigrate instead of being a
+// side effect of opening a file. cmd/belegapp verify-audit relies on that: it
+// opens through here, and it opens without the conversion
+// (app.Options.SkipAutoVacuumMigrate), because a command whose job is to read
+// the audit chain must not rewrite the database.
+//
+// Open is also where auto_vacuum is decided on a new database, and the order
+// matters: this is the first connection to the file, so on a database that
+// does not exist yet the pragma in dsn lands before the first migration
+// creates a table. SQLite only accepts auto_vacuum on a database that has no
+// tables — on an existing one it is silently ignored, which is exactly what
+// keeps an upgrade harmless and what OpenWith repairs; dsn says more.
 func Open(path string) (*DB, error) {
+	return OpenWith(path, Options{})
+}
+
+// OpenWith opens the database at path like Open and, when
+// opt.AutoVacuumMigrate is set, additionally runs the one-time auto_vacuum
+// conversion from MigrateAutoVacuum.
+//
+// The conversion runs after the write connection is open and before the read
+// pool opens, so the file is rewritten while nobody holds a reader on it. It
+// is never fatal: when it fails, the returned *DB still works and the failure
+// is reported on DB.AutoVacuumMigrateErr for the caller to log.
+func OpenWith(path string, opt Options) (*DB, error) {
 	write, err := sql.Open("sqlite", dsn(path, false))
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
@@ -72,6 +117,12 @@ func Open(path string) (*DB, error) {
 	if err := write.Ping(); err != nil {
 		_ = write.Close()
 		return nil, fmt.Errorf("open database: %w", err)
+	}
+
+	var migrated bool
+	var migrateErr error
+	if opt.AutoVacuumMigrate {
+		migrated, migrateErr = MigrateAutoVacuum(context.Background(), write)
 	}
 
 	read, err := sql.Open("sqlite", dsn(path, true))
@@ -91,7 +142,13 @@ func Open(path string) (*DB, error) {
 		_ = write.Close()
 		return nil, fmt.Errorf("chmod database: %w", err)
 	}
-	return &DB{write: write, read: read, Path: path}, nil
+	return &DB{
+		write:                write,
+		read:                 read,
+		Path:                 path,
+		AutoVacuumMigrated:   migrated,
+		AutoVacuumMigrateErr: migrateErr,
+	}, nil
 }
 
 // Close closes both pools.
@@ -135,9 +192,11 @@ func dsn(path string, readOnly bool) string {
 		return "file:" + slash + "?mode=ro&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=query_only(1)"
 	}
 	// auto_vacuum=INCREMENTAL is set here and nowhere else, because it only
-	// takes effect on a database without tables. Switching an existing
-	// database over costs a full VACUUM, so this must never be done from code
-	// at runtime; it is documented as a one-time operator step instead.
+	// takes effect on a database without tables — which is a new one, the
+	// only case this line can still decide. An existing database is switched
+	// over once at startup by MigrateAutoVacuum instead of by hand; that is a
+	// full VACUUM, which is why Open (the read-only verification path) leaves
+	// it alone and OpenWith does it.
 	//
 	// It is what makes a delete give space back: SQLite frees the pages for
 	// reuse straight away but keeps them inside the file, and the hourly

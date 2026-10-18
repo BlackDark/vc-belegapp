@@ -89,14 +89,14 @@ Everything lives in one SQLite file under `/data`. Size it for the receipts and 
 
 Two caveats an operator should know before sizing a volume:
 
-- **An existing database does not shrink automatically.** `auto_vacuum = INCREMENTAL` is set when a database is *created*, and SQLite ignores it on a file that already has tables. An upgraded instance keeps deleting its rows and keeps its file size. To get the space back, stop the process and run the full vacuum once — it rewrites the file and needs free disk roughly the size of the database:
+- **An existing database is rewritten once, on the first start after the upgrade.** `auto_vacuum = INCREMENTAL` is set when a database is *created*, and SQLite ignores the pragma on a file that already has tables. Such a database keeps deleting its rows and keeps its file size, and `PRAGMA incremental_vacuum` on it is a no-op. The process closes that gap itself: at startup it reads the mode, and only when it is not `INCREMENTAL` does it set the pragma and rewrite the file. That is one `VACUUM` — the database is unavailable while it runs and it needs transient free disk roughly the size of the file — and it happens once; every later start finds `INCREMENTAL` and stays quiet. Size that first start as a maintenance window. A failure is a warning, not a stop, so a read-only volume or a full disk does not take the instance down; the next start retries. `BELEGAPP_DB_AUTO_VACUUM_MIGRATE=false` turns it off entirely, and `belegapp verify-audit` never converts: that command reads, and starting a full rewrite is not its job.
+
+  With the conversion switched off, or to compact at a chosen time instead, do it by hand with the process stopped:
 
   ```bash
   sqlite3 /data/belegapp.db 'PRAGMA auto_vacuum=INCREMENTAL; VACUUM;'
   ```
-
-  During that rewrite the database is unavailable, so do it in a maintenance window rather than from a sidecar.
-- **Deleted rows never grow the file, but the file also does not shrink on a healthy database without the reclaim.** On a database created with `auto_vacuum` the hourly prune runs `PRAGMA incremental_vacuum` (4 MiB per pass), which does shrink it. Skipping that (for example by giving the data volume far more space than needed) costs nothing but disk.
+- **Deleted rows never grow the file, but the file also does not shrink on a healthy database without the reclaim.** On a database with `auto_vacuum` the hourly prune runs `PRAGMA incremental_vacuum` (4 MiB per pass), which does shrink it. Skipping that (for example by giving the data volume far more space than needed) costs nothing but disk.
 
 ## Binary
 

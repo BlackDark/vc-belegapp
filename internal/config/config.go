@@ -24,9 +24,22 @@ type Config struct {
 	BaseURL    string `env:"BELEGAPP_BASE_URL"`
 	DataDir    string `env:"BELEGAPP_DATA_DIR" envDefault:"/data"`
 	DBPath     string `env:"BELEGAPP_DB_PATH"`
-	TZ         string `env:"BELEGAPP_TZ" envDefault:"Europe/Berlin"`
-	LogLevel   string `env:"BELEGAPP_LOG_LEVEL" envDefault:"info"`
-	LogFormat  string `env:"BELEGAPP_LOG_FORMAT" envDefault:"json"`
+	// DBAutoVacuumMigrate converts an existing database to
+	// auto_vacuum = INCREMENTAL on the first start after an upgrade. SQLite
+	// only honours that pragma on a database with no tables yet, so an
+	// upgraded install needs this one-time conversion before Reclaim can
+	// give disk space back.
+	//
+	// The conversion is a VACUUM: it rewrites the whole database file, costs
+	// one slower start and needs transient free space on the same volume
+	// about the size of the database. Set it to false to skip the rewrite —
+	// on a large database, or where the volume has no room for the copy —
+	// and the file keeps its size until an operator runs the VACUUM by hand
+	// (see docs/configuration.md). The conversion is never fatal either way.
+	DBAutoVacuumMigrate bool   `env:"BELEGAPP_DB_AUTO_VACUUM_MIGRATE" envDefault:"true"`
+	TZ                  string `env:"BELEGAPP_TZ" envDefault:"Europe/Berlin"`
+	LogLevel            string `env:"BELEGAPP_LOG_LEVEL" envDefault:"info"`
+	LogFormat           string `env:"BELEGAPP_LOG_FORMAT" envDefault:"json"`
 
 	TrustedProxiesRaw string `env:"BELEGAPP_TRUSTED_PROXIES"`
 	TrustedProxies    []net.IPNet
