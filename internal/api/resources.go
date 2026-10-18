@@ -3,7 +3,9 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 
@@ -118,7 +120,7 @@ func (a *API) uploadBild(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, limit+4096)
 	if err := r.ParseMultipartForm(8 << 20); err != nil {
-		a.writeErr(w, r, problem.New(http.StatusRequestEntityTooLarge, "E_BILD_ZU_GROSS", "Das Bild ist zu groß."))
+		a.writeErr(w, r, uploadParseError(err))
 		return
 	}
 	file, _, err := r.FormFile("datei")
@@ -140,6 +142,21 @@ func (a *API) uploadBild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.writeJSON(w, http.StatusCreated, bild)
+}
+
+// uploadParseError classifies what ParseMultipartForm refused.
+//
+// Only a body that ran into a byte limit is "too large". A malformed body, a
+// missing boundary or a client that disconnected is a bad request, and calling
+// all three 413 tells the operator and the user to look for a size problem that
+// is not there. The cap is enforced by the MaxBytesReader above and by the
+// multipart memory bound, so those are the two errors that mean size.
+func uploadParseError(err error) *problem.Error {
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) || errors.Is(err, multipart.ErrMessageTooLarge) {
+		return problem.New(http.StatusRequestEntityTooLarge, "E_BILD_ZU_GROSS", "Das Bild ist zu groß.")
+	}
+	return problem.New(http.StatusBadRequest, "E_FELD_UNGUELTIG", "Der Upload konnte nicht gelesen werden.")
 }
 
 func (a *API) getBild(w http.ResponseWriter, r *http.Request) {

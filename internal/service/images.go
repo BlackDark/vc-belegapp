@@ -541,19 +541,35 @@ func (s *Service) referencedBlobKeys(ctx context.Context) (map[string]struct{}, 
 }
 
 // deleteBlobIfFree removes a blob when no Belegbild and no Monatsexport still names it.
+//
+// The two counts decide whether the blob is free, so a failed count is not a
+// "no": without an answer the blob is left in place. What it must not be is
+// invisible — a count that always fails quietly leaves every blob of a deleted
+// image on disk, and a delete that fails leaves an unreferenced orphan nobody
+// will look at again. Both are reported and neither changes the decision.
 func (s *Service) deleteBlobIfFree(ctx context.Context, q *db.Queries, key string) {
 	if key == "" || s.Store == nil {
 		return
 	}
 	n, err := q.CountBlobKey(ctx, db.CountBlobKeyParams{BlobKey: key, ThumbBlobKey: key})
-	if err != nil || n > 0 {
+	if err != nil {
+		s.logWarn("blob reference count failed; blob kept", "key", key, "err", err)
+		return
+	}
+	if n > 0 {
 		return
 	}
 	exports, err := q.CountExportBlobKey(ctx, key)
-	if err != nil || exports > 0 {
+	if err != nil {
+		s.logWarn("export reference count failed; blob kept", "key", key, "err", err)
 		return
 	}
-	_ = s.Store.Delete(ctx, key)
+	if exports > 0 {
+		return
+	}
+	if err := s.Store.Delete(ctx, key); err != nil {
+		s.logWarn("unreferenced blob could not be deleted", "key", key, "err", err)
+	}
 }
 
 // blobPresent is the month-view image check: the object exists and its size
