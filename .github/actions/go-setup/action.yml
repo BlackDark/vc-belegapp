@@ -1,0 +1,45 @@
+name: Go setup
+description: >-
+  Install Go from go.mod and restore the Go build cache under a key scoped to
+  the calling job.
+
+inputs:
+  scope:
+    description: >-
+      Cache scope for the Go build cache. Each job passes its own name; two
+      jobs that build the same target with the same flags could share one.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: go.mod
+        cache: true
+
+    # setup-go keys both caches on the workflow's go.sum, and actions/cache
+    # writes a given key only once. Every job therefore restores whichever
+    # cache some job wrote first, and no later, heavier job can replace it:
+    # in this workflow that first job is vuln, ~20 s in, with nothing compiled
+    # beyond govulncheck — a 233 MB cache that go generate, sqlc-diff and the
+    # test steps all restored and kept rebuilding sqlc (~60 s), the binary
+    # (~40 s) and every package from.
+    #
+    # One key per scope makes the job that compiles the most the job that saves
+    # the cache. The module cache stays on setup-go's key, which is correct
+    # there: the module set is a function of go.sum and the shared entry is
+    # already complete.
+    #
+    # The key changes only with go.sum. That is the point — dependencies
+    # (modernc.org/sqlite), the standard library and the Go tools stay cached
+    # while they are valid, and objects built from this repository change too
+    # often to be worth a second copy. A key that changed per run would retain
+    # more of them, at the price of writing hundreds of megabytes into the
+    # repository's 10 GB cache budget on every run, evicting the entries the
+    # other jobs restore.
+    - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+      with:
+        path: ~/.cache/go-build
+        key: go-build-${{ runner.os }}-${{ inputs.scope }}-${{ hashFiles('go.sum') }}
+        restore-keys: go-build-${{ runner.os }}-${{ inputs.scope }}-

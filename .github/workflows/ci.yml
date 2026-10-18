@@ -38,10 +38,13 @@ concurrency:
   # The release-branch dispatch must be allowed to finish.
   cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
 
-# web builds the bundle once. Each GoReleaser target is cross-compiled on
-# its own runner (CGO_ENABLED=0, no QEMU) so e2e can start from linux/amd64
-# without waiting for the other arches. docker only copies the linux
-# binaries into distroless.
+# web builds the bundle once and asserts that the copy committed in web/dist is
+# what the build produces. Nothing depends on it: the platform jobs compile from
+# a plain checkout, whose committed web/dist is the same input a release embeds,
+# and that assertion is what keeps the two in step. Each GoReleaser target is
+# cross-compiled on its own runner (CGO_ENABLED=0, no QEMU) so e2e can start
+# from linux/amd64 without waiting for the other arches. docker only copies the
+# linux binaries into distroless.
 
 jobs:
   web:
@@ -66,31 +69,32 @@ jobs:
       - run: pnpm exec tsc --noEmit
       - run: pnpm exec vitest run
       - run: pnpm exec vite build
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: web-dist
-          path: web/dist
-          include-hidden-files: true
-          if-no-files-found: error
+      # web/dist is committed and web/embed.go embeds all:dist, so this is the
+      # bundle every other job and the release compile in. A source change that
+      # was never rebuilt would otherwise ship stale. status rather than diff:
+      # a build that adds a file and deletes nothing would be invisible to
+      # diff, and nothing under web/dist is ignored.
+      - name: Committed bundle matches the build
+        working-directory: ${{ github.workspace }}
+        run: |
+          dirty=$(git status --porcelain -- web/dist)
+          if [ -n "$dirty" ]; then
+            echo "web/dist is not what a fresh build produces:" >&2
+            echo "$dirty" >&2
+            exit 1
+          fi
 
   # One arch per runner. Sharing a runner splits the cores, so four
   # parallel compiles finish no sooner than the slowest one and e2e waits.
   linux-amd64:
     name: linux-amd64
-    needs: web
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: ./.github/actions/go-setup
         with:
-          go-version-file: go.mod
-          cache: true
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: web-dist
-          path: web/dist
-      - run: ./scripts/place-web-dist.sh
+          scope: linux-amd64
       - run: ./scripts/build-binaries.sh linux/amd64
         env:
           VERSION: ci
@@ -103,20 +107,13 @@ jobs:
 
   linux-arm64:
     name: linux-arm64
-    needs: web
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: ./.github/actions/go-setup
         with:
-          go-version-file: go.mod
-          cache: true
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: web-dist
-          path: web/dist
-      - run: ./scripts/place-web-dist.sh
+          scope: linux-arm64
       - run: ./scripts/build-binaries.sh linux/arm64
         env:
           VERSION: ci
@@ -129,20 +126,13 @@ jobs:
 
   darwin:
     name: darwin
-    needs: web
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: ./.github/actions/go-setup
         with:
-          go-version-file: go.mod
-          cache: true
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: web-dist
-          path: web/dist
-      - run: ./scripts/place-web-dist.sh
+          scope: darwin
       - run: ./scripts/build-binaries.sh darwin/amd64 darwin/arm64
         env:
           VERSION: ci
@@ -155,24 +145,19 @@ jobs:
 
   go:
     name: go
-    needs: web
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: ./.github/actions/go-setup
         with:
-          go-version-file: go.mod
-          cache: true
+          scope: go
       - name: Markdown links
         run: go test -count=1 ./internal/doccheck/
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: web-dist
-          path: web/dist
-      - run: ./scripts/place-web-dist.sh
       - run: go mod verify
       - run: go generate ./internal/db
+      # Generated code is committed. web/dist is a committed file too, and the
+      # web job asserts it; this diff is about what the generators above write.
       - run: git diff --exit-code
       - run: go tool sqlc vet
       - run: ./scripts/sqlc-diff.sh
@@ -217,10 +202,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: ./.github/actions/go-setup
         with:
-          go-version-file: go.mod
-          cache: true
+          scope: vuln
       - run: go tool govulncheck ./...
 
   pdf:
@@ -229,10 +213,9 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: ./.github/actions/go-setup
         with:
-          go-version-file: go.mod
-          cache: true
+          scope: pdf
       # Both tools are pinned by checksum in scripts/, so the cache key can
       # only change when a pin changes.
       - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
@@ -352,17 +335,30 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: ./.github/actions/go-setup
         with:
-          go-version-file: go.mod
-          cache: true
+          scope: e2e
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: belegapp-linux-amd64
           path: dist/linux/amd64
+      # Typst is pinned by checksum in scripts/, so the key changes only when
+      # the pin does — the same reasoning as the pdf job's tool cache.
+      - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: ~/.local/bin/typst
+          key: typst-${{ runner.os }}-${{ hashFiles('scripts/install-typst.sh') }}
+      # Playwright keeps every version it has installed in one directory and
+      # downloads only the one the lockfile names, so an entry from an older
+      # lockfile still saves the download; the run then saves a fresh key.
+      - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('e2e/pnpm-lock.yaml') }}
+          restore-keys: playwright-${{ runner.os }}-
       - name: Install Typst
         run: |
-          ./scripts/install-typst.sh "$HOME/.local/bin"
+          if [ ! -x "$HOME/.local/bin/typst" ]; then ./scripts/install-typst.sh "$HOME/.local/bin"; fi
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Test doubles
         run: |
@@ -398,6 +394,43 @@ jobs:
           path: e2e/screenshots
           if-no-files-found: error
 
+  # GoReleaser compiles the same four binaries the linux-amd64, linux-arm64
+  # and darwin jobs compile and builds the same image the docker job builds,
+  # from the same sources with the same flags: that part is a duplicate, about
+  # 260 s a push. What the snapshot adds on top is GoReleaser's own work — the
+  # archives, checksums and SBOMs, the before-hooks, the dockers_v2 build — and
+  # that only reads the files the filter below names.
+  changes:
+    name: changes
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      release: ${{ steps.diff.outputs.release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The diff is against github.event.before, the head this push
+          # replaced, which the default one-commit checkout does not have.
+          fetch-depth: 0
+      - id: diff
+        env:
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          # A dispatch has no pushed range, and a branch's first push has an
+          # all-zero before. Run the snapshot in both cases.
+          if [ -z "${BEFORE:-}" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            echo "release=true" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$BEFORE" "$SHA" | grep -qE '^(\.goreleaser\.ya?ml|Dockerfile(\.goreleaser)?|LICENSE|README\.md|deploy/.+|\.github/actions/goreleaser/.+|\.github/workflows/(ci|release|release-please)\.yml|scripts/install-typst\.sh)$'; then
+            echo "release=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "release=false" >>"$GITHUB_OUTPUT"
+          fi
+
   # Same tool install and GoReleaser invocation as the tag release, minus
   # publish/sign/announce. --snapshot already implies those skips and also
   # skips validate, so the action asserts a clean tree itself. Snapshot
@@ -405,10 +438,17 @@ jobs:
   # release.yml calls this workflow with dry-run: false.
   release-dry-run:
     name: release-dry-run
-    # workflow_call is the tag release, which passes dry-run false and skips
-    # this job. pull_request stays in the condition so a run still started
-    # from the previous workflow file on main does not drop the snapshot.
-    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.dry-run)
+    needs: changes
+    # workflow_call is the tag release, which passes dry-run false. A
+    # pull_request cannot start this workflow from the current file; the case
+    # stays in the condition so a run started from the previous one does not
+    # lose the snapshot.
+    if: |
+      !cancelled() && (
+        (github.event_name == 'workflow_dispatch' && inputs.dry-run) ||
+        (github.event_name == 'push' && needs.changes.outputs.release == 'true') ||
+        github.event_name == 'pull_request'
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

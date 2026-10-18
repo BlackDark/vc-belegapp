@@ -93,6 +93,62 @@ sonst nicht fehlschlagen könnte. Ein Berechtigungstest wird übersprungen, wenn
 
 **Die Lehre, die daraus folgt: nach jedem Push den CI-Status auf `main` prüfen, nicht nur die lokale Suite.**
 
+## CI: Laufzeit (18.10.2026)
+
+**Ein Push kostete 385–409 s Wanduhr, davon 335 s im längsten Job `go` und 264 s im Job `release-dry-run`,
+der alles noch einmal baut, was `linux-amd64`, `linux-arm64`, `darwin` und `docker` schon gebaut haben.**
+
+Im `go`-Job war die Ursache eine Cache-Falle, keine zu große Suite. `actions/setup-go` legt Modul- und
+Build-Cache unter **einen** Schlüssel je `go.sum`, und `actions/cache` schreibt einen Schlüssel nur
+**einmal**. Gewinner ist damit der Job, der zuerst fertig wird — in diesem Workflow `vuln` nach 21 s, mit
+nichts kompiliert außer `govulncheck`. Die so entstandenen 233 MB finden danach **alle** Jobs vor, und
+keiner kann sie mehr ersetzen. `go generate` baute deshalb sqlc bei jedem Lauf neu (61 s), `sqlc-diff.sh`
+das Binary (41 s) und die Testschritte jedes Paket (159 s mit `-race`). Dass daran die Kompilierung hängt
+und nicht die Prüfungen, ist lokal gemessen: dieselbe Race-Suite braucht mit kaltem Build-Cache 227 s, mit
+warmem 58 s.
+
+Geändert:
+
+- **Ein Build-Cache je Job** ([`.github/actions/go-setup`](.github/actions/go-setup/action.yml)). Der
+  Modul-Cache bleibt auf dem geteilten `setup-go`-Schlüssel — er ist eine Funktion von `go.sum` und dort
+  bereits vollständig —, der Build-Cache bekommt einen Schlüssel je Job. Der Schlüssel wechselt weiterhin
+  nur mit `go.sum`: Abhängigkeiten (`modernc.org/sqlite`), Standardbibliothek und Werkzeuge bleiben gültig,
+  und Code aus diesem Repository ändert sich zu oft, als dass sich ein Schlüssel je Lauf lohnte — er würde
+  je Lauf einige hundert MB in ein Cache-Budget von 10 GB schreiben und die Einträge verdrängen, die die
+  anderen Jobs wiederherstellen.
+- **Kein Job wartet mehr auf `web`.** Die Plattform-Jobs kompilieren aus dem committeten `web/dist` — derselben
+  Eingabe, die ein Release einbettet —, und der `go`-Job braucht das Bundle gar nicht. Der Abgleich, dass das
+  committete `web/dist` zum Build passt, läuft im `web`-Job direkt neben dem Build; er benutzt `git status`
+  statt `git diff`, weil `diff` eine hinzugekommene Datei nicht sieht. Vorher lagen Bundle-Erstellung (46 s)
+  und Artefakt (3 s je Job) vor jedem Plattform-Job und damit vor `e2e`.
+- **`release-dry-run` läuft nur noch, wenn der Push eine Datei berührt hat, die GoReleaser liest**
+  (`.goreleaser.yaml`, die Dockerfiles, `LICENSE`, `README.md`, `deploy/`, die Release-Workflows, die
+  Composite Action, `scripts/install-typst.sh`). Ein Kompilierfehler bleibt dabei nicht unentdeckt: die
+  Plattform-Jobs bauen dieselben vier Binaries aus denselben Quellen mit denselben Flags.
+- **`e2e` cached Typst und die Playwright-Browser**, statt sie je Lauf zu laden.
+
+Gemessen nach dem zweiten Lauf auf einem Branch (Run 39127716001, Push ohne Release-Dateien, vorgewärmte
+Caches):
+
+| Job | vorher | nachher |
+| --- | --- | --- |
+| `go` | 335 s | 124 s |
+| `web` | 46 s | 41 s |
+| `linux-amd64` | 84 s | 33 s |
+| `linux-arm64` | 97 s | 32 s |
+| `darwin` | 134 s | 41 s |
+| `pdf` | 40 s | 43 s |
+| `e2e` | 106 s | 66 s |
+| `docker` | 40 s | 50 s |
+| `vuln` | 21 s | 25 s |
+| `release-dry-run` | 264–382 s | nicht gelaufen |
+
+**Wanduhr 385–409 s → 128 s.** Der kritische Pfad ist jetzt der `go`-Job; `e2e` folgt `linux-amd64` (33 s).
+Der **erste** Lauf mit neuen Cache-Schlüsseln ist teurer als vorher (`go` 349 s), weil jeder Job seinen Cache
+einmal schreibt; ab dem zweiten greift er. `release-dry-run` läuft weiterhin, sobald ein Push eine
+Release-Datei berührt — auch `.github/workflows/ci.yml` selbst —, und ist dann mit ~283 s wieder der längste
+Job.
+
 ## Arbeitsweise mit `main`
 
 `main` ist geschützt. Eine Änderung geht über einen Pull Request, wird per Squash zusammengefasst und
@@ -212,8 +268,9 @@ des Eigentümers:
 - **§19.1** — beantwortet und mit Datum in [SPEC](docs/SPEC.md) §19.1 festgehalten: **Nr. 1, 2, 6, 7, 8** am 15.10.
   (höchstens eine bezuschusste Mahlzeit je Tag; Höchstzuschuss `SBW + 3,10 €` **als Zusatzbetrag**, nicht als
   Gehaltsumwandlung; Fotos genügen; Homeoffice und Kantine akzeptiert; alle drei Übergabewege in Benutzung),
-  **Nr. 4 und 5** am 14.10. (Eigenanteil-Variante `standard`, Monatslimit 15). Offen bleibt allein
-  **Nr. 3** (Kirchensteuerverfahren), unverändert seit dem 14.10. **§19.3** — vollständig bestätigt: am 15.10.
+  **Nr. 4 und 5** am 14.10. (Eigenanteil-Variante `standard`, Monatslimit 15), **Nr. 3** am 18.10. (es bleibt beim
+  vereinfachten Verfahren, und `kist_satz_bp = 0` ist der vollwertige Wert für „keine Kirchensteuer"; eine neue
+  Jahresregel ohne Vorjahr beginnt bei 0). Damit ist **§19.1 vollständig entschieden.** **§19.3** — vollständig bestätigt: am 15.10.
   **Nr. 1, 3** (kein Entsperren), **Nr. 2** (ein Bundesland, ein Kalender für die ganze App), **Nr. 4**
   (Vorschau sperrt nie), **Nr. 5** (Arbeitnehmererklärung wird nicht erfasst), **Nr. 6** (Umwandlung +
   Pauschalierung nur Warnung), **Nr. 7** (Limit-Modus `warnen`: warnt nur, blockiert nie), **Nr. 9** (Passwort nur per Env,

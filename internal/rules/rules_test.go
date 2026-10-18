@@ -7,11 +7,27 @@ func TestValidateOK(t *testing.T) {
 	if errs := Validate(r); len(errs) != 0 {
 		t.Fatal(errs)
 	}
-	if r.Bundesland != "NW" || r.KistSatzBP != 700 || r.ZuschussCent != 457+310 {
+	// A fresh rule carries no church tax: NW is the holiday default, not a
+	// statement about church membership (SPEC 19.1 Nr. 3). The simplified rate
+	// is only a suggestion the editor applies when the Bundesland changes.
+	if r.Bundesland != "NW" || r.KistSatzBP != 0 || r.ZuschussCent != 457+310 {
 		t.Fatalf("%+v", r)
 	}
 	if r.SBWStatus != StatusAmtlich || r.SBWMittagCent != 457 || r.SBWFruehstueckCent != 237 {
 		t.Fatalf("sbw %+v", r)
+	}
+}
+
+// TestFreshRuleHasNoChurchTax pins the SPEC 19.1 Nr. 3 decision: a rule built
+// without a previous year deducts no church tax. The Bundesland default is the
+// holiday calendar (19.3 Nr. 2) and is not a statement about church membership;
+// the simplified rate of a Bundesland stays a suggestion the editor applies when
+// the Bundesland changes, never a value the proposal imposes (5.4).
+func TestFreshRuleHasNoChurchTax(t *testing.T) {
+	fresh := Vorschlag(2026, nil)
+	if fresh.Bundesland != DefaultBundesland || fresh.KistSatzBP != 0 {
+		t.Fatalf("bundesland %q church tax %d, want %s and 0",
+			fresh.Bundesland, fresh.KistSatzBP, DefaultBundesland)
 	}
 }
 
@@ -141,8 +157,8 @@ func TestMealsJSON(t *testing.T) {
 }
 
 func TestKistTableComplete(t *testing.T) {
-	if len(KistVorschlagBP) != 16 || len(Amtlich) != 3 {
-		t.Fatalf("tables %d %d", len(KistVorschlagBP), len(Amtlich))
+	if len(KistSaetze()) != 16 || len(Amtlich) != 3 {
+		t.Fatalf("tables %d %d", len(KistSaetze()), len(Amtlich))
 	}
 }
 
@@ -163,11 +179,6 @@ func TestReferenceListsAreOrdered(t *testing.T) {
 	kist := KistSaetze()
 	if len(kist) != 16 || kist[0].Land != "BW" || kist[0].SatzBP != 450 || kist[3].Land != "BB" {
 		t.Fatalf("kist %+v", kist[:4])
-	}
-	for _, satz := range kist {
-		if KistVorschlagBP[satz.Land] != satz.SatzBP {
-			t.Fatalf("map disagrees for %s", satz.Land)
-		}
 	}
 	bezugsorte := Bezugsorte.Entries()
 	if len(bezugsorte) != 6 || bezugsorte[0].Code != "supermarkt" || bezugsorte[5].Code != "sonstiges" {

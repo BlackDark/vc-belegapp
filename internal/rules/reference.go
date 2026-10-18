@@ -81,7 +81,8 @@ var amtlichListe = []SBWEntry{
 }
 
 // kistListe holds the simplified church-tax rate per Bundesland, in the order
-// the UI lists the Bundeslaender. KistVorschlagBP is derived from it.
+// the UI lists the Bundeslaender. KistSaetze returns a copy and Bundeslaender
+// takes its order from it.
 var kistListe = []KistSatzBP{
 	{Land: "BW", SatzBP: 450},
 	{Land: "BY", SatzBP: 700},

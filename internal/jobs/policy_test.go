@@ -108,6 +108,143 @@ func TestQueueStuckIntakeDoesNotStarveErkennung(t *testing.T) {
 	waitStatus(t, database, second, "fertig")
 }
 
+// Two *different* capped types are what the per-type cap alone cannot stop: a
+// hung watch poll and a hung mail poll are one job each of their own type, so
+// both fit under their caps and both take a worker. The pool-wide reservation
+// is what keeps the second one out, and this is the test that fails silently
+// without it — the recognition, the only job a user waits for, never runs.
+func TestQueueReservesAWorkerForUncappedTypes(t *testing.T) {
+	database := openQueueDB(t)
+	release := make(chan struct{})
+	letgo := sync.OnceFunc(func() { close(release) })
+	defer letgo()
+	watchStarted := make(chan struct{}, 1)
+	erkennungDone := make(chan struct{})
+	erkennungOnce := sync.OnceFunc(func() { close(erkennungDone) })
+	var runningCapped, peakCapped atomic.Int32
+
+	q := testQueue(database, func(ctx context.Context, job Job) (float64, string, error) {
+		if job.Typ == TypErkennung {
+			erkennungOnce()
+			return 0.1, "", nil
+		}
+		current := runningCapped.Add(1)
+		for {
+			seen := peakCapped.Load()
+			if current <= seen || peakCapped.CompareAndSwap(seen, current) {
+				break
+			}
+		}
+		if job.Typ == TypWatch {
+			signal(watchStarted)
+		}
+		// A mount or a mail server that never answers: nothing in the handler
+		// can end this but the test or the queue's own shutdown.
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		runningCapped.Add(-1)
+		return 0.1, "", nil
+	})
+	// The production pool: two workers and the policy the application runs with,
+	// where mail and watch are each capped at one and the recognition is
+	// uncapped. One worker per capped type is not enough here — the two types
+	// are different, so only the pool-wide reservation keeps one worker free.
+	q.Workers = 2
+	q.Policy = DefaultPolicy(time.Minute, nil)
+	// A long deferral so the job the reservation turns away stays out of the way
+	// instead of being re-claimed in a tight loop while the slot is held.
+	q.Defer = 5 * time.Second
+	runQueue(t, q)
+
+	ctx := context.Background()
+	if _, err := q.Enqueue(ctx, TypWatch, "{}"); err != nil {
+		t.Fatal(err)
+	}
+	waitStarted(t, watchStarted, "the watch job")
+	if _, err := q.Enqueue(ctx, TypMail, "{}"); err != nil {
+		t.Fatal(err)
+	}
+	erkennung, err := q.Enqueue(ctx, TypErkennung, `{"bild_id":"b"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The recognition runs while the watch job is still stuck: without the
+	// reservation the second worker is inside a mail handler here and this never
+	// happens.
+	select {
+	case <-erkennungDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("a hung watch and a hung mail job took the whole pool; the uncapped recognition never ran")
+	}
+	waitStatus(t, database, erkennung, "fertig")
+	// Both wedged handlers are of capped types, and together they never had more
+	// than one of the two workers.
+	if got := peakCapped.Load(); got > 1 {
+		t.Errorf("peak of %d capped jobs on a two-worker pool, want at most 1", got)
+	}
+	letgo()
+}
+
+// A pool of one has no worker to hold back, so the reservation must not turn
+// into a budget no capped job can ever pass. The single capped job still runs.
+func TestQueueSingleWorkerReservesNothing(t *testing.T) {
+	database := openQueueDB(t)
+	q := testQueue(database, func(context.Context, Job) (float64, string, error) {
+		return 0.1, "", nil
+	})
+	q.Workers = 1
+	// A policy that leaves the recognition uncapped is exactly the one the
+	// reservation applies to, so it is the one that would deadlock a pool of
+	// one if the reservation were applied without the guard.
+	q.Policy = DefaultPolicy(time.Minute, nil)
+	runQueue(t, q)
+
+	id, err := q.Enqueue(context.Background(), TypWatch, "{}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, database, id, "fertig")
+}
+
+// The reservation caps the capped jobs, it does not starve them: a mix of every
+// type still drains, because each capped job waits its turn for the shared
+// budget rather than being dropped.
+func TestQueueReservedPoolStillDrainsAMix(t *testing.T) {
+	database := openQueueDB(t)
+	var mu sync.Mutex
+	handled := map[string]int{}
+	q := testQueue(database, func(_ context.Context, job Job) (float64, string, error) {
+		mu.Lock()
+		handled[job.Typ]++
+		mu.Unlock()
+		return 0.1, "", nil
+	})
+	q.Workers = 2
+	q.Policy = DefaultPolicy(time.Minute, nil)
+	ctx := context.Background()
+	want := map[string]int{TypErkennung: 2, TypMail: 1, TypWatch: 1, TypNotify: 1, TypDatenexport: 1}
+	for typ, n := range want {
+		for i := 0; i < n; i++ {
+			if _, err := q.Enqueue(ctx, typ, "{}"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	runQueue(t, q)
+	dbtest.WaitFor(t, 3*time.Second, "every type of the mix to drain", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for typ, n := range want {
+			if handled[typ] != n {
+				return false
+			}
+		}
+		return true
+	})
+}
+
 // The cap is per type, not per queue: two polls of the same type are serialised
 // and the slot is free again once the first is through.
 func TestQueueCapsJobsOfOneType(t *testing.T) {
@@ -407,9 +544,11 @@ func TestDataExportKeepsNoDeadline(t *testing.T) {
 	// The same operator deadline the recognition test above is measured
 	// against.
 	q.Policy = DefaultPolicy(100*time.Millisecond, nil)
-	// Two workers, so the export that blocks does not keep the mail job behind
-	// it out of the queue: the point is the deadline, not the cap.
-	q.Workers = 2
+	// Three workers, so the export that blocks does not keep the mail job behind
+	// it out of the queue. Two capped jobs run at once here, and the reservation
+	// leaves the last worker of a pool for the uncapped types, so a two-worker
+	// pool would serialise them: the point is the deadline, not the cap.
+	q.Workers = 3
 	runQueue(t, q)
 
 	ctx := context.Background()
@@ -555,9 +694,11 @@ func TestQueuePerTypeOverrideRunsPastTheGlobalTimeout(t *testing.T) {
 	// The global deadline is short enough to fail a mail job on its own; the
 	// override takes it off the type the job below has.
 	q.Policy = DefaultPolicy(50*time.Millisecond, map[string]time.Duration{TypMail: 0})
-	// Two workers, so the control job can start while the mail job blocks. The
-	// point is the deadline, not the cap.
-	q.Workers = 2
+	// Three workers, so the control job can start while the mail job blocks.
+	// Two capped jobs run at once here, and the reservation leaves the last
+	// worker of a pool for the uncapped types, so a two-worker pool would
+	// serialise them: the point is the deadline, not the cap.
+	q.Workers = 3
 	runQueue(t, q)
 
 	ctx := context.Background()

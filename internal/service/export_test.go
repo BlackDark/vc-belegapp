@@ -88,6 +88,10 @@ func colorPNG(t *testing.T, r, g, b uint8) []byte {
 func saveRule(t *testing.T, svc *Service) {
 	t.Helper()
 	regel := rules.Vorschlag(2026, nil)
+	// A fresh rule carries no church tax (rules.Vorschlag). These service tests
+	// set one explicitly so the arithmetic that includes it, and the tax block
+	// the export prints, stay exercised.
+	regel.KistSatzBP = 700
 	if _, err := svc.PutJahresregel(context.Background(), Actor{Name: "eduard"}, regel); err != nil {
 		t.Fatal(err)
 	}
