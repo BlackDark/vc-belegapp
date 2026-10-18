@@ -210,8 +210,9 @@ des Eigentümers:
 - **§19.1** — beantwortet und mit Datum in [SPEC](docs/SPEC.md) §19.1 festgehalten: **Nr. 1, 2, 6, 7, 8** am 15.10.
   (höchstens eine bezuschusste Mahlzeit je Tag; Höchstzuschuss `SBW + 3,10 €` **als Zusatzbetrag**, nicht als
   Gehaltsumwandlung; Fotos genügen; Homeoffice und Kantine akzeptiert; alle drei Übergabewege in Benutzung),
-  **Nr. 4 und 5** am 14.10. (Eigenanteil-Variante `standard`, Monatslimit 15). Offen bleibt allein
-  **Nr. 3** (Kirchensteuerverfahren), unverändert seit dem 14.10. **§19.3** — vollständig bestätigt: am 15.10.
+  **Nr. 4 und 5** am 14.10. (Eigenanteil-Variante `standard`, Monatslimit 15), **Nr. 3** am 18.10. (es bleibt beim
+  vereinfachten Verfahren, und `kist_satz_bp = 0` ist der vollwertige Wert für „keine Kirchensteuer"; eine neue
+  Jahresregel ohne Vorjahr beginnt bei 0). Damit ist **§19.1 vollständig entschieden.** **§19.3** — vollständig bestätigt: am 15.10.
   **Nr. 1, 3** (kein Entsperren), **Nr. 2** (ein Bundesland, ein Kalender für die ganze App), **Nr. 4**
   (Vorschau sperrt nie), **Nr. 5** (Arbeitnehmererklärung wird nicht erfasst), **Nr. 6** (Umwandlung +
   Pauschalierung nur Warnung), **Nr. 7** (Limit-Modus `warnen`: warnt nur, blockiert nie), **Nr. 9** (Passwort nur per Env,
