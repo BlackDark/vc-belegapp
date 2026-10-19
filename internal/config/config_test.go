@@ -181,6 +181,120 @@ func setOIDC(t *testing.T) {
 	t.Setenv("BELEGAPP_BASE_URL", "https://belege.example.de/")
 }
 
+// setHeader switches the trusted-header method on with the two things it
+// cannot start without.
+func setHeader(t *testing.T) {
+	t.Helper()
+	t.Setenv("BELEGAPP_AUTH_HEADER_ENABLED", "true")
+	t.Setenv("BELEGAPP_TRUSTED_PROXIES", "172.16.0.0/12")
+	t.Setenv("BELEGAPP_AUTH_HEADER_ALLOWED", "eduard@example.de")
+}
+
+// The defaults are off, and with the method off none of it counts — but the
+// default header name is what the documentation promises.
+func TestLoadHeaderAuthDefaults(t *testing.T) {
+	clearEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AuthHeaderEnabled {
+		t.Fatal("trusted-header authentication is on by default")
+	}
+	if cfg.AuthHeaderName != "Remote-Email" {
+		t.Fatalf("header name %q, want Remote-Email", cfg.AuthHeaderName)
+	}
+	if len(cfg.AuthHeaderAllowed) != 0 {
+		t.Fatalf("allowlist %+v, want empty", cfg.AuthHeaderAllowed)
+	}
+}
+
+// The two variables that make the method work are required, and the message has
+// to name the one that is missing.
+func TestLoadHeaderAuthRequiresProxyAndAllowlist(t *testing.T) {
+	t.Run("without trusted proxies", func(t *testing.T) {
+		clearEnv(t)
+		setHeader(t)
+		t.Setenv("BELEGAPP_TRUSTED_PROXIES", "")
+		_, err := Load()
+		if err == nil || !strings.Contains(err.Error(), "BELEGAPP_TRUSTED_PROXIES") {
+			t.Fatalf("started without proxy networks: %v", err)
+		}
+	})
+	for _, value := range []string{"", "  ", ",", " , "} {
+		t.Run(fmt.Sprintf("allowlist %q", value), func(t *testing.T) {
+			clearEnv(t)
+			setHeader(t)
+			t.Setenv("BELEGAPP_AUTH_HEADER_ALLOWED", value)
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), "BELEGAPP_AUTH_HEADER_ALLOWED") {
+				t.Fatalf("allowlist=%q got %v, want the allowlist error", value, err)
+			}
+		})
+	}
+}
+
+// A header name that cannot be looked up would leave the process running and
+// refusing every request, so it is refused where it is written down.
+func TestLoadHeaderAuthRejectsBadHeaderName(t *testing.T) {
+	for _, name := range []string{"Remote Email", "Remote:Email", "Remote\nEmail", "Remote-Email:"} {
+		t.Run(name, func(t *testing.T) {
+			clearEnv(t)
+			setHeader(t)
+			t.Setenv("BELEGAPP_AUTH_HEADER_NAME", name)
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), "BELEGAPP_AUTH_HEADER_NAME") {
+				t.Fatalf("header name %q got %v", name, err)
+			}
+		})
+	}
+}
+
+func TestLoadHeaderAuthAcceptsPatternsAndBareValues(t *testing.T) {
+	clearEnv(t)
+	setHeader(t)
+	t.Setenv("BELEGAPP_AUTH_HEADER_NAME", "Remote-User")
+	t.Setenv("BELEGAPP_AUTH_HEADER_ALLOWED", "eduard, *@beispiel.de, *@*.sub.de, *")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.AuthHeaderAllowed) != 4 {
+		t.Fatalf("patterns %+v", cfg.AuthHeaderAllowed)
+	}
+	if cfg.AuthHeaderName != "Remote-User" {
+		t.Fatalf("header name %q", cfg.AuthHeaderName)
+	}
+}
+
+// A wildcard inside a word is the same typo in this list as in the OIDC one,
+// and it is read even while the method is off.
+func TestLoadHeaderAuthRejectsMalformedPatterns(t *testing.T) {
+	for _, entry := range []string{"edu*", "*ard", "edu ard"} {
+		t.Run(entry, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("BELEGAPP_AUTH_HEADER_ALLOWED", entry)
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("started with allowlist %q and the method off", entry)
+			}
+			for _, want := range []string{"BELEGAPP_AUTH_HEADER_ALLOWED", entry} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not mention %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestLoadHeaderAuthRejectsBadLogoutURL(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("BELEGAPP_AUTH_HEADER_LOGOUT_URL", "/logout")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "BELEGAPP_AUTH_HEADER_LOGOUT_URL") {
+		t.Fatalf("got %v, want the logout URL error", err)
+	}
+}
+
 func TestLoadSecretFile(t *testing.T) {
 	clearEnv(t)
 	dir := t.TempDir()

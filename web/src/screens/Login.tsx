@@ -70,6 +70,29 @@ export default function Login() {
               </AlertDescription>
             </Alert>
           </Show>
+          {/*
+            A header-authenticated instance normally never shows this form: the
+            proxy asserts who the visitor is and the Shell never redirects here.
+            Reaching it means the proxy passed the request through without an
+            identity, and the reload is the thing that helps once the visitor
+            has signed in over there.
+          */}
+          <Show when={config.data?.header}>
+            <Alert>
+              <AlertDescription>
+                Diese Instanz meldet Sie über den vorgeschalteten Proxy an. Wenn
+                Sie das hier sehen, hat der Proxy noch keine Anmeldung
+                mitgeliefert.
+              </AlertDescription>
+            </Alert>
+            <a
+              href="/"
+              rel="external"
+              class={cn(buttonVariants({ size: "lg" }), "w-full")}
+            >
+              Erneut versuchen
+            </a>
+          </Show>
           <Show when={config.data?.oidc}>
             <a
               href="/api/v1/auth/oidc/start"

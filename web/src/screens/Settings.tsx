@@ -13,7 +13,7 @@ import { PasswortCard } from "../components/settings/PasswortCard";
 import { SitzungenCard } from "../components/settings/SitzungenCard";
 import { SpeicherCard } from "../components/settings/SpeicherCard";
 import { Alert, AlertDescription } from "../components/ui/alert";
-import { Button } from "../components/ui/button";
+import { Button, buttonVariants } from "../components/ui/button";
 import {
   Card,
   CardContent,
@@ -52,6 +52,18 @@ export default function Settings() {
     queryKey: queryKeys.sitzungen,
     queryFn: () => client.sitzungen(),
   }));
+  // What this instance offers: whether a password exists at all, and where a
+  // proxy login ends.
+  const auth = useQuery(() => ({
+    queryKey: queryKeys.authConfig,
+    queryFn: () => client.config(),
+  }));
+  const me = useQuery(() => ({
+    queryKey: queryKeys.me,
+    queryFn: () => client.me(),
+    retry: false,
+  }));
+  const ueberProxy = () => me.data?.methode === "header";
   const werte = useWerte();
   const [name, setName] = createSignal("");
   const [personal, setPersonal] = createSignal("");
@@ -199,7 +211,9 @@ export default function Settings() {
       <DatenexportCard />
       <DatenimportCard />
       <SitzungenCard sitzungen={sitzungen.data} />
-      <PasswortCard />
+      <Show when={auth.data?.passwort}>
+        <PasswortCard />
+      </Show>
       <div class="flex flex-col gap-2">
         <Button
           variant="outline"
@@ -217,22 +231,39 @@ export default function Settings() {
         >
           Kette prüfen
         </Button>
-        <Button
-          variant="outline"
-          onClick={() => {
-            void (async () => {
-              try {
-                await client.logout();
-                queryClient.clear();
-                navigate("/login");
-              } catch (err) {
-                toast.error(fehlermeldung(err, "Abmelden fehlgeschlagen"));
-              }
-            })();
-          }}
+        {/* A browser the proxy signed in cannot end that login from here:
+            dropping this session only gets it a new one on the next request.
+            It goes to the proxy's own logout when the operator named one. */}
+        <Show
+          when={!ueberProxy()}
+          fallback={
+            <Show when={auth.data?.header_logout_url}>
+              <a
+                href={auth.data?.header_logout_url}
+                class={buttonVariants({ variant: "outline" })}
+              >
+                Abmelden
+              </a>
+            </Show>
+          }
         >
-          Abmelden
-        </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              void (async () => {
+                try {
+                  await client.logout();
+                  queryClient.clear();
+                  navigate("/login");
+                } catch (err) {
+                  toast.error(fehlermeldung(err, "Abmelden fehlgeschlagen"));
+                }
+              })();
+            }}
+          >
+            Abmelden
+          </Button>
+        </Show>
       </div>
       <p class="text-sm text-muted-foreground">Belegapp {info.data?.version}</p>
     </section>

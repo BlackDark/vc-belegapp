@@ -8,6 +8,17 @@ data:
   BELEGAPP_TRUSTED_PROXIES: 10.0.0.0/8
   BELEGAPP_STORAGE_BACKEND: fs
   BELEGAPP_COOKIE_SECURE: "true"
+  # Trusted-header authentication, off unless BELEGAPP_AUTH_HEADER_ENABLED is
+  # true. For a gateway that has already signed the browser in (forward-auth in
+  # Envoy Gateway or Traefik, oauth2-proxy, Authelia): the header it writes is
+  # the identity, and only requests from BELEGAPP_TRUSTED_PROXIES are believed.
+  # The allowlist is required — "*" admits everybody the gateway
+  # authenticates — and the instance then starts without a password. The gateway
+  # has to overwrite the header, not append it.
+  # BELEGAPP_AUTH_HEADER_ENABLED: "true"
+  # BELEGAPP_AUTH_HEADER_NAME: Remote-Email
+  # BELEGAPP_AUTH_HEADER_ALLOWED: eduard@example.de
+  # BELEGAPP_AUTH_HEADER_LOGOUT_URL: https://auth.example.de/logout
   # Receipt intake by e-mail. Uncomment together with BELEGAPP_MAIL_PASSWORD in
   # the belegapp secret; the password is required while the intake is on and the
   # process refuses to start without it. Without BELEGAPP_MAIL_ENABLED no ticker

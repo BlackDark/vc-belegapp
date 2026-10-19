@@ -12,13 +12,16 @@ afterEach(() => {
 
 type FetchLog = { url: string; body: unknown }[];
 
-function stubFetch(config: AuthConfig, login: () => Response) {
+function stubFetch(
+  config: Omit<AuthConfig, "header"> & Partial<Pick<AuthConfig, "header">>,
+  login: () => Response,
+) {
   const log: FetchLog = [];
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/v1/auth/config") {
-        return new Response(JSON.stringify(config), {
+        return new Response(JSON.stringify({ header: false, ...config }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
@@ -132,6 +135,23 @@ describe("Login", () => {
     fireEvent.click(screen.getByRole("button", { name: "Anmelden" }));
     expect(await screen.findByText("Passwort falsch.")).toBeTruthy();
     expect(screen.queryByText("Startseite")).toBeNull();
+  });
+
+  it("tells the visitor when the proxy has not signed them in", async () => {
+    stubFetch(
+      { passwort: false, oidc: false, oidc_label: "", header: true },
+      () => new Response(null, { status: 204 }),
+    );
+    renderLogin();
+    expect(
+      await screen.findByText(/meldet Sie über den vorgeschalteten Proxy/),
+    ).toBeTruthy();
+    // Neither form is offered: this instance has no password and no OIDC.
+    expect(screen.queryByLabelText("Passwort")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Mit SSO anmelden" })).toBeNull();
+    // The one thing that helps is the proxy signing them in and the page
+    // coming back.
+    expect(screen.getByRole("link", { name: "Erneut versuchen" })).toBeTruthy();
   });
 
   it("reports an unreachable auth config", async () => {

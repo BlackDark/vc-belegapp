@@ -31,9 +31,9 @@ import (
 	"github.com/BlackDark/vc-belegapp/internal/storage"
 )
 
-// ErrAuthRequired means serve was started with neither a stored password nor an
-// OIDC issuer.
-var ErrAuthRequired = errors.New("no authentication method configured; run `belegapp set-password` or set BELEGAPP_OIDC_ISSUER_URL")
+// ErrAuthRequired means serve was started with no way in: no stored password,
+// no OIDC issuer, and no trusted-header authentication.
+var ErrAuthRequired = errors.New("no authentication method configured; run `belegapp set-password`, set BELEGAPP_OIDC_ISSUER_URL, or set BELEGAPP_AUTH_HEADER_ENABLED=true")
 
 // Version is stamped into the binary with -X main.version.
 type Version struct {
@@ -170,16 +170,25 @@ func Serve(ctx context.Context, opt Options) error {
 		})
 		background.Go(func() { oidcClient.Maintain(runCtx) })
 	}
+	headerAuth := newAuthHeader(opt.Config)
+	// The logout URL is only reported while the method is on: an address left
+	// over in the environment is not a logout the UI should offer.
+	headerLogoutURL := ""
+	if headerAuth != nil {
+		headerLogoutURL = opt.Config.AuthHeaderLogoutURL
+	}
 	httpAPI := &api.API{
-		Log:       opt.Log,
-		Svc:       svc,
-		Sessions:  sessions,
-		Limiter:   &auth.Limiter{},
-		OIDC:      oidcClient,
-		OIDCLabel: opt.Config.OIDCButtonLabel,
-		Trusted:   opt.Config.TrustedProxies,
-		UploadMax: opt.Config.UploadMaxBytes,
-		ImportMax: opt.Config.ImportMaxBytes,
+		Log:                 opt.Log,
+		Svc:                 svc,
+		Sessions:            sessions,
+		Limiter:             &auth.Limiter{},
+		OIDC:                oidcClient,
+		OIDCLabel:           opt.Config.OIDCButtonLabel,
+		AuthHeader:          headerAuth,
+		AuthHeaderLogoutURL: headerLogoutURL,
+		Trusted:             opt.Config.TrustedProxies,
+		UploadMax:           opt.Config.UploadMaxBytes,
+		ImportMax:           opt.Config.ImportMaxBytes,
 		Info: api.NewInfo(opt.Config, api.Build{
 			Version:      opt.Version.Version,
 			Commit:       opt.Version.Commit,
@@ -443,6 +452,14 @@ func logStartup(opt Options, rt db.Runtime, typst pdf.Probe) {
 	if opt.Config.OpenAIKeyMissing() {
 		opt.Log.Warn("BELEGAPP_LLM_API_KEY is empty for the OpenAI base URL; recognition stays off until a key is set")
 	}
+	if opt.Config.AuthHeaderEnabled {
+		// The header name and the number of entries, not the entries: who may
+		// enter is in the config file already, and a startup log is not the
+		// place to repeat an allowlist.
+		opt.Log.Info("trusted header authentication enabled",
+			"header", opt.Config.AuthHeaderName,
+			"erlaubt", len(opt.Config.AuthHeaderAllowed))
+	}
 	if typst.Err != nil {
 		opt.Log.Warn("typst probe failed; /readyz will fail", "err", typst.Err)
 	} else {
@@ -451,14 +468,15 @@ func logStartup(opt Options, rt db.Runtime, typst pdf.Probe) {
 	opt.Log.Info("database ready", "path", opt.Config.DBPath, "instance_id", rt.InstanceID)
 }
 
-// requireAuth refuses to serve an instance nobody can log into: either the
-// database holds a password or an OIDC issuer is configured.
+// requireAuth refuses to serve an instance nobody can log into: the database
+// holds a password, an OIDC issuer is configured, or a trusted proxy asserts
+// identities.
 //
-// The OIDC half is still environment configuration and is answered without a
-// query; the password half is one row of the system table, which is why the
-// check can no longer happen before the database is open.
+// The OIDC and header halves are environment configuration and are answered
+// without a query; the password half is one row of the system table, which is
+// why the check can no longer happen before the database is open.
 func requireAuth(ctx context.Context, cfg config.Config, database *db.DB) error {
-	if cfg.OIDCIssuerURL != "" {
+	if cfg.OIDCIssuerURL != "" || cfg.AuthHeaderEnabled {
 		return nil
 	}
 	hash, err := db.New(database.ReadDB()).PasswordHash(ctx)
@@ -469,6 +487,20 @@ func requireAuth(ctx context.Context, cfg config.Config, database *db.DB) error 
 		return ErrAuthRequired
 	}
 	return nil
+}
+
+// newAuthHeader builds the trusted-header resolver, or nil when the operator
+// did not turn the method on. The nil is the switch: no resolver means no
+// request ever has a header identity.
+func newAuthHeader(cfg config.Config) *auth.HeaderAuth {
+	if !cfg.AuthHeaderEnabled {
+		return nil
+	}
+	return &auth.HeaderAuth{
+		Name:    cfg.AuthHeaderName,
+		Allowed: cfg.AuthHeaderAllowed,
+		Trusted: cfg.TrustedProxies,
+	}
 }
 
 func openDB(opt Options) (*db.DB, error) {

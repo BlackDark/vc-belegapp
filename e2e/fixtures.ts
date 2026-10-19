@@ -29,6 +29,10 @@ type StartOpts = {
   slot: number;
   llm?: boolean;
   oidc?: boolean;
+  // header starts the instance behind a pretend proxy: the loopback address
+  // this suite connects from is listed as the trusted network, so a header this
+  // suite sends is believed exactly as a real proxy's would be.
+  header?: { name: string; allowed: string };
 };
 
 export async function startStack(opts: StartOpts): Promise<Stack> {
@@ -87,6 +91,12 @@ export async function startStack(opts: StartOpts): Promise<Stack> {
       appEnv.BELEGAPP_LLM_TIMEOUT = "10s";
     } else {
       appEnv.BELEGAPP_LLM_ENABLED = "false";
+    }
+    if (opts.header) {
+      appEnv.BELEGAPP_AUTH_HEADER_ENABLED = "true";
+      appEnv.BELEGAPP_TRUSTED_PROXIES = "127.0.0.1/32";
+      appEnv.BELEGAPP_AUTH_HEADER_NAME = opts.header.name;
+      appEnv.BELEGAPP_AUTH_HEADER_ALLOWED = opts.header.allowed;
     }
     if (opts.oidc) {
       const configPath = path.join("/tmp", `belegapp-oidc-${opts.name}-${opts.slot}.json`);

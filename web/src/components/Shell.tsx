@@ -41,6 +41,18 @@ import {
 } from "./ui/sidebar";
 import { Skeleton } from "./ui/skeleton";
 
+// loginPath names the login screen when the session is the problem: 401 means
+// nobody is signed in, and 403 means somebody is signed in whom the instance
+// refuses — two different sentences, so the second one travels as the reason
+// the login screen already words. Any other error belongs to the screen that
+// made the request, so it leaves the Shell standing.
+function loginPath(error: unknown): string | undefined {
+  if (!(error instanceof ApiError)) return undefined;
+  if (error.status === 401) return "/login";
+  if (error.status === 403) return "/login?fehler=nicht_berechtigt";
+  return undefined;
+}
+
 export default function Shell(props: ParentProps) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -55,12 +67,8 @@ export default function Shell(props: ParentProps) {
 
   return (
     <Show
-      when={
-        !me.isError ||
-        !(me.error instanceof ApiError) ||
-        me.error.status !== 401
-      }
-      fallback={<Redirect to="/login" />}
+      when={!loginPath(me.error)}
+      fallback={<Redirect to={loginPath(me.error) ?? "/login"} />}
     >
       <SidebarProvider>
         <Sidebar collapsible="icon">

@@ -49,10 +49,19 @@ type API struct {
 	Limiter   *auth.Limiter
 	OIDC      *auth.OIDC
 	OIDCLabel string
-	Trusted   []net.IPNet
-	UploadMax int64
-	ImportMax int64
-	Info      Info
+	// AuthHeader is the trusted-header method, or nil when it is off. The nil
+	// check is the switch: with no resolver no request ever has a header
+	// identity.
+	AuthHeader *auth.HeaderAuth
+	// AuthHeaderLogoutURL is where a browser that signed in through a proxy
+	// has to go to end that login. Reported to the UI, which cannot end it
+	// itself: dropping the session here just gets the same browser a new one
+	// from the proxy on its next request.
+	AuthHeaderLogoutURL string
+	Trusted             []net.IPNet
+	UploadMax           int64
+	ImportMax           int64
+	Info                Info
 }
 
 type principal struct {
@@ -126,34 +135,83 @@ func (a *API) requireSession(next http.Handler) http.Handler {
 			a.writeProblem(w, r, problem.New(http.StatusServiceUnavailable, "E_IMPORT_LAEUFT", "Ein Datenimport läuft."))
 			return
 		}
-		cookie, err := r.Cookie(a.Sessions.CookieName())
-		if err != nil || cookie.Value == "" {
-			a.writeProblem(w, r, problem.New(http.StatusUnauthorized, "E_UNANGEMELDET", "Anmeldung erforderlich."))
-			return
-		}
-		sess, err := a.Sessions.Lookup(r.Context(), cookie.Value)
-		if auth.IsNoSession(err) {
-			a.Sessions.ClearCookie(w)
-			a.writeProblem(w, r, problem.New(http.StatusUnauthorized, "E_UNANGEMELDET", "Anmeldung erforderlich."))
-			return
-		}
+		p, ok, err := a.authenticate(w, r)
 		if err != nil {
 			a.writeErr(w, r, err)
 			return
 		}
-		methode := "passwort"
-		if strings.HasPrefix(sess.Akteur, "oidc:") {
-			methode = "oidc"
-		}
-		p := principal{
-			actor:   service.Actor{Name: sess.Akteur, RequestID: server.RequestID(r.Context())},
-			token:   cookie.Value,
-			idToken: sess.OIDCIDToken,
-			seit:    sess.ErstelltAm.UTC().Format(time.RFC3339),
-			methode: methode,
+		if !ok {
+			a.writeProblem(w, r, problem.New(http.StatusUnauthorized, "E_UNANGEMELDET", "Anmeldung erforderlich."))
+			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
 	})
+}
+
+// authenticate resolves the principal of a request: the session cookie first,
+// then the identity a trusted proxy asserted in a header.
+//
+// The header is what removes the second login. A browser behind a forward-auth
+// proxy arrives with no belegapp cookie at all; the proxy has already
+// authenticated it and says who it is, and this creates the same kind of
+// session the password form and the OIDC callback create. From then on the
+// cookie is the authority — the allowlist decides who may open a session, not
+// what is re-checked on every request, so taking somebody off the list ends
+// their next sign-in rather than the session they are in the middle of.
+//
+// The second return value is false when neither answered; the caller turns that
+// into 401. A present-but-unlisted identity is a 403 instead, because the two
+// states want different words: one means "the proxy has not signed you in yet",
+// the other "the proxy signed you in and you are not on the list".
+func (a *API) authenticate(w http.ResponseWriter, r *http.Request) (principal, bool, error) {
+	if cookie, err := r.Cookie(a.Sessions.CookieName()); err == nil && cookie.Value != "" {
+		sess, err := a.Sessions.Lookup(r.Context(), cookie.Value)
+		switch {
+		case err == nil:
+			return a.principal(r, sess.Akteur, cookie.Value, sess.OIDCIDToken, sess.ErstelltAm), true, nil
+		case auth.IsNoSession(err):
+			// The session is gone, not the login: an expired cookie is the
+			// ordinary way a proxy-authenticated browser comes back here.
+			a.Sessions.ClearCookie(w)
+		default:
+			return principal{}, false, err
+		}
+	}
+	if a.AuthHeader == nil {
+		return principal{}, false, nil
+	}
+	identity, ok := a.AuthHeader.Identity(r)
+	if !ok {
+		return principal{}, false, nil
+	}
+	if !a.AuthHeader.Allows(identity) {
+		return principal{}, false, problem.New(http.StatusForbidden, "E_NICHT_BERECHTIGT", "Dieses Konto ist nicht berechtigt.")
+	}
+	akteur := "header:" + identity
+	token, err := a.Sessions.Create(r.Context(), akteur, r.UserAgent(), auth.ClientIP(r, a.Trusted), "")
+	if err != nil {
+		return principal{}, false, err
+	}
+	a.Sessions.SetCookie(w, token)
+	return a.principal(r, akteur, token, "", time.Now()), true, nil
+}
+
+// principal builds the request principal of one session.
+func (a *API) principal(r *http.Request, akteur, token, idToken string, seit time.Time) principal {
+	methode := "passwort"
+	switch {
+	case strings.HasPrefix(akteur, "oidc:"):
+		methode = "oidc"
+	case strings.HasPrefix(akteur, "header:"):
+		methode = "header"
+	}
+	return principal{
+		actor:   service.Actor{Name: akteur, RequestID: server.RequestID(r.Context())},
+		token:   token,
+		idToken: idToken,
+		seit:    seit.UTC().Format(time.RFC3339),
+		methode: methode,
+	}
 }
 
 func (a *API) authConfig(w http.ResponseWriter, r *http.Request) {
@@ -163,9 +221,11 @@ func (a *API) authConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.writeJSON(w, http.StatusOK, map[string]any{
-		"passwort":   passwort,
-		"oidc":       a.OIDC != nil && a.OIDC.Ready(),
-		"oidc_label": a.OIDCLabel,
+		"passwort":          passwort,
+		"oidc":              a.OIDC != nil && a.OIDC.Ready(),
+		"oidc_label":        a.OIDCLabel,
+		"header":            a.AuthHeader != nil,
+		"header_logout_url": a.AuthHeaderLogoutURL,
 	})
 }
 

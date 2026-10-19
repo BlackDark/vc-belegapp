@@ -1,6 +1,6 @@
 # Deployment
 
-The process runs as UID/GID 65532, with a read-only root filesystem, no capabilities, and no new privileges. Writable paths are the data volume and the temporary directory — a tmpfs on `/tmp` in the examples, which is RAM; [Writable space](#writable-space) says how big it has to be. A named volume inherits ownership from the image. A bind mount needs `chown -R 65532:65532` first. `serve` exits 2 until a password or OIDC is configured; the password is a row in the database and is written with `set-password`, see [configuration.md](configuration.md#the-instance-password). Variables: [configuration.md](configuration.md).
+The process runs as UID/GID 65532, with a read-only root filesystem, no capabilities, and no new privileges. Writable paths are the data volume and the temporary directory — a tmpfs on `/tmp` in the examples, which is RAM; [Writable space](#writable-space) says how big it has to be. A named volume inherits ownership from the image. A bind mount needs `chown -R 65532:65532` first. `serve` exits 2 until a password, OIDC, or trusted-header authentication is configured; the password is a row in the database and is written with `set-password`, see [configuration.md](configuration.md#the-instance-password). Variables: [configuration.md](configuration.md).
 
 Image tags have no `v` prefix. Git tag `v1.1.1` is the image `ghcr.io/blackdark/vc-belegapp:1.1.1`, plus `1.1`, `1`, and `latest`.
 
@@ -40,7 +40,7 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml run --rm bele
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
 ```
 
-The OIDC lines in the example are commented out: uncomment them (and set `OIDC_SECRET_FILE`, or uncomment the `oidc_secret` secret) to sign in through an identity provider as well.
+The OIDC lines in the example are commented out: uncomment them to sign in through an identity provider as well. Set `OIDC_SECRET_FILE` in `deploy/.env` for a confidential client and leave it unset for a public one (PKCE only). The forward-auth lines below them are commented out for the same reason; see [Trusted headers](#trusted-headers-forward-auth).
 
 ## Kubernetes
 
@@ -236,6 +236,27 @@ server {
 
 That peer is `127.0.0.1`, so `BELEGAPP_TRUSTED_PROXIES=127.0.0.1/32`. A published container port is different: Docker rewrites the source to the bridge gateway, which is why Compose uses `172.16.0.0/12`. Point `BELEGAPP_BASE_URL` at `https://belege.example.de`.
 
+## Trusted headers (forward auth)
+
+When the proxy already signs the browser in — a forward-auth gate in Traefik or Envoy Gateway, oauth2-proxy, Authelia behind Caddy — belegapp does not need a second login of its own. Set:
+
+```bash
+BELEGAPP_AUTH_HEADER_ENABLED=true
+BELEGAPP_AUTH_HEADER_NAME=Remote-Email
+BELEGAPP_AUTH_HEADER_ALLOWED=eduard@example.de
+BELEGAPP_AUTH_HEADER_LOGOUT_URL=https://auth.example.de/logout
+```
+
+and leave `BELEGAPP_TRUSTED_PROXIES` on the network the proxy reaches this process from (the values in the Compose and Kubernetes examples are already the right shape). The first request from such a browser has no belegapp cookie; the header decides, a normal session is created for the actor `header:<value>`, and from then on the cookie is the authority. No password has to exist: `serve` starts as long as one of the three methods is configured. Nothing about the request path changes, so the proxy keeps doing everything it did — this only removes the second login.
+
+The header is the whole identity, so three things have to hold:
+
+- **The proxy must overwrite the header, never append it.** A client can send `Remote-Email` itself, and a header that arrives twice is treated as no header — there is no way to tell the proxy's value from the client's. Verify with a `curl -H 'Remote-Email: whoever@example.com'` against the public host: the app must answer `401`, not sign that identity in.
+- **`BELEGAPP_TRUSTED_PROXIES` is required and must be exact.** A header from outside those networks is ignored, whatever it says. An empty list is a startup error, and the process must never be reachable directly on a network inside the range — that would let anybody assert an identity by guessing one header name.
+- **The allowlist is required.** `BELEGAPP_AUTH_HEADER_ALLOWED` takes the same whole-label wildcards as `BELEGAPP_OIDC_ALLOWED_EMAILS` (`*`, `*@example.de`, `*@*.example.de`, an exact address) and, because the header is the operator's choice, a bare value such as `eduard` compared literally. `Remote-Email` is only the default name: a proxy that asserts a login name (`Remote-User`, `X-Forwarded-User`, `X-Auth-Request-User`) works by naming that header instead. `*` admits everybody the proxy authenticates — a legitimate choice when the proxy enforces group membership itself, a bad one when the IdP is open to the world.
+
+There is no logout button for such a session, because dropping the belegapp session only earns a new one from the proxy on the next request. With `BELEGAPP_AUTH_HEADER_LOGOUT_URL` set, `Einstellungen` links there instead. Removing somebody from the allowlist ends their next sign-in, not the session they are in: to end one immediately, `Einstellungen → Sitzungen`.
+
 ## OIDC
 
 Authorization code with PKCE (S256). Register this redirect URI on the provider, with no trailing slash on the origin:
@@ -256,7 +277,7 @@ BELEGAPP_OIDC_ALLOWED_EMAILS=eduard@example.de
 
 An empty client secret is a public client (PKCE only). At least one allowlist is required: comma-separated `sub` values (`BELEGAPP_OIDC_ALLOWED_SUBJECTS`), or comma-separated emails (`BELEGAPP_OIDC_ALLOWED_EMAILS`). Either one is optional on its own. An email match also requires `email_verified`. Entries may be whole-label wildcard patterns: `*@example.de` admits one whole domain, `*@*.example.de` that domain and its subdomains, and `*` every account with a verified email at the issuer — use that last one when the issuer is a single-tenant directory. Anything else, such as `te*@example.de`, is a startup error. The list is never implicitly empty: without one of the two, startup fails. Scopes default to `openid profile email`. The button label defaults to `Mit SSO anmelden`. The syntax is in [configuration.md](configuration.md#the-oidc-email-allowlist).
 
-Password login can stay on as a fallback, and so can OIDC: `serve` accepts either method. Both are independent of each other — an instance with only a password has no OIDC variables set at all. Incomplete OIDC (issuer set, but no client id or no allowlist) is a startup error.
+Password login can stay on as a fallback, and so can OIDC: `serve` accepts any of the three methods. They are independent of each other — an instance with only a password has no OIDC variables set at all. Incomplete OIDC (issuer set, but no client id or no allowlist) is a startup error.
 
 Discovery retries in the background. Until it succeeds, `/api/v1/auth/config` reports OIDC as off and password login still works. `state`, `nonce`, and the PKCE verifier sit in a short-lived HMAC cookie. An empty `BELEGAPP_SECRET_KEY` generates a 32-byte key and stores it in the database.
 

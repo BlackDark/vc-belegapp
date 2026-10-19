@@ -40,4 +40,5 @@
 - **Änderungsgrund**: Pflichttext bei Änderung oder Löschung in einem gesperrten oder geänderten Monat sowie bei Änderung einer betroffenen Jahresregel.
 - **Arbeitnehmererklärung**: Fester Versicherungstext im Monatsexport, beim finalen Export digital bestätigt.
 - **Datenimport**: Wiederherstellung eines Datenexports; ersetzt den gesamten Bestand nach automatischer Sicherung.
-- **Sitzung**: Serverseitig gespeicherte Anmeldung (Cookie), per Passwort oder OIDC erzeugt.
+- **Sitzung**: Serverseitig gespeicherte Anmeldung (Cookie), per Passwort, OIDC oder vertrauenswürdigem Header eines vorgeschalteten Proxys erzeugt.
+- **Vertrauenswürdiger Header (Forward-Auth)**: Identität, die ein vorgeschalteter Proxy für einen bereits angemeldeten Browser in einen HTTP-Header schreibt. Zählt nur aus `BELEGAPP_TRUSTED_PROXIES` und nur für Werte in `BELEGAPP_AUTH_HEADER_ALLOWED`; der Akteur heißt dann `header:{wert}` (SPEC 9.6).

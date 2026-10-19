@@ -82,6 +82,9 @@ func (c *Config) validate() error {
 	if err := c.validateOIDC(); err != nil {
 		return err
 	}
+	if err := c.validateAuthHeader(); err != nil {
+		return err
+	}
 	if err := c.validateStorage(); err != nil {
 		return err
 	}
@@ -221,6 +224,79 @@ func validateEmailPatterns(entries []string) error {
 		}
 	}
 	return nil
+}
+
+// validateAuthHeader checks the trusted-header method.
+//
+// Two variables make it work and one of them is easy to leave out, so both are
+// required rather than defaulted. The name is what the proxy writes; without
+// the proxy networks the header would be a value any client can send, and this
+// process would hand a session to whoever guesses the header name. An allowlist
+// is what says who may enter — the proxy authenticates a browser, not
+// necessarily a person this instance knows, and a forward-auth gate in front of
+// a shared IdP is exactly the setup where those two differ. The list is the
+// switch an operator flips, and "*" is how they write "everybody the proxy
+// authenticates".
+//
+// The entries are compiled even when the method is off, for the same reason the
+// OIDC patterns are: the variable is read either way, and the day it is switched
+// on is the day nobody reads the startup log again.
+func (c *Config) validateAuthHeader() error {
+	c.AuthHeaderName = strings.TrimSpace(c.AuthHeaderName)
+	c.AuthHeaderLogoutURL = strings.TrimSpace(c.AuthHeaderLogoutURL)
+
+	entries := splitList(c.AuthHeaderAllowedRaw)
+	c.AuthHeaderAllowed = make([]allowlist.Pattern, 0, len(entries))
+	for _, entry := range entries {
+		pattern, err := allowlist.ParseValue(entry)
+		if err != nil {
+			return fmt.Errorf("BELEGAPP_AUTH_HEADER_ALLOWED: %w", err)
+		}
+		c.AuthHeaderAllowed = append(c.AuthHeaderAllowed, pattern)
+	}
+
+	if c.AuthHeaderEnabled {
+		if c.AuthHeaderName == "" {
+			return fmt.Errorf("BELEGAPP_AUTH_HEADER_NAME is required when BELEGAPP_AUTH_HEADER_ENABLED is true")
+		}
+		if !headerNameValid(c.AuthHeaderName) {
+			return fmt.Errorf("BELEGAPP_AUTH_HEADER_NAME %q is not an HTTP header field name", c.AuthHeaderName)
+		}
+		if len(c.TrustedProxies) == 0 {
+			return fmt.Errorf("BELEGAPP_TRUSTED_PROXIES is required when BELEGAPP_AUTH_HEADER_ENABLED is true: a header is an identity only when it came from a proxy network, and without a list anybody who can reach this port could assert one")
+		}
+		if len(c.AuthHeaderAllowed) == 0 {
+			return fmt.Errorf("BELEGAPP_AUTH_HEADER_ALLOWED is required when BELEGAPP_AUTH_HEADER_ENABLED is true (use \"*\" to admit everybody the proxy authenticates)")
+		}
+	}
+	if c.AuthHeaderLogoutURL != "" {
+		u, err := url.Parse(c.AuthHeaderLogoutURL)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			return fmt.Errorf("BELEGAPP_AUTH_HEADER_LOGOUT_URL must be an absolute http(s) URL")
+		}
+	}
+	return nil
+}
+
+// headerNameValid reports whether name is an HTTP header field name: the token
+// characters of RFC 9110 and nothing else.
+//
+// A name with a space or a colon in it would be handed to the header map as a
+// string that cannot be looked up, so the process would start and never see the
+// header — an instance that refuses every request with a config file that looks
+// complete. Refusing the name at startup is the shorter path to the fix.
+func headerNameValid(name string) bool {
+	const allowed = "!#$%&'*+-.^_`|~"
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case strings.IndexByte(allowed, c) >= 0:
+		default:
+			return false
+		}
+	}
+	return name != ""
 }
 
 func (c *Config) validateStorage() error {

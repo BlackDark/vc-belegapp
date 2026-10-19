@@ -272,8 +272,8 @@ Monatsexporte und ihre Blobs werden nie automatisch gelöscht. `BELEGAPP_EXPORT_
 |---|---|---|
 | id | INTEGER PK AUTOINCREMENT | |
 | zeitpunkt | TEXT NOT NULL | |
-| akteur | TEXT NOT NULL | `passwort` \| `oidc:{sub}` \| `system` \| `cli` |
-| aktion | TEXT NOT NULL | `beleg_erstellt`, `beleg_geaendert`, `beleg_geloescht`, `belegbild_hinzugefuegt`, `belegbild_entfernt`, `jahresregel_erstellt`, `jahresregel_geaendert`, `einstellungen_geaendert`, `monatsexport_erstellt`, `datenexport_erstellt`, `datenimport` |
+| akteur | TEXT NOT NULL | `passwort` \| `oidc:{sub}` \| `header:{identität}` \| `system` \| `cli` |
+| aktion | TEXT NOT NULL | `beleg_erstellt`, `beleg_geaendert`, `beleg_geloescht`, `belegbild_hinzugefuegt`, `belegbild_entfernt`, `jahresregel_erstellt`, `jahresregel_geaendert`, `einstellungen_geaendert`, `monatsexport_erstellt`, `datenexport_erstellt`, `datenimport`, `passwort_geaendert` |
 | entitaet, entitaet_id | TEXT NOT NULL | z. B. `beleg`, ULID |
 | monat | TEXT NULL | betroffener Monat |
 | vorher, nachher | TEXT NULL | JSON (vollständige Entität) |
@@ -528,12 +528,12 @@ Die Monatsansicht prüft `P_BILDER_VOLLSTAENDIG` per Stat (Blob vorhanden, Grö�
 ### 8.2 Endpunkte
 | Methode | Pfad | Zweck |
 |---|---|---|
-| GET | `/auth/config` | `{passwort: bool, oidc: bool, oidc_label: string}` |
+| GET | `/auth/config` | `{passwort: bool, oidc: bool, oidc_label: string, header: bool, header_logout_url: string}` |
 | POST | `/auth/login` | `{passwort}` → `204` + Cookie; `401` falsch; `429` Rate-Limit |
 | POST | `/auth/logout` | `204`, löscht Sitzung |
 | GET | `/auth/oidc/start` | `302` zum IdP (PKCE, state, nonce) |
 | GET | `/auth/oidc/callback` | Code-Austausch → `302 /` mit Cookie; Fehler → `302 /login?fehler=…` |
-| GET | `/auth/me` | `{akteur, methode, sitzung_seit}` |
+| GET | `/auth/me` | `{akteur, methode, sitzung_seit}`; `methode` ∈ `passwort\|oidc\|header` |
 | PUT | `/auth/passwort` | `{aktuell, neu}` → `204`; `422 E_PASSWORT_FALSCH` / `422 E_PASSWORT_ZU_KURZ`; beendet alle anderen Sitzungen |
 | GET | `/auth/sitzungen` | Liste eigener Sitzungen (ohne Token) |
 | DELETE | `/auth/sitzungen` | alle anderen Sitzungen beenden |
@@ -694,8 +694,8 @@ Antwort `201`: `{id, monat, version, erstellt_am, pdf_url, csv_url, zip_url, pdf
 ## 9. Authentifizierung und Sicherheit
 
 ### 9.1 Login-Methoden
-- Beide Methoden sind gleichzeitig nutzbar. Passwort aktiv, wenn in der Datenbank ein Hash liegt (`system.password_hash`, gesetzt mit `belegapp set-password`); OIDC aktiv, wenn `BELEGAPP_OIDC_ISSUER_URL` gesetzt ist. Start bricht ab, wenn keine Methode konfiguriert ist. Die Prüfung läuft nach der Migration, weil das Passwort eine Zeile und keine Umgebungsvariable ist.
-- Login-Seite: OIDC-Button primär (oben, groß), Passwortfeld darunter (falls aktiv). Verstecktes Feld `username` (Wert „belegapp“, `autocomplete=username`) für Passwortmanager.
+- Drei Methoden sind gleichzeitig nutzbar. Passwort aktiv, wenn in der Datenbank ein Hash liegt (`system.password_hash`, gesetzt mit `belegapp set-password`); OIDC aktiv, wenn `BELEGAPP_OIDC_ISSUER_URL` gesetzt ist; vertrauenswürdige Header aktiv, wenn `BELEGAPP_AUTH_HEADER_ENABLED=true` (9.6). Start bricht ab, wenn keine Methode konfiguriert ist. Die Passwortprüfung läuft nach der Migration, weil das Passwort eine Zeile und keine Umgebungsvariable ist.
+- Login-Seite: OIDC-Button primär (oben, groß), Passwortfeld darunter (falls aktiv). Verstecktes Feld `username` (Wert „belegapp“, `autocomplete=username`) für Passwortmanager. Ist die Header-Methode aktiv, steht zusätzlich der Hinweis, dass die Anmeldung über den vorgeschalteten Proxy läuft, mit „Erneut versuchen“ — für den Fall, dass der Proxy die Anfrage ohne Identität durchgelassen hat. Das Passwortformular fehlt, wenn kein Passwort gesetzt ist: eine Karte, die nach dem aktuellen Passwort fragt, das niemand je gesetzt hat, kann nur in einer falschen Fehlermeldung enden.
 
 ### 9.2 Passwort
 - Hash: argon2id, PHC-String `$argon2id$v=19$m=65536,t=3,p=2$<salt>$<hash>`, abgelegt als Zeile `password_hash` in der Tabelle `system`. Es gibt keinen Env-/Secret-Weg mehr: `BELEGAPP_AUTH_PASSWORD_HASH(_FILE)` und `belegapp hash-password` entfallen. Vergleich konstantzeitig.
@@ -718,6 +718,14 @@ Antwort `201`: `{id, monat, version, erstellt_am, pdf_url, csv_url, zip_url, pdf
 - Callback prüft: `state`, ID-Token-Signatur, `iss`, `aud`, `exp`, `nonce`. Autorisierung: `sub ∈ BELEGAPP_OIDC_ALLOWED_SUBJECTS` **oder** (`email` passt auf einen Eintrag in `BELEGAPP_OIDC_ALLOWED_EMAILS` **und** `email_verified = true`). Die E-Mail-Liste kennt Adressen und **Ganzlabel-Platzhalter**: `*` = jede verifizierte E-Mail des Providers, `*@example.de` = alle Adressen genau dieser Domain, `*@*.example.de` = diese Domain **einschließlich** aller Subdomains (der Platzhalter ersetzt nur das erste Label, die Spitze `example.de` gehört dazu), `name@example.de` = genau diese Adresse. Vergleich ohne Beachtung der Groß-/Kleinschreibung, und diese Ausnahme gilt nur für ASCII (`Eduard@Example.de` passt auf `eduard@example.de`, `teſt.de` mit U+017F dagegen nicht); jeder Teil ohne `*` wird literal Label für Label verglichen, also weder Teilzeichenkette noch regulärer Ausdruck — `example.de` trifft weder `notexample.de` noch `example.de.evil.com`. Jede andere Schreibweise (`te*@example.de`, `user@`, `example.de`) ist ein **Startfehler** mit Nennung des Eintrags, keine stillschweigend wirkungslose Zeile. Mindestens eine Liste muss gesetzt sein (sonst Startfehler); eine leere Liste erlaubt niemanden. Abgelehnt → `302 /login?fehler=nicht_berechtigt` + Log-Eintrag (warn).
 - Akteur im Protokoll: `oidc:{sub}`. Discovery beim Start mit Retry (5 × exponentiell); schlägt sie fehl, startet die App trotzdem, `/auth/config` meldet `oidc: false` bis zur erfolgreichen Discovery (Retry alle 60 s).
 - Logout: lokal; wenn `BELEGAPP_OIDC_RP_LOGOUT=true` und `end_session_endpoint` vorhanden → Redirect dorthin mit `id_token_hint` und `post_logout_redirect_uri = BASE_URL/login`.
+
+### 9.6 Vertrauenswürdige Header (Forward-Auth)
+- Für einen vorgeschalteten Proxy, der das Browsergesicht schon authentifiziert hat (Traefik/Envoy-Gateway-Forward-Auth, oauth2-proxy, Authelia hinter Caddy). `BELEGAPP_AUTH_HEADER_ENABLED=true` schaltet die Methode ein; `BELEGAPP_AUTH_HEADER_NAME` nennt den Header (Default `Remote-Email`), `BELEGAPP_AUTH_HEADER_ALLOWED` die Werte, die hinein dürfen.
+- Zwei Pflichtangaben, beide Startfehler statt Ratschläge: `BELEGAPP_TRUSTED_PROXIES` (sonst wäre der Header eine Behauptung, die jeder abgeben kann, und die Instanz würde eine Sitzung an den aushändigen, der den Headernamen errät) und `BELEGAPP_AUTH_HEADER_ALLOWED` (leer = niemand; `*` ist die Schreibweise für „alle, die der Proxy authentifiziert“).
+- Prüfung in dieser Reihenfolge: Sitzungscookie gültig → diese Sitzung. Sonst Header nur, wenn die Remote-Adresse in `BELEGAPP_TRUSTED_PROXIES` liegt und der Header genau einmal mit nicht-leerem Wert ankommt; ein **doppelt gesendeter** Header ist wie kein Header, weil ein Client ihn selbst mitsenden kann und ein Proxy, der anfügt statt zu ersetzen, sonst die Wahl zwischen beiden Werten offen ließe. Keine Identität → `401 E_UNANGEMELDET`; Identität nicht auf der Liste → `403 E_NICHT_BERECHTIGT`.
+- Bei Erfolg entsteht eine gewöhnliche Sitzung mit Akteur `header:{identität}` (9.3). Die Liste entscheidet, wer eine Sitzung eröffnen darf, nicht was bei jeder Anfrage neu geprüft wird: ein gestrichener Eintrag endet mit der nächsten Anmeldung, nicht mit der laufenden Sitzung; sofort beenden geht über `DELETE /auth/sitzungen` oder `Einstellungen → Sitzungen`.
+- `GET /auth/config` meldet `header: bool` und `header_logout_url` (aus `BELEGAPP_AUTH_HEADER_LOGOUT_URL`, sonst leer). Für eine so angemeldete Sitzung meldet `/auth/me` `methode: "header"` und die Einstellungen zeigen **kein** `Abmelden` — das Löschen der Sitzung brächte nur beim nächsten Aufruf eine neue vom Proxy; ist eine Logout-Adresse konfiguriert, steht dort stattdessen der Link dorthin.
+- Alle Teile dieser Methode sind Startfehler-Prüfungen: der Headername muss ein gültiger Feldname sein (sonst startet der Prozess und weist jede Anfrage ab), die Logout-Adresse eine absolute http(s)-URL, und die Listeneinträge werden auch bei ausgeschalteter Methode geprüft — die Variable wird so oder so gelesen, und ein falsch geschriebener Eintrag ist an dem Tag falsch, an dem niemand mehr ins Startprotokoll schaut.
 
 ---
 
@@ -903,13 +911,13 @@ Letzte Zeile `summe;…` mit Summen. Für den Datenexport zusätzlich Spalte `be
 ### 13.2 Screens
 | Screen | Inhalt |
 |---|---|
-| Login | App-Name, OIDC-Button (primär), Passwortformular (falls aktiv), Fehlerhinweis aus `?fehler=` |
+| Login | App-Name, OIDC-Button (primär), Passwortformular (falls ein Passwort existiert), Fehlerhinweis aus `?fehler=`, Hinweis auf den vorgeschalteten Proxy samt „Erneut versuchen“ (falls `header`) |
 | Heute | Status heute (Beleg vorhanden: Karte mit Thumbnail/Betrag/Erstattung; sonst Kamera- und Galerie-Button groß), Monatsfortschritt „n / Limit“, ΣE des Monats, Hinweis bei fehlender Jahresregel |
 | Prüfen/Bearbeiten | Bild (Pinch-Zoom, Seitenwechsel, „+ Seite“), Erkennungsstatus (Skeleton/Fehler/„Erneut erkennen“), Felder: Datum, Mahlzeitart (Segmented, nur erlaubte), Bezugsort (Select), Arbeitsort (Toggle), Händler, Ort, Belegbetrag, Korrigierter Betrag + Grund (aufklappbar), Notiz; Positionsliste mit Kategorie-Badges; Korrekturvorschlag-Hinweis; Berechnungskarte (E, U, G, F, R); Warnungsliste; Speichern/Löschen; Änderungsgrund-Dialog im gesperrten Monat |
 | Monat | Monatsauswahl, Status-Badge, Kalender (Tageszellen mit Betrag/Wochenende/Feiertag/Warnung), Summenkarte, Belegliste, Buttons Vorschau/Exportieren, Banner bei `geaendert` |
 | Offene Bilder | Liste der nicht zugeordneten Bilder (Thumbnail, Hochladezeitpunkt, Erkennungsstatus-Badge, Fehlertext), je Eintrag Sprung in **Prüfen** mit `?bild={id}`; Leerzustand, wenn alles zugeordnet ist |
 | Export-Dialog | Prüfpunkte, Warnungen, Optionen CSV/ZIP, Arbeitnehmererklärung (Checkbox, Volltext), „Warnungen geprüft“, Vorschau, Final exportieren; bei `E_PRUEFPUNKT_FEHLGESCHLAGEN` die Export-Prüfpunkte neu laden; Liste der Exportversionen mit Downloads und Aufbewahrungsuhr |
-| Einstellungen | Profil; Monatsexport-Standards `export_csv_standard` / `export_zip_standard`; Jahresregeln (Liste; Editor mit Abschnitten Zuschuss, Sachbezugswerte (Button „amtliche Werte übernehmen“), Steuer (Pauschalierung, Gehaltsumwandlung, Bundesland → Kirchensteuer-Vorschlag, Satz), Berechnung (Eigenanteil-Variante mit Erklärung), Monatslimit + Modus, Eigene Feiertage); Belegerkennung (an/aus, Modell, Basis-URL read-only, „Verbindung testen“); Speicher (Backend read-only); Sitzungen; **Passwort** (aktuelles, neues, Wiederholung → `PUT /api/v1/auth/passwort`); Datenexport/-import; Änderungsprotokoll (Liste, „Kette prüfen“); Darstellung; Über |
+| Einstellungen | Profil; Monatsexport-Standards `export_csv_standard` / `export_zip_standard`; Jahresregeln (Liste; Editor mit Abschnitten Zuschuss, Sachbezugswerte (Button „amtliche Werte übernehmen“), Steuer (Pauschalierung, Gehaltsumwandlung, Bundesland → Kirchensteuer-Vorschlag, Satz), Berechnung (Eigenanteil-Variante mit Erklärung), Monatslimit + Modus, Eigene Feiertage); Belegerkennung (an/aus, Modell, Basis-URL read-only, „Verbindung testen“); Speicher (Backend read-only); Sitzungen; **Passwort** (aktuelles, neues, Wiederholung → `PUT /api/v1/auth/passwort`; nur wenn ein Passwort existiert); Datenexport/-import; Änderungsprotokoll (Liste, „Kette prüfen“); Darstellung; Über. `Abmelden` entfällt für eine Sitzung mit `methode: header` und wird durch den Link auf `BELEGAPP_AUTH_HEADER_LOGOUT_URL` ersetzt, wenn eine gesetzt ist |
 
 ### 13.3 PWA
 - `vite-plugin-pwa`: `registerType: "prompt"` (Toast „Neue Version – neu laden“), Manifest `name: "Belegapp"`, `short_name: "Belege"`, `lang: "de"`, `display: "standalone"`, `start_url: "/"`, Theme-Farben `light`/`dark`, Icons 192/512 + maskable (generiert mit `@vite-pwa/assets-generator`), iOS-`apple-touch-icon`.
@@ -943,6 +951,10 @@ Alle Variablen mit Präfix `BELEGAPP_`; für Geheimnisse zusätzlich `<NAME>_FIL
 | `BELEGAPP_OIDC_ALLOWED_EMAILS` | `` | Komma-Liste aus Adressen und Ganzlabel-Platzhaltern (nur mit `email_verified`): `*` = alle verifizierten E-Mails, `*@example.de` = eine ganze Domain, `*@*.example.de` = Domain + Subdomains; andere Schreibweise = Startfehler |
 | `BELEGAPP_OIDC_BUTTON_LABEL` | `Mit SSO anmelden` | |
 | `BELEGAPP_OIDC_RP_LOGOUT` | `false` | RP-initiated Logout |
+| `BELEGAPP_AUTH_HEADER_ENABLED` | `false` | Authentifizierung über einen Header des vorgeschalteten Proxys (9.6); aus = kein Header zählt je als Identität |
+| `BELEGAPP_AUTH_HEADER_NAME` | `Remote-Email` | Header, den der Proxy schreibt. Sein Wert ist die Identität und wird gegen die Liste geprüft |
+| `BELEGAPP_AUTH_HEADER_ALLOWED` | `` | Komma-Liste erlaubter Werte, Ganzlabel-Platzhalter wie `BELEGAPP_OIDC_ALLOWED_EMAILS`; zusätzlich ein Wert ohne `@`, literal verglichen (`eduard`). Pflicht bei aktiver Methode |
+| `BELEGAPP_AUTH_HEADER_LOGOUT_URL` | `` | absolute http(s)-Adresse des Proxy-Logouts; ersetzt das `Abmelden` in den Einstellungen |
 | `BELEGAPP_STORAGE_BACKEND` | `fs` | `fs\|s3` |
 | `BELEGAPP_STORAGE_FS_DIR` | `${DATA_DIR}/blobs` | |
 | `BELEGAPP_S3_ENDPOINT` | `` | z. B. `s3.eu-central-1.amazonaws.com`, `minio:9000` |
@@ -1011,7 +1023,7 @@ CLI: `belegapp serve` (Default) · `set-password` · `healthcheck [--url]` · `m
 - Metriken (optional, `BELEGAPP_METRICS_ADDR`, eigener Port, kein Auth): `belegapp_http_requests_total{route,method,code}`, `belegapp_http_request_duration_seconds`, `belegapp_erkennung_total{ergebnis}`, `belegapp_erkennung_dauer_seconds`, `belegapp_pdf_dauer_seconds`, `belegapp_belege_total`, `belegapp_jobs_wartend` + Go-Runtime-Metriken.
 
 ### 15.3 Docker Compose (Beispiel, `deploy/docker-compose.yml`)
-Pflichtwerte kommen aus `deploy/.env` (Vorlage `deploy/.env.example`). `${VAR:?}` bricht `docker compose` ab, solange der Wert leer ist. Der Prozess selbst startet mit Passwort oder OIDC; das Passwort ist eine Datenbankzeile und wird einmalig mit `docker compose run --rm belegapp set-password` auf dasselbe Volume geschrieben. Das Beispiel setzt den LLM-Key und lässt die OIDC-Zeilen auskommentiert.
+Pflichtwerte kommen aus `deploy/.env` (Vorlage `deploy/.env.example`). `${VAR:?}` bricht `docker compose` ab, solange der Wert leer ist. Der Prozess selbst startet mit Passwort, OIDC oder vertrauenswürdigen Headern; das Passwort ist eine Datenbankzeile und wird einmalig mit `docker compose run --rm belegapp set-password` auf dasselbe Volume geschrieben. Das Beispiel setzt den LLM-Key und lässt die Zeilen für OIDC und Forward-Auth auskommentiert.
 ```yaml
 services:
   belegapp:
@@ -1032,11 +1044,17 @@ services:
     environment:
       BELEGAPP_BASE_URL: ${BELEGAPP_BASE_URL:?set BELEGAPP_BASE_URL}
       BELEGAPP_TRUSTED_PROXIES: ${BELEGAPP_TRUSTED_PROXIES:-172.16.0.0/12}
-      # OIDC ist optional; zum Aktivieren einkommentieren (dann OIDC_SECRET_FILE setzen):
+      # OIDC ist optional; zum Aktivieren einkommentieren (OIDC_SECRET_FILE nur
+      # für einen confidential client nötig, für einen public client leer lassen):
       # BELEGAPP_OIDC_ISSUER_URL: ${BELEGAPP_OIDC_ISSUER_URL:?set BELEGAPP_OIDC_ISSUER_URL}
       # BELEGAPP_OIDC_CLIENT_ID: ${BELEGAPP_OIDC_CLIENT_ID:?set BELEGAPP_OIDC_CLIENT_ID}
       # BELEGAPP_OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_secret
       # BELEGAPP_OIDC_ALLOWED_EMAILS: ${BELEGAPP_OIDC_ALLOWED_EMAILS:?set BELEGAPP_OIDC_ALLOWED_EMAILS}
+      # Forward-Auth ebenso optional; der Proxy muss dann auf 172.16.0.0/12 stehen:
+      # BELEGAPP_AUTH_HEADER_ENABLED: "true"
+      # BELEGAPP_AUTH_HEADER_NAME: Remote-Email
+      # BELEGAPP_AUTH_HEADER_ALLOWED: ${BELEGAPP_AUTH_HEADER_ALLOWED:?set BELEGAPP_AUTH_HEADER_ALLOWED}
+      # BELEGAPP_AUTH_HEADER_LOGOUT_URL: ${BELEGAPP_AUTH_HEADER_LOGOUT_URL:-}
       BELEGAPP_LLM_API_KEY_FILE: /run/secrets/openai_key
     secrets: [oidc_secret, openai_key]
     healthcheck:
@@ -1046,7 +1064,8 @@ services:
       retries: 3
       start_period: 10s
 secrets:
-  # Wird nur mit den OIDC-Zeilen oben gelesen; OIDC_SECRET_FILE setzen.
+  # Wird nur mit den OIDC-Zeilen oben gelesen; OIDC_SECRET_FILE nur bei einem
+  # confidential client setzen.
   oidc_secret:
     file: ${OIDC_SECRET_FILE:-/dev/null}
   openai_key:
@@ -1059,6 +1078,7 @@ secrets:
 - Probes: liveness `/healthz` (period 20 s), readiness `/readyz` (period 10 s), startup `/readyz` (failureThreshold 30).
 - Ressourcen: requests `50m`/`64Mi`, limits `1` CPU / `512Mi` (Deployment und Backup-CronJob).
 - `Secret` für OIDC/LLM/S3; `ConfigMap` für übrige Env; `Service` + `Ingress` (TLS via cert-manager, Body-Limit ≥ Import-Größe, z. B. `nginx.ingress.kubernetes.io/proxy-body-size: 4g`). Das Passwort steht in keinem Secret, sondern als Zeile in der Datenbank auf dem PVC: `kubectl exec -it deploy/belegapp -- /belegapp set-password`.
+- Für Forward-Auth: `BELEGAPP_AUTH_HEADER_ENABLED`, `BELEGAPP_AUTH_HEADER_NAME` und `BELEGAPP_AUTH_HEADER_ALLOWED` in die `ConfigMap` (kein Geheimnis), `BELEGAPP_TRUSTED_PROXIES` auf die Pod-Netze des Gateways. Der Gateway muss den Header **überschreiben**, nicht anfügen (9.6).
 - Optional `NetworkPolicy`: Egress nur DNS, IdP, LLM, S3.
 - Optional Litestream-Sidecar für SQLite-Replikation (dokumentiert, nicht Teil von v1).
 
@@ -1100,10 +1120,10 @@ PR erforderlich (0 Reviews, Single-Maintainer), Status-Checks `go`, `web`, `dock
 | Unit `calc` | alle Testvektoren 6.5 (aus `testdata/vectors.json`), Property-Tests der Invarianten (`testing/quick` o. ä., ≥ 10 000 Fälle), Rundung |
 | Unit sonstige | Jahresregel-Validierung, Vorschlagslogik 5.3, Feiertage 16 Länder 2026 + eigene Feiertage, Warnungen/Prüfpunkte, Korrekturvorschlag, Erkennungs-Nachverarbeitung, argon2id, Session-Timeouts, OIDC-Allowlist, Key-Validierung Storage, Hash-Kette |
 | Contract | BlobStore (fs + gofakes3), ReceiptExtractor (Fake-HTTP-Server: Erfolg, 429→Erfolg, 400 `response_format`→Fallback, ungültiges JSON, 401, Timeout) |
-| Integration API | `httptest` mit Temp-SQLite, fs-Storage, Fake-LLM, Mock-OIDC (`oauth2-proxy/mockoidc`): Login beide Methoden, CSRF-Ablehnung Cross-Origin, Flow A komplett, E_DATUM_BELEGT, Sperre + Änderungsgrund, Exportversion 2 mit Änderungsabschnitt, Datenexport → Datenimport in leere Instanz (Roundtrip identische Summen + Hash-Kette gültig), Backend-Wechsel fs → s3 per Import |
+| Integration API | `httptest` mit Temp-SQLite, fs-Storage, Fake-LLM, Mock-OIDC (`oauth2-proxy/mockoidc`): Login per Passwort, OIDC und vertrauenswürdigem Header (Proxy-Netz `127.0.0.1/32`, doppelter Header abgelehnt, fremde Identität `403`), CSRF-Ablehnung Cross-Origin, Flow A komplett, E_DATUM_BELEGT, Sperre + Änderungsgrund, Exportversion 2 mit Änderungsabschnitt, Datenexport → Datenimport in leere Instanz (Roundtrip identische Summen + Hash-Kette gültig), Backend-Wechsel fs → s3 per Import |
 | PDF | Golden-Test M1: PDF erzeugen, Text enthält Summen/Erklärung, Übersicht ≤ 2 Seiten + 5 Anhangseiten, optional veraPDF |
 | Frontend | Vitest: Betragsparser, Formatierung, Formular-Logik; Komponenten-Tests für Prüfen-Screen |
-| E2E (Playwright, in CI) | Eigenes Server-Fixture je Test (parallele Worker): Login Passwort und OIDC (Mock), Jahresregel, Upload, Fake-Erkennung, korrigierter Betrag, Monatsansicht, Prüfpunkte, Entwurf und finaler Export inkl. PDF, Sperre mit Änderungsgrund, Datenexport/Import, Logout; Screenshot-Spec Desktop und iPhone 15 |
+| E2E (Playwright, in CI) | Eigenes Server-Fixture je Test (parallele Worker): Login Passwort und OIDC (Mock), Login per vertrauenswürdigem Header (`127.0.0.1/32` als Proxy-Netz: Anmeldung ohne Passwort, `401` ohne Header, `403` bei fremder Identität), Jahresregel, Upload, Fake-Erkennung, korrigierter Betrag, Monatsansicht, Prüfpunkte, Entwurf und finaler Export inkl. PDF, Sperre mit Änderungsgrund, Datenexport/Import, Logout; Screenshot-Spec Desktop und iPhone 15 |
 | Manuell/Eval | `make eval-erkennung`: 20 anonymisierte echte Belege gegen konfiguriertes Modell, Report Trefferquote Datum/Betrag/Händler (Ziel ≥ 90 % Betrag) |
 
 Coverage-Ziel: `internal/calc` 100 %, Backend gesamt ≥ 70 %.
@@ -1156,7 +1176,7 @@ Coverage-Ziel: `internal/calc` 100 %, Backend gesamt ≥ 70 %.
 6. Gehaltsumwandlung + Pauschalierung gleichzeitig: nur Warnung, Berechnung folgt der Konfiguration. **Bestätigt 2026-10-15:** unverändert — es ist **nur** die Warnung `W_REGEL_GEHALTSUMWANDLUNG` (7.2), **nichts blockiert**, und die Berechnung folgt weiter der Jahresregel (6.3).
 7. Monatslimit standardmäßig **warnen** (nicht blockieren). **Wert bestätigt 2026-10-14** (19.1 Nr. 5): 15 bezuschusste Belegtage je Kalendermonat, unabhängig von den geleisteten Arbeitstagen. **Modus bestätigt 2026-10-15: `warnen`.** In diesem Modus warnt das Überschreiten **nur** und blockiert **nie**: bei Überschreitung steht `P_MONATSLIMIT` auf `warnung` (`internal/service/month.go`), und ein `warnung` ist kein `fehler` — `rejectFinal` weist einen finalen Export nur bei `fehler` ab. `limit_modus` bleibt je Jahresregel schaltbar (Vorgabe `warnen`, 5.2); der zweite von der Jahresregel erlaubte Wert `blockieren` weist den Beleg dagegen mit `E_LIMIT_ERREICHT` ab (`internal/service/document_prepare.go`, Vorschau wie Speichern, 5.2) und ist nicht Teil des bestätigten Betriebs. Der Punkt ist für den bestätigten Modus entschieden und fällt als offener weg.
 8. Standard-Eigenanteil-Variante `standard` (Eigenanteil wird angerechnet). **Bestätigt 2026-10-14** (19.1 Nr. 4): der Arbeitgeber fährt `standard`. Die Annahme ist damit keine Annahme mehr und fällt als offener Punkt weg.
-9. Passwort nur per Env/Secret (kein Setup-Assistent, kein Passwortwechsel in der UI); OIDC verlangt Allowlist (`sub` oder verifizierte E-Mail). **Bestätigt 2026-10-15:** beides unverändert. Das Passwort kommt ausschließlich aus `BELEGAPP_AUTH_PASSWORD_HASH(_FILE)`; in der Web-App gibt es keinen Weg, es zu setzen oder zu ändern (9.2, 13). Die OIDC-Allowlist bleibt Pflicht: ohne `BELEGAPP_OIDC_ALLOWED_SUBJECTS` **und** ohne `BELEGAPP_OIDC_ALLOWED_EMAILS` startet die App nicht (9.5). **Ergänzt 2026-10-15:** die E-Mail-Allowlist versteht Ganzlabel-Platzhalter (`*@example.de`, `*@*.example.de`, `*`) — siehe 9.5 und `docs/configuration.md`. Eine leere Liste bleibt ein Startfehler; `*` ist der ausdrückliche Weg, alle zuzulassen. **Umgestellt 2026-10-18 (Issue #47):** der Passwort-Teil ist **überholt**. Der Hash ist keine Konfiguration mehr, sondern eine Zeile `password_hash` in der Tabelle `system`; gesetzt wird er mit `belegapp set-password` (Terminal zweimal verdeckt, sonst erste stdin-Zeile, Mindestlänge 12), geändert in `Einstellungen → Passwort` (`PUT /api/v1/auth/passwort`, aktuelles Passwort Pflicht, andere Sitzungen fallen weg, Protokolleintrag `zugang/passwort_geaendert`). `BELEGAPP_AUTH_PASSWORD_HASH(_FILE)` und `belegapp hash-password` entfallen ersatzlos; `serve` bricht weiter ab, wenn weder Passwort noch OIDC vorhanden ist (9.1, 9.2). Der Grund: ein PHC-String in einem Secret ist für den Betreiber unhandlich, und ein Passwort, das im Env steht, lässt sich nicht wechseln. Die OIDC-Allowlist bleibt unverändert Pflicht.
+9. Passwort nur per Env/Secret (kein Setup-Assistent, kein Passwortwechsel in der UI); OIDC verlangt Allowlist (`sub` oder verifizierte E-Mail). **Bestätigt 2026-10-15:** beides unverändert. Das Passwort kommt ausschließlich aus `BELEGAPP_AUTH_PASSWORD_HASH(_FILE)`; in der Web-App gibt es keinen Weg, es zu setzen oder zu ändern (9.2, 13). Die OIDC-Allowlist bleibt Pflicht: ohne `BELEGAPP_OIDC_ALLOWED_SUBJECTS` **und** ohne `BELEGAPP_OIDC_ALLOWED_EMAILS` startet die App nicht (9.5). **Ergänzt 2026-10-15:** die E-Mail-Allowlist versteht Ganzlabel-Platzhalter (`*@example.de`, `*@*.example.de`, `*`) — siehe 9.5 und `docs/configuration.md`. Eine leere Liste bleibt ein Startfehler; `*` ist der ausdrückliche Weg, alle zuzulassen. **Umgestellt 2026-10-18 (Issue #47):** der Passwort-Teil ist **überholt**. Der Hash ist keine Konfiguration mehr, sondern eine Zeile `password_hash` in der Tabelle `system`; gesetzt wird er mit `belegapp set-password` (Terminal zweimal verdeckt, sonst erste stdin-Zeile, Mindestlänge 12), geändert in `Einstellungen → Passwort` (`PUT /api/v1/auth/passwort`, aktuelles Passwort Pflicht, andere Sitzungen fallen weg, Protokolleintrag `zugang/passwort_geaendert`). `BELEGAPP_AUTH_PASSWORD_HASH(_FILE)` und `belegapp hash-password` entfallen ersatzlos; `serve` bricht weiter ab, wenn weder Passwort noch OIDC noch vertrauenswürdige Header vorhanden sind (9.1, 9.2, 9.6). Der Grund: ein PHC-String in einem Secret ist für den Betreiber unhandlich, und ein Passwort, das im Env steht, lässt sich nicht wechseln. Die OIDC-Allowlist bleibt unverändert Pflicht. **Ergänzt 2026-10-18 (Issue #47, zweiter Punkt):** dazu kommt die dritte Methode, die vertrauenswürdigen Header (9.6). `BELEGAPP_AUTH_HEADER_ENABLED=true` übernimmt die Identität, die ein vorgeschalteter Proxy in `BELEGAPP_AUTH_HEADER_NAME` schreibt — nur aus einer Adresse in `BELEGAPP_TRUSTED_PROXIES`, nur für einen Wert in `BELEGAPP_AUTH_HEADER_ALLOWED`; beides ist Pflicht, sonst Startabbruch. Wer hinter dem Forward-Auth-Proxy schon angemeldet ist, meldet sich damit nicht ein zweites Mal an, und ein Passwort braucht diese Instanz gar nicht; `serve` startet, sobald eine der drei Methoden vorhanden ist (9.1, 9.6).
 10. Gespeichert wird das normalisierte Bild (≤ 2400 px, ohne EXIF/GPS), nicht das Original. **Bestätigt 2026-10-15:** unverändert — abgelegt werden ausschließlich das normalisierte JPEG und das Thumbnail (`internal/service/images.go` schreibt `norm.JPEG` und `norm.Thumb` aus `internal/imaging`), die hochgeladenen Bytes werden nirgends aufbewahrt. `upload_sha256` ist nur ein Hash des Uploads, keine Datei (5.2, 11.2).
 11. Datenimport ersetzt immer den gesamten Bestand (kein Zusammenführen) und legt vorher automatisch eine Sicherung an. **Bestätigt 2026-10-15:** es bleibt beim vollständigen Ersetzen — ein Merge-Modus ist nicht vorgesehen, die automatische Sicherung davor bleibt Pflichtbestandteil (11.4).
 12. Bezugsorte: Supermarkt, Restaurant, Kantine, Bäckerei, Lieferdienst, Sonstiges; Arbeitsort Betrieb/Homeoffice als zusätzliches Feld. **Bestätigt 2026-10-15** (19.1 Nr. 7): der Arbeitgeber akzeptiert Homeoffice-Tage und eine fremd betriebene Kantine. Beide Felder bleiben, `bezugsort = kantine` erzeugt weiter nur den Hinweis `W_BEZUGSORT_KANTINE`.
