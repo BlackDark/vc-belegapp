@@ -38,51 +38,24 @@ concurrency:
   # The release-branch dispatch must be allowed to finish.
   cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
 
-# web builds the bundle once and asserts that the copy committed in web/dist is
-# what the build produces. Nothing depends on it: the platform jobs compile from
-# a plain checkout, whose committed web/dist is the same input a release embeds,
-# and that assertion is what keeps the two in step. Each GoReleaser target is
-# cross-compiled on its own runner (CGO_ENABLED=0, no QEMU) so e2e can start
-# from linux/amd64 without waiting for the other arches. docker only copies the
-# linux binaries into distroless.
+# web/dist is not committed. web/embed.go embeds it with //go:embed, so every
+# job that compiles the web package (the two binary builds, go, vuln, CodeQL)
+# runs the shared web-build action first; the web job additionally lints and
+# tests the sources. Each GoReleaser target is cross-compiled on its own runner
+# (CGO_ENABLED=0, no QEMU) so e2e can start from linux/amd64 without waiting for
+# the other arches. docker only copies the linux binaries into distroless.
 
 jobs:
   web:
     name: web
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: web
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          package_json_file: web/package.json
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm exec biome ci .
-      - run: pnpm exec tsc --noEmit
-      - run: pnpm exec vitest run
-      - run: pnpm exec vite build
-      # web/dist is committed and web/embed.go embeds all:dist, so this is the
-      # bundle every other job and the release compile in. A source change that
-      # was never rebuilt would otherwise ship stale. status rather than diff:
-      # a build that adds a file and deletes nothing would be invisible to
-      # diff, and nothing under web/dist is ignored.
-      - name: Committed bundle matches the build
-        working-directory: ${{ github.workspace }}
-        run: |
-          dirty=$(git status --porcelain -- web/dist)
-          if [ -n "$dirty" ]; then
-            echo "web/dist is not what a fresh build produces:" >&2
-            echo "$dirty" >&2
-            exit 1
-          fi
+      - uses: ./.github/actions/web-build
+      - run: pnpm -C web exec biome ci .
+      - run: pnpm -C web exec tsc --noEmit
+      - run: pnpm -C web exec vitest run
 
   # One arch per runner. Sharing a runner splits the cores, so four
   # parallel compiles finish no sooner than the slowest one and e2e waits.
@@ -92,6 +65,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/web-build
       - uses: ./.github/actions/go-setup
         with:
           scope: linux-amd64
@@ -111,6 +85,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/web-build
       - uses: ./.github/actions/go-setup
         with:
           scope: linux-arm64
@@ -130,6 +105,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/web-build
       - uses: ./.github/actions/go-setup
         with:
           scope: go
@@ -137,8 +113,8 @@ jobs:
         run: go test -count=1 ./internal/doccheck/
       - run: go mod verify
       - run: go generate ./internal/db
-      # Generated code is committed. web/dist is a committed file too, and the
-      # web job asserts it; this diff is about what the generators above write.
+      # Generated code is committed. web/dist is a build artifact and ignored,
+      # so this diff is only about what the generators above write.
       - run: git diff --exit-code
       - run: go tool sqlc vet
       - run: ./scripts/sqlc-diff.sh
@@ -183,6 +159,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/web-build
       - uses: ./.github/actions/go-setup
         with:
           scope: vuln
