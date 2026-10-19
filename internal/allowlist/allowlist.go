@@ -1,5 +1,8 @@
-// Package allowlist decides whether an e-mail address is covered by one entry
-// of BELEGAPP_OIDC_ALLOWED_EMAILS.
+// Package allowlist decides whether a value is covered by one entry of an
+// operator's allowlist: an e-mail address for BELEGAPP_OIDC_ALLOWED_EMAILS, or
+// whatever header BELEGAPP_AUTH_HEADER_NAME points at for
+// BELEGAPP_AUTH_HEADER_ALLOWED. Parse compiles the e-mail-shaped entries,
+// ParseValue additionally accepts a bare value with no "@" in it.
 //
 // The syntax is whole-label wildcards and nothing else:
 //
@@ -39,6 +42,11 @@ const Any = "*"
 type Pattern struct {
 	// any is the bare "*" entry: the one form with no address in it.
 	any bool
+	// plain is an entry with no "@" in it, accepted by ParseValue: a login
+	// name or any other value the operator's proxy puts in the header. It is
+	// compared with the whole value.
+	plain bool
+	value string
 	// local is the part before the @. localWildcard stands for the whole label
 	// "*"; an entry that simply has no local part is refused at Parse instead,
 	// so an empty local string here can only ever mean the wildcard.
@@ -100,17 +108,53 @@ func Parse(entry string) (Pattern, error) {
 	return p, nil
 }
 
-// Match reports whether email is covered by the pattern.
-func (p Pattern) Match(email string) bool {
-	if email == "" {
+// ParseValue compiles one entry of an allowlist that is compared against a
+// value which is not necessarily an e-mail address.
+//
+// BELEGAPP_AUTH_HEADER_ALLOWED is matched against whatever header
+// BELEGAPP_AUTH_HEADER_NAME points at, and that header holds whatever the
+// operator's proxy writes into it: an address in the default setup
+// (Remote-Email), but just as legitimately a login name (Remote-User,
+// X-Forwarded-User). So this accepts everything Parse accepts — "*",
+// "*@domain", "*@*.domain" and an exact address — and in addition a bare value
+// with no "@", which is compared with the whole header value.
+//
+// A wildcard inside a bare value stays refused, for the reason Parse refuses
+// one inside a label: "edu*" is a rule nobody can read, and an entry nobody
+// can read is a hole the operator believes is a door.
+func ParseValue(entry string) (Pattern, error) {
+	if strings.Contains(entry, "@") {
+		return Parse(entry)
+	}
+	if entry == "" {
+		return Pattern{}, invalid(entry, "ist leer")
+	}
+	if strings.ContainsAny(entry, " \t") {
+		return Pattern{}, invalid(entry, "enthält ein Leerzeichen")
+	}
+	if entry == Any {
+		return Pattern{any: true}, nil
+	}
+	if strings.Contains(entry, Any) {
+		return Pattern{}, invalid(entry, `setzt das * in ein Wort, statt es allein zu schreiben`)
+	}
+	return Pattern{plain: true, value: entry}, nil
+}
+
+// Match reports whether value is covered by the pattern.
+func (p Pattern) Match(value string) bool {
+	if value == "" {
 		return false
 	}
 	if p.any {
 		return true
 	}
-	local, domain, ok := strings.Cut(email, "@")
+	if p.plain {
+		return equalFold(value, p.value)
+	}
+	local, domain, ok := strings.Cut(value, "@")
 	if !ok || local == "" || domain == "" || strings.Contains(domain, "@") {
-		// An address the pattern cannot even split is one no entry covers.
+		// A value the pattern cannot even split is one no entry covers.
 		// "*" already answered above; everything else compares like for like.
 		return false
 	}

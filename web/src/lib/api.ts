@@ -226,7 +226,13 @@ export type AuthConfig = {
   passwort: boolean;
   oidc: boolean;
   oidc_label: string;
+  // header is true when a reverse proxy in front of the app asserts who the
+  // visitor is. header_logout_url is where that login actually ends, and is
+  // only set when the operator named one.
+  header: boolean;
+  header_logout_url?: string;
 };
+export type Me = { akteur: string; methode: string; sitzung_seit: string };
 export type SystemInfo = {
   version: string;
   commit: string;
@@ -263,10 +269,12 @@ export const client = {
       body: json({ passwort }),
     }),
   logout: () => api<void>("/api/v1/auth/logout", { method: "POST" }),
-  me: () =>
-    api<{ akteur: string; methode: string; sitzung_seit: string }>(
-      "/api/v1/auth/me",
-    ),
+  changePassword: (aktuell: string, neu: string) =>
+    api<void>("/api/v1/auth/passwort", {
+      method: "PUT",
+      body: json({ aktuell, neu }),
+    }),
+  me: () => api<Me>("/api/v1/auth/me"),
   einstellungen: () => api<Einstellungen>("/api/v1/einstellungen"),
   putEinstellungen: (body: Einstellungen) =>
     api<Einstellungen>("/api/v1/einstellungen", {

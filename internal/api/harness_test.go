@@ -35,9 +35,29 @@ func newTestService(t *testing.T, database *db.DB, store storage.BlobStore, now 
 	}
 }
 
+// testAPIOptions are the differences between the suites: whether the instance
+// has a password at all, and the trusted-header method.
+type testAPIOptions struct {
+	// authHeader turns the trusted-header method on for the handler.
+	authHeader *auth.HeaderAuth
+	// logoutURL is what the UI is told next to it.
+	logoutURL string
+	// withoutPassword leaves the system table empty, so the instance is one
+	// the password form cannot open.
+	withoutPassword bool
+}
+
 // newTestAPI wraps a service in the production middleware stack.
 func newTestAPI(t *testing.T, svc *service.Service, store storage.BlobStore) http.Handler {
 	t.Helper()
+	return newTestAPIWith(t, svc, store, testAPIOptions{})
+}
+
+func newTestAPIWith(t *testing.T, svc *service.Service, store storage.BlobStore, opt testAPIOptions) http.Handler {
+	t.Helper()
+	if !opt.withoutPassword {
+		seedPassword(t, svc.DB)
+	}
 	sessions := &auth.Sessions{DB: svc.DB, Idle: time.Hour, Absolute: 2 * time.Hour, Secure: false}
 	handler, err := server.New(server.Options{
 		Frontend: fstest.MapFS{"index.html": {Data: []byte("<title>Belegapp</title>")}},
@@ -49,17 +69,28 @@ func newTestAPI(t *testing.T, svc *service.Service, store storage.BlobStore) htt
 			Typst:      func(context.Context) (string, error) { return "typst test", nil },
 		},
 		API: (&API{
-			Svc:          svc,
-			Sessions:     sessions,
-			Limiter:      &auth.Limiter{},
-			PasswordHash: lightHash("geheim"),
-			OIDCLabel:    "Mit SSO anmelden",
+			Svc:                 svc,
+			Sessions:            sessions,
+			Limiter:             &auth.Limiter{},
+			OIDCLabel:           "Mit SSO anmelden",
+			AuthHeader:          opt.authHeader,
+			AuthHeaderLogoutURL: opt.logoutURL,
 		}).Handler(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return handler
+}
+
+// seedPassword writes the fixture password into the system table, which is
+// where the production password lives too. Only the argon2 cost differs, so the
+// suites go through the real lookup and comparison instead of a field.
+func seedPassword(t *testing.T, database *db.DB) {
+	t.Helper()
+	if err := db.New(database.WriteDB()).SetPasswordHash(context.Background(), lightHash("geheim")); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // newTestServer starts the handler and returns it with a client whose cookie

@@ -226,6 +226,93 @@ Betriebsseite zeigt.
 und gehört nicht in eine Dokumentationsrunde; die neue Tabelle nennt sie stattdessen beim Namen und macht die
 Entscheidung sichtbar.
 
+## Instanzpasswort in der Datenbank (18.10.2026)
+
+Anlass war [Issue #47](https://github.com/BlackDark/vc-belegapp/issues/47), Frage 1: *„why argon2password hash via env var?
+not user friendly?"* Die Frage war berechtigt. Der Betreiber musste den Hash mit `belegapp hash-password` erzeugen, ihn in
+ein Secret legen, dieses in Compose und Kubernetes einhängen — und konnte ihn danach nie wieder ändern, ohne den Dienst
+neu mit einem neuen Secret zu starten. **Entschieden: die Datenbank ist die einzige Quelle.** Der Hash liegt als Zeile
+`password_hash` in `system`, also dort, wo die Belege liegen: auf dem Datenvolume, in jeder Sicherung, ohne Datei und
+ohne Env-Variable.
+
+- **`serve` prüft nach der Migration**, ob ein Passwort oder `BELEGAPP_OIDC_ISSUER_URL` existiert, sonst Exit 2 wie
+  vorher. Die Prüfung kann nicht mehr vor dem Öffnen der Datenbank laufen, weil die Antwort eine Zeile ist.
+- **`belegapp set-password`** ersetzt `hash-password`: Schema anwenden, Passwort lesen (am Terminal zweimal verdeckt,
+  sonst die erste Zeile von stdin — Pipe und Container-Setup), hashen, schreiben. Mindestlänge 12 Zeichen, darunter Exit
+  2 ohne Schreibvorgang. Kein laufender Server nötig, deshalb ist `docker compose run --rm belegapp set-password` der
+  Bootstrap-Schritt.
+- **Wechsel in der UI:** `Einstellungen → Passwort`, `PUT /api/v1/auth/passwort` mit `{aktuell, neu}`. Das aktuelle
+  Passwort ist Pflicht — eine Sitzung sagt, wer sich einmal angemeldet hat, nicht wer gerade davorsitzt. Bei Erfolg
+  fallen alle anderen Sitzungen weg, und die Änderung steht als `zugang/passwort_geaendert` im Protokoll: die Entität
+  `zugang` betrifft keinen Monat und taucht damit **nicht** im Monatsexport auf, und weder Passwort noch Hash stehen im
+  Eintrag. Hash und Protokollzeile entstehen in derselben Transaktion, damit die Kette keine Änderung behaupten kann,
+  die es nicht gab.
+- **Entfallen:** `BELEGAPP_AUTH_PASSWORD_HASH`, `BELEGAPP_AUTH_PASSWORD_HASH_FILE`, `belegapp hash-password`,
+  `config.AuthConfigured()`, die PHC-Prüfung beim Start und der Hash-Eintrag in `applySecretFiles`.
+- **Vorlagen:** Compose und Kubernetes halten kein Passwort mehr. Die OIDC-Zeilen im Compose-Beispiel sind
+  auskommentiert, damit ein Passwort-only-Start nicht an `OIDC_SECRET_FILE` scheitert; der `oidc_secret`-Mount zeigt
+  dann auf `/dev/null`. SPEC §5.2 (`system`), §9.1/§9.2, §12.1 (`PUT /auth/passwort`), §13.2 (Passwortkarte), §15.3,
+  §15.4 und §19.1 Nr. 9 tragen die Umstellung samt Datum; `docs/configuration.md` hat den neuen Abschnitt *The instance
+  password*, `docs/deployment.md`, `README.md` und `docs/FEATURES.md` den neuen Ablauf.
+
+**Geprüft:** `internal/db/system_test.go` (Round-trip, Upsert, leerer Hash wird verweigert),
+`internal/auth/password_test.go` (Längengrenze, auch mit Mehrbyte-Zeichen), `internal/service/credentials_test.go`
+(Wechsel, falsches aktuelles Passwort, zu kurzes neues, keine Protokollspur ohne Änderung),
+`internal/api/password_test.go` (HTTP-Ablauf einschließlich Ende der anderen Sitzung) und `cmd/belegapp/cli_test.go`
+(`set-password` über eine Pipe, verweigert zu Kurzes, der geschriebene Hash verifiziert das Passwort). Die API-Suiten
+setzen ihr Passwort über dieselbe Zeile statt über das frühere Feld, `scripts/container-smoke.sh` und `e2e/fixtures.ts`
+rufen `set-password` auf, statt eine Variable zu setzen.
+
+**Nicht geändert:** die OIDC-Seite. Die Allowlist bleibt Pflicht, `serve` akzeptiert weiter beide Methoden gleichzeitig. **Nachtrag:** mit der zweiten Frage aus Issue #47 (unten) akzeptiert dieselbe Prüfung auch `BELEGAPP_AUTH_HEADER_ENABLED` — es sind damit drei Methoden.
+
+## Vertrauenswürdige Header statt zweiter Anmeldung (18.10.2026)
+
+Zweite Frage aus [Issue #47](https://github.com/BlackDark/vc-belegapp/issues/47): *support trusted-header authentication
+(`Remote-User`/`Remote-Email`, only from `BELEGAPP_TRUSTED_PROXIES`), like vc-reisekostenabrechnung (`HEADER_AUTH_*`).*
+Hinter einer Forward-Auth (Traefik gatepost, Envoy Gateway, oauth2-proxy, Authelia) ist der Browser schon angemeldet,
+belegapp verlangte aber trotzdem sein eigenes Passwort oder einen zweiten OIDC-Rundlauf. **Der Header wird zur Identität,
+aber nur aus einem vertrauenswürdigen Proxy-Netz und nur für Werte auf einer Liste.**
+
+- **Vier Variablen:** `BELEGAPP_AUTH_HEADER_ENABLED` (aus), `BELEGAPP_AUTH_HEADER_NAME` (`Remote-Email`),
+  `BELEGAPP_AUTH_HEADER_ALLOWED` (leer) und `BELEGAPP_AUTH_HEADER_LOGOUT_URL` (leer). Der Name ist die Wahl des
+  Betreibers, und der Wert darin ist genau das, was in der Liste steht: `Remote-Email` schreibt eine Adresse hinein,
+  `Remote-User` oder `X-Forwarded-User` einen Anmeldenamen. Deshalb versteht die Liste beides — dieselben
+  Ganzlabel-Platzhalter wie `BELEGAPP_OIDC_ALLOWED_EMAILS` (`*`, `*@example.de`, `*@*.example.de`, eine genaue Adresse)
+  **und** einen Wert ohne `@`, der literal verglichen wird (`eduard`). `*` ist die ausdrückliche Schreibweise für „alle,
+  die der Proxy authentifiziert".
+- **Zwei Pflichtangaben, beide Startfehler:** `BELEGAPP_TRUSTED_PROXIES` (ohne die Liste wäre der Header eine
+  Behauptung, die jeder abgeben kann) und `BELEGAPP_AUTH_HEADER_ALLOWED` (leer = niemand). Der Headername muss ein
+  gültiger Feldname sein, die Logout-Adresse eine absolute http(s)-URL.
+- **Ein doppelter Header ist wie kein Header.** Ein Client kann ihn selbst mitsenden; ein Proxy, der anfügt statt zu
+  ersetzen, ließe sonst die Wahl zwischen beiden Werten offen. Diese Stelle darf nicht raten, also antwortet sie `401`.
+- **Ablauf:** Cookie zuerst; ohne gültige Sitzung entscheidet der Header, und es entsteht eine gewöhnliche Sitzung mit
+  Akteur `header:{identität}`. Die Liste entscheidet, **wer** eine Sitzung eröffnen darf, nicht was bei jeder Anfrage
+  neu geprüft wird — ein gestrichener Eintrag endet mit der nächsten Anmeldung. Keine Identität `401 E_UNANGEMELDET`,
+  Identität ohne Listeneintrag `403 E_NICHT_BERECHTIGT`.
+- **UI:** `/auth/config` meldet `header` und `header_logout_url`; `/auth/me` meldet `methode: "header"`. Die
+  Einstellungen zeigen für so eine Sitzung **kein** `Abmelden` (das Löschen der Sitzung brächte nur beim nächsten
+  Aufruf eine neue vom Proxy) und stattdessen den Link auf die Proxy-Logout-Adresse, wenn eine konfiguriert ist. Die
+  Login-Seite erklärt den Proxy, wenn der Proxy die Anfrage ohne Identität durchgelassen hat. `403` auf `/auth/me`
+  landet mit Begründung auf der Login-Seite statt in einer leeren Shell.
+- **Nebenbei repariert:** die Passwortkarte erscheint nur noch, wenn überhaupt ein Passwort existiert. Auf einer
+  Instanz, die nur OIDC oder nur Header kennt, hätte sie nach einem aktuellen Passwort gefragt, das niemand je gesetzt
+  hat.
+- **Vorlagen und Doku:** Compose, `.env.example` und die Kubernetes-ConfigMap halten die Zeilen auskommentiert; im
+  Compose-Beispiel steht jetzt auch, dass `OIDC_SECRET_FILE` bei einem **public client** (nur PKCE) leer bleibt. SPEC
+  §5.1 (Akteur, Aktion), §8.2 (`/auth/config`, `/auth/me`), §9.1, §9.6 (neu), §13.2, §14, §15.3, §15.4 und §19.1 Nr. 9
+  tragen die Methode; `docs/configuration.md` hat den Abschnitt *Trusted-header authentication*,
+  `docs/deployment.md` den Abschnitt *Trusted headers (forward auth)*.
+
+**Geprüft:** `internal/allowlist` (`ParseValue`: barer Wert literal, `*`/Domänenmuster wie bisher, `edu*` weiter
+Startfehler), `internal/auth/header_test.go` (nur aus dem Proxy-Netz, fehlender/leerer/doppelter Header, leere
+Proxy-Liste, nil-Resolver), `internal/config/config_test.go` (Default `Remote-Email`, fehlende Proxies, fehlende oder
+kaputte Liste, kaputter Headername, kaputte Logout-Adresse), `internal/api/header_auth_test.go` (Anmeldung per Header,
+Sitzung trägt danach, Muster, 401/403, `auth/config`, Methode aus = Header wirkungslos) und
+`e2e/tests/header-auth.spec.ts` (zwei Browser-Kontexte gegen einen Stack, der `127.0.0.1/32` als Proxy-Netz führt: einer
+mit Header landet ohne Anmeldung auf *Heute*, einer ohne sieht den Proxy-Hinweis, einer mit fremder Identität die
+Berechtigungsmeldung). Dazu `web/src/screens/Login.test.tsx` (Proxy-Hinweis), `Settings.test.tsx` (Proxy-Logout-Link,
+kein `Abmelden` ohne URL, keine Passwortkarte ohne Passwort) und die Shell-Weiterleitung für `403`.
+
 ## Arbeitsweise mit `main`
 
 `main` ist geschützt. Eine Änderung geht über einen Pull Request, wird per Squash zusammengefasst und
@@ -351,8 +438,8 @@ des Eigentümers:
   Jahresregel ohne Vorjahr beginnt bei 0). Damit ist **§19.1 vollständig entschieden.** **§19.3** — vollständig bestätigt: am 15.10.
   **Nr. 1, 3** (kein Entsperren), **Nr. 2** (ein Bundesland, ein Kalender für die ganze App), **Nr. 4**
   (Vorschau sperrt nie), **Nr. 5** (Arbeitnehmererklärung wird nicht erfasst), **Nr. 6** (Umwandlung +
-  Pauschalierung nur Warnung), **Nr. 7** (Limit-Modus `warnen`: warnt nur, blockiert nie), **Nr. 9** (Passwort nur per Env,
-  Allowlist Pflicht), **Nr. 10** (nur das normalisierte Bild), **Nr. 11** (Import ersetzt alles, mit Sicherung
+  Pauschalierung nur Warnung), **Nr. 7** (Limit-Modus `warnen`: warnt nur, blockiert nie), **Nr. 9** (Passwort: am 18.10.
+  überholt — es liegt als Zeile in der Datenbank und wird in der UI gewechselt, die Allowlist bleibt Pflicht), **Nr. 10** (nur das normalisierte Bild), **Nr. 11** (Import ersetzt alles, mit Sicherung
   davor), **Nr. 12**; am 14.10. **Nr. 8**. Dazu zwei Bestätigungen außerhalb von §19, weil sie nirgends eine
   offene Frage waren: der gemeinsame `zuschuss_cent` (§5.3) und die Vorgabe `mittag` allein bei einer neuen
   Jahresregel (§5.2, §5.3). Alle stehen in [NOTES](docs/NOTES.md).

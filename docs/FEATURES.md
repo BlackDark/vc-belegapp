@@ -8,14 +8,14 @@ First release: [v1.0.0](https://github.com/BlackDark/vc-belegapp/releases/tag/v1
 
 - Single static Go binary (chi, modernc SQLite, sqlc, goose migrations) with the SolidJS/Vite frontend embedded ([ADR 0001](adr/0001-go-single-binary-sqlite.md)).
 - Environment configuration, structured logging, `/healthz` and `/readyz` (SQLite, migrations, blob store, `typst --version`).
-- CLI subcommands `serve`, `migrate`, `healthcheck`, `version`; `hash-password` arrived with auth in [#2](https://github.com/BlackDark/vc-belegapp/pull/2).
+- CLI subcommands `serve`, `migrate`, `healthcheck`, `version`; `hash-password` arrived with auth in [#2](https://github.com/BlackDark/vc-belegapp/pull/2), and was replaced by `set-password` in [#47](https://github.com/BlackDark/vc-belegapp/issues/47) — the hash is now a database row, not a secret file.
 - Distroless nonroot image (UID 65532) with Typst, initial CI, Renovate, and release-please scaffolding.
 
 ## M1 Erfassen
 
 First release: [v1.0.0](https://github.com/BlackDark/vc-belegapp/releases/tag/v1.0.0). PR [#2](https://github.com/BlackDark/vc-belegapp/pull/2), hardened in [#8](https://github.com/BlackDark/vc-belegapp/pull/8).
 
-- **Auth:** password (argon2id PHC from env/secret) and OIDC (authorization code + PKCE, allowlist by `sub` or verified e-mail, with whole-label wildcards such as `*@example.de` and `*`); server-side sessions in SQLite, `__Host-` cookie, CSRF via `http.CrossOriginProtection` ([ADR 0003](adr/0003-auth-password-and-oidc.md)).
+- **Auth:** password (argon2id hash in the `system` table, set with `belegapp set-password`, changed in the settings screen — [#47](https://github.com/BlackDark/vc-belegapp/issues/47)), OIDC (authorization code + PKCE, allowlist by `sub` or verified e-mail, with whole-label wildcards such as `*@example.de` and `*`), and trusted-header authentication in [#47](https://github.com/BlackDark/vc-belegapp/issues/47): a forward-auth proxy writes the identity into `BELEGAPP_AUTH_HEADER_NAME` and the app accepts it from `BELEGAPP_TRUSTED_PROXIES` for values in `BELEGAPP_AUTH_HEADER_ALLOWED` (`*`, `*@example.de`, `*@*.example.de`, or a literal login name), so the already-signed-in browser never sees a second login; server-side sessions in SQLite, `__Host-` cookie, CSRF via `http.CrossOriginProtection` ([ADR 0003](adr/0003-auth-password-and-oidc.md)).
 - **Storage:** `BlobStore` on the filesystem or S3 (minio-go), contract-tested against both ([ADR 0004](adr/0004-storage-fs-and-s3.md)). Content-addressed keys and image deduplication came in [#10](https://github.com/BlackDark/vc-belegapp/pull/10); unreferenced-image reclaim in [#9](https://github.com/BlackDark/vc-belegapp/pull/9).
 - **Belege:** one Beleg per Belegtag, up to three images, server-side JPEG normalisation with EXIF stripped, Belegbetrag plus optional korrigierter Betrag with reason, soft delete, versions.
 - **Offene Bilder:** `GET /belegbilder/offen` (status filter, limit/offset) and the *Offene Bilder* screen list every uploaded image no Beleg owns — thumbnail, upload time, recognition-status badge — each linking into the review form. The list carries no blob key and no recognition payload.

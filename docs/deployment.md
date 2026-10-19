@@ -1,6 +1,6 @@
 # Deployment
 
-The process runs as UID/GID 65532, with a read-only root filesystem, no capabilities, and no new privileges. Writable paths are the data volume and the temporary directory — a tmpfs on `/tmp` in the examples, which is RAM; [Writable space](#writable-space) says how big it has to be. A named volume inherits ownership from the image. A bind mount needs `chown -R 65532:65532` first. `serve` exits 2 until a password hash or OIDC is configured. Variables: [configuration.md](configuration.md).
+The process runs as UID/GID 65532, with a read-only root filesystem, no capabilities, and no new privileges. Writable paths are the data volume and the temporary directory — a tmpfs on `/tmp` in the examples, which is RAM; [Writable space](#writable-space) says how big it has to be. A named volume inherits ownership from the image. A bind mount needs `chown -R 65532:65532` first. `serve` exits 2 until a password, OIDC, or trusted-header authentication is configured; the password is a row in the database and is written with `set-password`, see [configuration.md](configuration.md#the-instance-password). Variables: [configuration.md](configuration.md).
 
 Image tags have no `v` prefix. Git tag `v1.1.1` is the image `ghcr.io/blackdark/vc-belegapp:1.1.1`, plus `1.1`, `1`, and `latest`.
 
@@ -9,10 +9,13 @@ Image tags have no `v` prefix. Git tag `v1.1.1` is the image `ghcr.io/blackdark/
 `/healthz` returns `ok`. `/readyz` is 200 when SQLite, migrations, the blob store, and `typst --version` are fine, otherwise 503. The image is `gcr.io/distroless/static-debian13:nonroot` plus a static Typst 0.15.1 binary, so the healthcheck is `belegapp healthcheck` (no curl).
 
 ```bash
-printf '%s' 'a-long-password' | docker run --rm -i --entrypoint /belegapp \
-  ghcr.io/blackdark/vc-belegapp:1.1.1 hash-password
-
 docker volume create belegapp-data
+
+printf '%s\n' 'a-long-password' | docker run --rm -i \
+  --user 65532:65532 \
+  -v belegapp-data:/data \
+  ghcr.io/blackdark/vc-belegapp:1.1.1 set-password
+
 docker run -d --name belegapp \
   --read-only \
   --user 65532:65532 \
@@ -21,23 +24,27 @@ docker run -d --name belegapp \
   --tmpfs /tmp:rw,nosuid,size=64m \
   -v belegapp-data:/data \
   -p 127.0.0.1:8080:8080 \
-  -e BELEGAPP_AUTH_PASSWORD_HASH='<argon2id PHC>' \
   ghcr.io/blackdark/vc-belegapp:1.1.1
 ```
+
+The first command is the setup step, and it is a command rather than an environment variable on purpose: the password is an argon2id hash in the database on that volume, so it survives a container replacement, needs no secret file and no `docker run` flag, and is replaced with `docker exec -it belegapp set-password` whenever the operator wants to. It applies the schema itself and needs no running server.
 
 `docker build -t vc-belegapp:dev .` compiles the web bundle and the Go binary inside the image. CI and releases do not use that Dockerfile. They copy a host-built `linux/$TARGETARCH/belegapp` with [Dockerfile.goreleaser](../Dockerfile.goreleaser) (`make docker-prebuilt` does the same locally).
 
 ## Docker Compose
 
-[deploy/docker-compose.yml](../deploy/docker-compose.yml) and [deploy/.env.example](../deploy/.env.example). Copy the example to `deploy/.env` and point the secret files at an OIDC client secret, an argon2id hash, and an LLM API key. Paths in the example are relative to the compose file. `${VAR:?}` makes Compose refuse to start while a required value is empty. The example is read-only, UID 65532, capabilities dropped, 1 CPU / 512 MiB. It publishes `127.0.0.1:8080` and sets `BELEGAPP_TRUSTED_PROXIES` so a proxy on the Docker bridge can pass the client address.
+[deploy/docker-compose.yml](../deploy/docker-compose.yml) and [deploy/.env.example](../deploy/.env.example). Copy the example to `deploy/.env` and point the secret files at an LLM API key — and, if OIDC is used, at an OIDC client secret. Paths in the example are relative to the compose file. `${VAR:?}` makes Compose refuse to start while a required value is empty. The example is read-only, UID 65532, capabilities dropped, 1 CPU / 512 MiB. It publishes `127.0.0.1:8080` and sets `BELEGAPP_TRUSTED_PROXIES` so a proxy on the Docker bridge can pass the client address. The password is set once against the same volume:
 
 ```bash
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml run --rm belegapp set-password
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
 ```
 
+The OIDC lines in the example are commented out: uncomment them to sign in through an identity provider as well. Set `OIDC_SECRET_FILE` in `deploy/.env` for a confidential client and leave it unset for a public one (PKCE only). The forward-auth lines below them are commented out for the same reason; see [Trusted headers](#trusted-headers-forward-auth).
+
 ## Kubernetes
 
-[deploy/k8s](../deploy/k8s) is Kustomize: one replica, `Recreate` (SQLite), UID 65532, read-only root, a PVC at `/data`, an `emptyDir` at `/tmp`, a Service, an Ingress, and a backup CronJob. The Ingress example is nginx with cert-manager and `proxy-body-size: 4g`, which matches `BELEGAPP_IMPORT_MAX_BYTES`. The ConfigMap sets `BELEGAPP_BASE_URL` and `BELEGAPP_TRUSTED_PROXIES` (`10.0.0.0/8`). Replace the placeholder hash in [deploy/k8s/secret.yaml](../deploy/k8s/secret.yaml) before a real deploy. `networkpolicy.yaml` is not part of the default kustomization, because the IdP, LLM, and S3 hosts differ per install.
+[deploy/k8s](../deploy/k8s) is Kustomize: one replica, `Recreate` (SQLite), UID 65532, read-only root, a PVC at `/data`, an `emptyDir` at `/tmp`, a Service, an Ingress, and a backup CronJob. The Ingress example is nginx with cert-manager and `proxy-body-size: 4g`, which matches `BELEGAPP_IMPORT_MAX_BYTES`. The ConfigMap sets `BELEGAPP_BASE_URL` and `BELEGAPP_TRUSTED_PROXIES` (`10.0.0.0/8`). [deploy/k8s/secret.yaml](../deploy/k8s/secret.yaml) holds no password: set it once against the same volume with `kubectl exec -it deploy/belegapp -- /belegapp set-password`. `networkpolicy.yaml` is not part of the default kustomization, because the IdP, LLM, and S3 hosts differ per install.
 
 ```bash
 kubectl kustomize deploy/k8s
@@ -190,15 +197,14 @@ pnpm -C web install --frozen-lockfile
 pnpm -C web build
 CGO_ENABLED=0 go build -trimpath -o bin/belegapp ./cmd/belegapp
 mkdir -p data
-printf '%s' 'a-long-password' | ./bin/belegapp hash-password
+BELEGAPP_DATA_DIR="$PWD/data" ./bin/belegapp set-password
 BELEGAPP_DATA_DIR="$PWD/data" \
 BELEGAPP_LISTEN_ADDR="127.0.0.1:8080" \
 BELEGAPP_COOKIE_SECURE=false \
-BELEGAPP_AUTH_PASSWORD_HASH='<argon2id PHC>' \
   ./bin/belegapp serve
 ```
 
-`serve` is the default. Also: `migrate`, `healthcheck [--url] [--timeout]`, `version`, `hash-password` (reads stdin, no echo), `verify-audit`, `backup --out <zip>`, `restore <zip> --yes`.
+`serve` is the default. Also: `migrate`, `healthcheck [--url] [--timeout]`, `version`, `set-password` (reads stdin, no echo), `verify-audit`, `backup --out <zip>`, `restore <zip> --yes`.
 
 `BELEGAPP_COOKIE_SECURE=false` is only for local HTTP. The session cookie then drops the `__Host-` prefix. Leave the default `true` behind TLS.
 
@@ -230,6 +236,27 @@ server {
 
 That peer is `127.0.0.1`, so `BELEGAPP_TRUSTED_PROXIES=127.0.0.1/32`. A published container port is different: Docker rewrites the source to the bridge gateway, which is why Compose uses `172.16.0.0/12`. Point `BELEGAPP_BASE_URL` at `https://belege.example.de`.
 
+## Trusted headers (forward auth)
+
+When the proxy already signs the browser in — a forward-auth gate in Traefik or Envoy Gateway, oauth2-proxy, Authelia behind Caddy — belegapp does not need a second login of its own. Set:
+
+```bash
+BELEGAPP_AUTH_HEADER_ENABLED=true
+BELEGAPP_AUTH_HEADER_NAME=Remote-Email
+BELEGAPP_AUTH_HEADER_ALLOWED=eduard@example.de
+BELEGAPP_AUTH_HEADER_LOGOUT_URL=https://auth.example.de/logout
+```
+
+and leave `BELEGAPP_TRUSTED_PROXIES` on the network the proxy reaches this process from (the values in the Compose and Kubernetes examples are already the right shape). The first request from such a browser has no belegapp cookie; the header decides, a normal session is created for the actor `header:<value>`, and from then on the cookie is the authority. No password has to exist: `serve` starts as long as one of the three methods is configured. Nothing about the request path changes, so the proxy keeps doing everything it did — this only removes the second login.
+
+The header is the whole identity, so three things have to hold:
+
+- **The proxy must overwrite the header, never append it.** A client can send `Remote-Email` itself, and a header that arrives twice is treated as no header — there is no way to tell the proxy's value from the client's. Verify with a `curl -H 'Remote-Email: whoever@example.com'` against the public host: the app must answer `401`, not sign that identity in.
+- **`BELEGAPP_TRUSTED_PROXIES` is required and must be exact.** A header from outside those networks is ignored, whatever it says. An empty list is a startup error, and the process must never be reachable directly on a network inside the range — that would let anybody assert an identity by guessing one header name.
+- **The allowlist is required.** `BELEGAPP_AUTH_HEADER_ALLOWED` takes the same whole-label wildcards as `BELEGAPP_OIDC_ALLOWED_EMAILS` (`*`, `*@example.de`, `*@*.example.de`, an exact address) and, because the header is the operator's choice, a bare value such as `eduard` compared literally. `Remote-Email` is only the default name: a proxy that asserts a login name (`Remote-User`, `X-Forwarded-User`, `X-Auth-Request-User`) works by naming that header instead. `*` admits everybody the proxy authenticates — a legitimate choice when the proxy enforces group membership itself, a bad one when the IdP is open to the world.
+
+There is no logout button for such a session, because dropping the belegapp session only earns a new one from the proxy on the next request. With `BELEGAPP_AUTH_HEADER_LOGOUT_URL` set, `Einstellungen` links there instead. Removing somebody from the allowlist ends their next sign-in, not the session they are in: to end one immediately, `Einstellungen → Sitzungen`.
+
 ## OIDC
 
 Authorization code with PKCE (S256). Register this redirect URI on the provider, with no trailing slash on the origin:
@@ -250,10 +277,10 @@ BELEGAPP_OIDC_ALLOWED_EMAILS=eduard@example.de
 
 An empty client secret is a public client (PKCE only). At least one allowlist is required: comma-separated `sub` values (`BELEGAPP_OIDC_ALLOWED_SUBJECTS`), or comma-separated emails (`BELEGAPP_OIDC_ALLOWED_EMAILS`). Either one is optional on its own. An email match also requires `email_verified`. Entries may be whole-label wildcard patterns: `*@example.de` admits one whole domain, `*@*.example.de` that domain and its subdomains, and `*` every account with a verified email at the issuer — use that last one when the issuer is a single-tenant directory. Anything else, such as `te*@example.de`, is a startup error. The list is never implicitly empty: without one of the two, startup fails. Scopes default to `openid profile email`. The button label defaults to `Mit SSO anmelden`. The syntax is in [configuration.md](configuration.md#the-oidc-email-allowlist).
 
-Password login can stay on as a fallback. `serve` accepts either method. Incomplete OIDC (issuer set, but no client id or no allowlist) is a startup error.
+Password login can stay on as a fallback, and so can OIDC: `serve` accepts any of the three methods. They are independent of each other — an instance with only a password has no OIDC variables set at all. Incomplete OIDC (issuer set, but no client id or no allowlist) is a startup error.
 
 Discovery retries in the background. Until it succeeds, `/api/v1/auth/config` reports OIDC as off and password login still works. `state`, `nonce`, and the PKCE verifier sit in a short-lived HMAC cookie. An empty `BELEGAPP_SECRET_KEY` generates a 32-byte key and stores it in the database.
 
 `BELEGAPP_OIDC_RP_LOGOUT=true` sends the browser to the provider's end-session endpoint after local logout, when the discovery document has one. The post-logout redirect is `{BELEGAPP_BASE_URL}/login`.
 
-The Compose example and [deploy/.env.example](../deploy/.env.example) set issuer, client id, secret file, and allowed emails together.
+The Compose example keeps the OIDC lines commented out and [deploy/.env.example](../deploy/.env.example) sets issuer, client id, secret file, and allowed emails for the case where they are uncommented.

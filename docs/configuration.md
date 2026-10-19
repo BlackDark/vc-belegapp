@@ -19,7 +19,6 @@ Every variable uses the prefix `BELEGAPP_`. A secret may be set as `BELEGAPP_<NA
 | `BELEGAPP_COOKIE_SECURE` | `true` | `false` only for local HTTP. The cookie then drops the `__Host-` prefix |
 | `BELEGAPP_SESSION_IDLE_TIMEOUT` | `720h` | Idle session lifetime |
 | `BELEGAPP_SESSION_ABSOLUTE_TIMEOUT` | `2160h` | Absolute session lifetime. Must be at least the idle timeout |
-| `BELEGAPP_AUTH_PASSWORD_HASH`, `BELEGAPP_AUTH_PASSWORD_HASH_FILE` | empty | argon2id PHC from `belegapp hash-password`. Empty disables password login |
 | `BELEGAPP_OIDC_ISSUER_URL` | empty | Issuer. Empty disables OIDC |
 | `BELEGAPP_OIDC_CLIENT_ID` | empty | Client id. Required when an issuer is set |
 | `BELEGAPP_OIDC_CLIENT_SECRET`, `BELEGAPP_OIDC_CLIENT_SECRET_FILE` | empty | Empty means a public client (PKCE only) |
@@ -28,6 +27,10 @@ Every variable uses the prefix `BELEGAPP_`. A secret may be set as `BELEGAPP_<NA
 | `BELEGAPP_OIDC_ALLOWED_EMAILS` | empty | Comma-separated addresses or wildcard patterns, or `*` for every verified email at the issuer. A match also requires `email_verified`. At least one of the two allowlists must be set — see [The OIDC email allowlist](#the-oidc-email-allowlist) |
 | `BELEGAPP_OIDC_BUTTON_LABEL` | `Mit SSO anmelden` | Label of the OIDC button |
 | `BELEGAPP_OIDC_RP_LOGOUT` | `false` | After local logout, redirect to the provider end-session endpoint when it exists |
+| `BELEGAPP_AUTH_HEADER_ENABLED` | `false` | Trusted-header authentication: a reverse proxy has already signed the browser in and asserts who it is. Off means no header is ever read as an identity |
+| `BELEGAPP_AUTH_HEADER_NAME` | `Remote-Email` | The header the proxy writes. What is in it is up to the proxy — the default pair writes an address there, `Remote-User` or `X-Forwarded-User` would write a login name — see [Trusted-header authentication](#trusted-header-authentication) |
+| `BELEGAPP_AUTH_HEADER_ALLOWED` | empty | Comma-separated values of that header that may enter, with the same wildcard syntax as `BELEGAPP_OIDC_ALLOWED_EMAILS`; a bare value is compared literally and `*` admits everybody the proxy authenticates. Required when the method is on |
+| `BELEGAPP_AUTH_HEADER_LOGOUT_URL` | empty | Absolute http(s) address of the proxy's own logout. Shown instead of the in-app logout, which cannot end a login that lives at the proxy |
 | `BELEGAPP_STORAGE_BACKEND` | `fs` | `fs` or `s3` |
 | `BELEGAPP_STORAGE_FS_DIR` | `${DATA_DIR}/blobs` | Filesystem blob directory |
 | `BELEGAPP_S3_ENDPOINT` | empty | Host, for example `minio:9000`. Required for `s3` |
@@ -83,7 +86,45 @@ Every variable uses the prefix `BELEGAPP_`. A secret may be set as `BELEGAPP_<NA
 
 <!-- config-env-end -->
 
-`serve` requires `BELEGAPP_AUTH_PASSWORD_HASH` or `BELEGAPP_OIDC_ISSUER_URL`. OIDC also needs a client id and at least one allowlist (`sub` or verified email). Incomplete OIDC or S3 configuration is a startup error. `migrate` does not need authentication. Discovery retries in the background; until it succeeds, `/api/v1/auth/config` reports OIDC as off and the process still serves password login. Redirect URI, allowlists, and the reverse proxy are in [deployment.md](deployment.md).
+`serve` requires either the instance password or `BELEGAPP_OIDC_ISSUER_URL`. There is no password variable — the password is a row in the database, see [The instance password](#the-instance-password). OIDC also needs a client id and at least one allowlist (`sub` or verified email). Incomplete OIDC or S3 configuration is a startup error. `migrate` does not need authentication. Discovery retries in the background; until it succeeds, `/api/v1/auth/config` reports OIDC as off and the process still serves password login. Redirect URI, allowlists, and the reverse proxy are in [deployment.md](deployment.md).
+
+## The instance password
+
+The password is not configuration. It is an argon2id hash (m=65536, t=3, p=2) in one row of the `system` table, so it lives where the Belege live: it travels with the data volume, survives a container replacement, and is in every backup that contains the database.
+
+```sh
+docker compose run --rm belegapp set-password   # against ./data
+belegapp set-password                            # or directly, on the host
+```
+
+The command applies the schema, reads the password, hashes it and writes the row. It needs no running server, which is why a fresh deployment runs it before the first `up`. On a terminal it asks twice and hides what you type; when stdin is not a terminal it reads the first line, so a script or a container setup can pipe it in. The one rule is length — at least twelve characters — and it is deliberately the only rule: there is a single account and nobody to enforce a character-class policy on.
+
+Changing it happens in `Einstellungen → Passwort`. The current password is required there even though the browser is already signed in, because a session says who signed in once, not who is sitting in front of the screen. Every other session is dropped with the change, and the change is written to the audit trail as `zugang/passwort_geaendert` — which names the event and never the password or its hash.
+
+`serve` refuses to start when there is no way in at all — no password, no `BELEGAPP_OIDC_ISSUER_URL`, no `BELEGAPP_AUTH_HEADER_ENABLED`: an instance that comes up with no way in is a bug report waiting to happen. `BELEGAPP_AUTH_PASSWORD_HASH` and `BELEGAPP_AUTH_PASSWORD_HASH_FILE` no longer exist.
+
+## Trusted-header authentication
+
+When a reverse proxy in front of this process has already authenticated the browser — a forward-auth gate in Traefik or Envoy Gateway, oauth2-proxy, Authelia behind Caddy — belegapp does not need a login of its own. The proxy writes who the visitor is into a request header, and this method accepts that header as the identity, so the browser reaches the app without a second password or a second OIDC round trip.
+
+```sh
+BELEGAPP_AUTH_HEADER_ENABLED=true
+BELEGAPP_TRUSTED_PROXIES=172.16.0.0/12
+BELEGAPP_AUTH_HEADER_NAME=Remote-Email
+BELEGAPP_AUTH_HEADER_ALLOWED=eduard@example.de
+```
+
+Three rules make it safe, and all three are enforced at startup rather than left as advice:
+
+- **The header counts only from a trusted proxy.** `BELEGAPP_TRUSTED_PROXIES` is required, and a request from any other address has no identity whatever it sends — anywhere else in this process a header is data, here it is a claim. An empty list is a startup error, because the alternative is an instance that hands a session to whoever guesses the header name. A header that arrives **more than once** is treated as no header: a client can send it itself, and a proxy that appends instead of replacing would otherwise leave the choice between the two values to chance.
+- **The value has to be on the list.** `BELEGAPP_AUTH_HEADER_ALLOWED` is required and uses the same syntax as `BELEGAPP_OIDC_ALLOWED_EMAILS` — `*`, `*@example.de`, `*@*.example.de`, an exact address — plus, because the header is the operator's choice, a bare value with no `@` in it, compared literally: `eduard`, and `*` for everybody the proxy authenticates.
+- **The header name is what the proxy writes.** `Remote-Email` is the default because that is what the common setups send, but the value is only ever compared with the list, so a proxy that asserts a login name (`Remote-User`, `X-Forwarded-User`, `X-Auth-Request-User`) works exactly the same way — set the name to that header and the list to the names. The name has to be a valid header field name; anything else is a startup error, because a name that cannot be looked up would leave the process running and refusing every request.
+
+What happens then: the first request from such a browser has no belegapp cookie, so the header decides and a normal session is created for the actor `header:<value>`; from then on that cookie is the authority, like any other session. The allowlist is what decides who may open a session, not what is re-checked on every request — so removing somebody from the list ends their next sign-in, not the session they are in the middle of. To end one immediately, use `Einstellungen → Sitzungen`. A visitor the proxy did not authenticate gets `401`, and one the proxy did authenticate but the list does not cover gets `403`.
+
+`Abmelden` in the settings disappears for a browser that came in this way: dropping the belegapp session would only get it a new one from the proxy on the next request. With `BELEGAPP_AUTH_HEADER_LOGOUT_URL` set, the settings offer a link to the proxy's own logout instead.
+
+One caveat worth stating: the app trusts what the proxy asserts, and it cannot check it. Whatever the proxy considers a successful login — a password, a passkey, a group membership — is the security of this instance. Keep the header name one that the proxy always overwrites, and never expose this process directly on a network from which the trusted range is reachable.
 
 ## The OIDC email allowlist
 

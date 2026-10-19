@@ -6,11 +6,10 @@ import { expect, test as base, type Page } from "@playwright/test";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-// Low-cost PHC (m=8192, t=1, p=1) for the password "belegapp-e2e".
+// The shared password every spec signs in with. It is written into the
+// database before the server starts: the instance password is a row, not an
+// environment variable, so there is nothing to precompute here.
 export const password = process.env.E2E_PASSWORD ?? "belegapp-e2e";
-export const passwordHash =
-  process.env.BELEGAPP_AUTH_PASSWORD_HASH ||
-  "$argon2id$v=19$m=8192,t=1,p=1$ZTJlc2FsdGUyZXNhbHQ$fpwELKXJzuNANkbVeL78/95t50JZd5M7U094xSidoBM";
 
 // 1×1 PNG. The server normalises it to JPEG and strips metadata.
 export const png = Buffer.from(
@@ -30,6 +29,10 @@ type StartOpts = {
   slot: number;
   llm?: boolean;
   oidc?: boolean;
+  // header starts the instance behind a pretend proxy: the loopback address
+  // this suite connects from is listed as the trusted network, so a header this
+  // suite sends is believed exactly as a real proxy's would be.
+  header?: { name: string; allowed: string };
 };
 
 export async function startStack(opts: StartOpts): Promise<Stack> {
@@ -76,7 +79,6 @@ export async function startStack(opts: StartOpts): Promise<Stack> {
       BELEGAPP_COOKIE_SECURE: "false",
       BELEGAPP_BASE_URL: baseURL,
       BELEGAPP_TZ: "Europe/Berlin",
-      BELEGAPP_AUTH_PASSWORD_HASH: passwordHash,
       BELEGAPP_LOG_FORMAT: "text",
       BELEGAPP_LOG_LEVEL: "warn",
       BELEGAPP_JOB_WORKERS: "2",
@@ -89,6 +91,12 @@ export async function startStack(opts: StartOpts): Promise<Stack> {
       appEnv.BELEGAPP_LLM_TIMEOUT = "10s";
     } else {
       appEnv.BELEGAPP_LLM_ENABLED = "false";
+    }
+    if (opts.header) {
+      appEnv.BELEGAPP_AUTH_HEADER_ENABLED = "true";
+      appEnv.BELEGAPP_TRUSTED_PROXIES = "127.0.0.1/32";
+      appEnv.BELEGAPP_AUTH_HEADER_NAME = opts.header.name;
+      appEnv.BELEGAPP_AUTH_HEADER_ALLOWED = opts.header.allowed;
     }
     if (opts.oidc) {
       const configPath = path.join("/tmp", `belegapp-oidc-${opts.name}-${opts.slot}.json`);
@@ -107,10 +115,8 @@ export async function startStack(opts: StartOpts): Promise<Stack> {
       appEnv.BELEGAPP_OIDC_ALLOWED_SUBJECTS = "e2e-user";
     }
 
-    const appBin = process.env.BELEGAPP_BIN;
-    const appCmd: Cmd = appBin
-      ? { cmd: appBin, args: ["serve"] }
-      : { cmd: "go", args: ["run", "./cmd/belegapp", "serve"] };
+    const appCmd: Cmd = appCommand("serve");
+    await setPassword(appEnv, appCommand("set-password"));
     const appChild = track(spawnLogged(appCmd, appEnv));
     await waitOk(`${baseURL}/healthz`, appChild, tail);
     if (opts.oidc) {
@@ -124,6 +130,38 @@ export async function startStack(opts: StartOpts): Promise<Stack> {
 }
 
 type Cmd = { cmd: string; args: string[] };
+
+function appCommand(command: string): Cmd {
+  const bin = process.env.BELEGAPP_BIN;
+  if (bin) return { cmd: bin, args: [command] };
+  return { cmd: "go", args: ["run", "./cmd/belegapp", command] };
+}
+
+// setPassword writes the instance password before serve starts: `serve` refuses
+// to come up without one. It runs to completion and is not tracked, because the
+// server the specs talk to only starts after it has finished.
+async function setPassword(env: NodeJS.ProcessEnv, cmd: Cmd) {
+  const child = spawn(cmd.cmd, cmd.args, {
+    cwd: repoRoot,
+    env: { ...process.env, ...env },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let out = "";
+  const push = (chunk: Buffer) => {
+    out += chunk.toString();
+  };
+  child.stdout?.on("data", push);
+  child.stderr?.on("data", push);
+  await new Promise<void>((resolve, reject) => {
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`set-password exited ${code}\n${out}`));
+    });
+    // The command reads the first line of stdin when stdin is not a terminal.
+    child.stdin?.end(`${password}\n`);
+  });
+}
 
 function binOrGo(bin: string | undefined, goRun: string[]): Cmd {
   if (bin) return { cmd: bin, args: [] };

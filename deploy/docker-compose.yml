@@ -1,6 +1,13 @@
 # Copy deploy/.env.example to deploy/.env and fill it in.
 # `docker compose` refuses to start while a ${VAR:?} value is empty.
-# The process itself accepts either a password hash or OIDC. This example sets both, plus the LLM key.
+#
+# The instance password is not configuration. It is an argon2id hash in the
+# database, written with
+#     docker compose run --rm belegapp set-password
+# against the same volume this service uses. That runs on a fresh deployment
+# before the first `up`, and there is no password file to create or keep.
+# `serve` refuses to start until a password, OIDC, or trusted-header
+# authentication exists.
 services:
   belegapp:
     image: ghcr.io/blackdark/vc-belegapp:1
@@ -28,13 +35,30 @@ services:
     environment:
       BELEGAPP_BASE_URL: ${BELEGAPP_BASE_URL:?set BELEGAPP_BASE_URL}
       BELEGAPP_TRUSTED_PROXIES: ${BELEGAPP_TRUSTED_PROXIES:-172.16.0.0/12}
-      BELEGAPP_OIDC_ISSUER_URL: ${BELEGAPP_OIDC_ISSUER_URL:?set BELEGAPP_OIDC_ISSUER_URL}
-      BELEGAPP_OIDC_CLIENT_ID: ${BELEGAPP_OIDC_CLIENT_ID:?set BELEGAPP_OIDC_CLIENT_ID}
-      BELEGAPP_OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_secret
-      # Optional when BELEGAPP_OIDC_ALLOWED_SUBJECTS is used instead.
-      # "*" admits every account with a verified email at the issuer.
-      BELEGAPP_OIDC_ALLOWED_EMAILS: ${BELEGAPP_OIDC_ALLOWED_EMAILS:-}
-      BELEGAPP_AUTH_PASSWORD_HASH_FILE: /run/secrets/pw_hash
+      # OIDC is optional. Uncomment these four lines to sign in through an
+      # identity provider instead of (or next to) the password. The client
+      # secret file is mounted either way; leave OIDC_SECRET_FILE unset in .env
+      # for a public client (PKCE only) and set it for a confidential one. "*"
+      # admits every account with a verified email at the issuer, otherwise
+      # list the addresses.
+      # BELEGAPP_OIDC_ISSUER_URL: ${BELEGAPP_OIDC_ISSUER_URL:?set BELEGAPP_OIDC_ISSUER_URL}
+      # BELEGAPP_OIDC_CLIENT_ID: ${BELEGAPP_OIDC_CLIENT_ID:?set BELEGAPP_OIDC_CLIENT_ID}
+      # BELEGAPP_OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_secret
+      # BELEGAPP_OIDC_ALLOWED_EMAILS: ${BELEGAPP_OIDC_ALLOWED_EMAILS:?set BELEGAPP_OIDC_ALLOWED_EMAILS}
+      # Trusted-header authentication, off unless BELEGAPP_AUTH_HEADER_ENABLED
+      # is true. For a proxy in front of this service that has already signed
+      # the browser in (forward-auth in Traefik or Envoy Gateway, oauth2-proxy,
+      # Authelia behind Caddy): the header that proxy writes is the identity,
+      # and only requests from BELEGAPP_TRUSTED_PROXIES are believed. The list
+      # is required — "*" admits everybody the proxy authenticates. Nothing else
+      # is needed: the instance then starts without a password, and the login
+      # screen is never shown. BELEGAPP_AUTH_HEADER_LOGOUT_URL replaces the
+      # logout button with a link to the proxy's own logout; the app cannot end
+      # a login that lives there.
+      # BELEGAPP_AUTH_HEADER_ENABLED: "true"
+      # BELEGAPP_AUTH_HEADER_NAME: Remote-Email
+      # BELEGAPP_AUTH_HEADER_ALLOWED: eduard@example.de
+      # BELEGAPP_AUTH_HEADER_LOGOUT_URL: https://auth.example.de/logout
       BELEGAPP_LLM_API_KEY_FILE: /run/secrets/openai_key
       # Receipt intake by e-mail, off unless BELEGAPP_MAIL_ENABLED is true.
       # Create the `imap_password` secret and uncomment the three lines below to
@@ -62,7 +86,7 @@ services:
       # ingest and never deleted.
       # BELEGAPP_WATCH_FOLDER: /watch
       # BELEGAPP_WATCH_INTERVAL: 30s
-    secrets: [oidc_secret, pw_hash, openai_key, imap_password]
+    secrets: [oidc_secret, openai_key, imap_password]
     healthcheck:
       test: ["CMD", "/belegapp", "healthcheck"]
       interval: 30s
@@ -70,10 +94,13 @@ services:
       retries: 3
       start_period: 10s
 secrets:
+  # Only read when the OIDC lines in the environment are enabled; the mount is
+  # always there so that uncommenting one line is the whole change. Set
+  # OIDC_SECRET_FILE in .env to the file holding the client secret — or leave it
+  # unset when the provider registers this instance as a public client, which
+  # uses PKCE and no secret at all.
   oidc_secret:
-    file: ${OIDC_SECRET_FILE:?path to the OIDC client secret}
-  pw_hash:
-    file: ${PASSWORD_HASH_FILE:?path to the argon2id password hash}
+    file: ${OIDC_SECRET_FILE:-/dev/null}
   openai_key:
     file: ${LLM_API_KEY_FILE:?path to the LLM API key}
   # Only read when the IMAP intake is enabled (BELEGAPP_MAIL_ENABLED). The

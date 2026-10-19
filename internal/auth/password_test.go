@@ -3,6 +3,7 @@ package auth
 import (
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"testing"
 
 	"golang.org/x/crypto/argon2"
@@ -30,5 +31,25 @@ func TestPasswordRoundTrip(t *testing.T) {
 	)
 	if !VerifyPassword("secret", light) {
 		t.Fatal("light params")
+	}
+}
+
+// The one password rule, and the boundary on both sides of it: the constant is
+// what the CLI and the change endpoint report, so a change there has to break
+// this test rather than quietly start accepting shorter passwords.
+func TestValidatePasswordLength(t *testing.T) {
+	if err := ValidatePassword(strings.Repeat("a", MinPasswordLen)); err != nil {
+		t.Fatalf("a password of exactly MinPasswordLen was refused: %v", err)
+	}
+	if err := ValidatePassword(strings.Repeat("a", MinPasswordLen-1)); err == nil {
+		t.Fatal("a password below MinPasswordLen was accepted")
+	}
+	if err := ValidatePassword(""); err == nil {
+		t.Fatal("an empty password was accepted")
+	}
+	// The rule counts characters, not bytes: twelve umlauts are twelve
+	// characters and must not be refused for being twenty-four bytes.
+	if err := ValidatePassword(strings.Repeat("ü", MinPasswordLen)); err != nil {
+		t.Fatalf("a multi-byte password of MinPasswordLen characters was refused: %v", err)
 	}
 }

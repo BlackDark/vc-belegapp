@@ -14,6 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BlackDark/vc-belegapp/internal/auth"
+	"github.com/BlackDark/vc-belegapp/internal/db"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -81,9 +84,9 @@ func TestServeReady(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("BELEGAPP_DATA_DIR", dir)
 	t.Setenv("BELEGAPP_LOG_FORMAT", "text")
-	t.Setenv("BELEGAPP_AUTH_PASSWORD_HASH", "$argon2id$v=19$m=65536,t=3,p=2$c2FsdHNhbHRzYWx0$aGFzaGhhc2hoYXNoaGFzaA")
 	t.Setenv("BELEGAPP_LISTEN_ADDR", freeAddr(t))
 	t.Setenv("BELEGAPP_METRICS_ADDR", freeAddr(t))
+	setPassword(t, "serve-ready-passwort")
 	bin := filepath.Join(dir, "typst")
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho typst 0.15.1\n"), 0o755); err != nil {
 		t.Fatal(err)
@@ -195,6 +198,82 @@ func fileAutoVacuumMode(t *testing.T, path string) int {
 		t.Fatal(err)
 	}
 	return mode
+}
+
+// setPassword runs the real command with the password on stdin, which is how a
+// container deployment sets it too. Stdin is replaced for the one call: the
+// command reads it directly, and no flag exists that would let the test take a
+// shortcut around the path the operator uses.
+func setPassword(t *testing.T, password string) {
+	t.Helper()
+	if err := runSetPassword(t, password); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runSetPassword(t *testing.T, password string) error {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = old }()
+	if _, err := w.WriteString(password); err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close()
+	return run(context.Background(), []string{"set-password"}, io.Discard, io.Discard)
+}
+
+// The password the command stored is the password that logs in. One assertion
+// tying the CLI, the hashing and the row together, so a change in any of the
+// three fails here rather than at a login nobody tested.
+func TestSetPasswordStoresAUsableHash(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("BELEGAPP_DATA_DIR", dir)
+	setPassword(t, "ein-langes-passwort")
+
+	database, err := db.Open(filepath.Join(dir, "belegapp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	hash, err := db.New(database.ReadDB()).PasswordHash(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !auth.VerifyPassword("ein-langes-passwort", hash) {
+		t.Fatal("the stored hash does not verify the password it was stored for")
+	}
+	if auth.VerifyPassword("etwas-anderes", hash) {
+		t.Fatal("the stored hash verifies a different password")
+	}
+}
+
+// A password below the minimum is refused before anything is written, so the
+// instance cannot be left with a password nobody meant to set.
+func TestSetPasswordRefusesShortPassword(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("BELEGAPP_DATA_DIR", dir)
+	err := runSetPassword(t, "kurz")
+	var exit *exitError
+	if !errors.As(err, &exit) || exit.code != 2 {
+		t.Fatalf("got %v, want exit 2", err)
+	}
+	database, err := db.Open(filepath.Join(dir, "belegapp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	hash, err := db.New(database.ReadDB()).PasswordHash(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hash != "" {
+		t.Fatal("a refused password was stored anyway")
+	}
 }
 
 func freeAddr(t *testing.T) string {

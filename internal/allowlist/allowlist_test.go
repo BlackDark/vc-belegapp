@@ -229,3 +229,72 @@ func TestZeroPatternMatchesNothing(t *testing.T) {
 		t.Fatal("the zero Pattern matched")
 	}
 }
+
+// ParseValue is what BELEGAPP_AUTH_HEADER_ALLOWED is compiled with. The header
+// is the operator's choice, so an entry may be an address or a bare login name,
+// and the difference between the two has to stay visible: "eduard" never grants
+// "eduard@example.de".
+func TestParseValueMatch(t *testing.T) {
+	tests := []struct {
+		entry string
+		value string
+		want  bool
+	}{
+		// A bare value, compared with the whole header value.
+		{"eduard", "eduard", true},
+		{"eduard", "Eduard", true},
+		{"eduard", "eduard@example.de", false},
+		{"eduard", "eduards", false},
+		{"eduard", "", false},
+		{"eduard", "eduard ", false},
+		// The e-mail forms keep working, because the default header is an
+		// address.
+		{"eduard@example.de", "eduard@example.de", true},
+		{"*@example.de", "whoever@example.de", true},
+		{"*@example.de", "whoever@sub.example.de", false},
+		{"*@*.example.de", "whoever@sub.example.de", true},
+		// Everybody, spelled out.
+		{Any, "eduard", true},
+		{Any, "eduard@example.de", true},
+		{Any, "", false},
+		// An address entry does not grant a bare value and the other way
+		// round; the two vocabularies do not bleed into each other.
+		{"*@example.de", "eduard", false},
+		{"eduard@example.de", "eduard", false},
+	}
+	for _, tt := range tests {
+		p, err := ParseValue(tt.entry)
+		if err != nil {
+			t.Fatalf("ParseValue(%q): %v", tt.entry, err)
+		}
+		if got := p.Match(tt.value); got != tt.want {
+			t.Errorf("%q vs %q = %v, want %v", tt.entry, tt.value, got, tt.want)
+		}
+	}
+}
+
+// A wildcard that is not the whole entry is refused in a bare value too. The
+// operator who writes "edu*" believes every Eduard can log in; an entry that
+// quietly covers nobody is the failure mode this package refuses everywhere.
+func TestParseValueRejectsMalformed(t *testing.T) {
+	for _, entry := range []string{
+		"",
+		"edu*",
+		"*eduard",
+		"edu ard",
+		"eduard\t",
+		"*.*",
+	} {
+		if p, err := ParseValue(entry); err == nil {
+			t.Errorf("ParseValue(%q) = %+v, want an error", entry, p)
+		}
+	}
+}
+
+// Parse keeps refusing a bare value: BELEGAPP_OIDC_ALLOWED_EMAILS is an address
+// list, and a login name in it would cover nobody.
+func TestParseStillRejectsABareValue(t *testing.T) {
+	if p, err := Parse("eduard"); err == nil {
+		t.Fatalf("Parse(%q) = %+v, want an error", "eduard", p)
+	}
+}

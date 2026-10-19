@@ -16,6 +16,8 @@ import (
 
 	"github.com/caarlos0/env/v11"
 	_ "time/tzdata" // Europe/Berlin inside distroless, which has no zoneinfo.
+
+	"github.com/BlackDark/vc-belegapp/internal/allowlist"
 )
 
 // Config is the process configuration. Secret values are never logged by callers.
@@ -51,8 +53,9 @@ type Config struct {
 	SessionIdleTimeout     time.Duration `env:"BELEGAPP_SESSION_IDLE_TIMEOUT" envDefault:"720h"`
 	SessionAbsoluteTimeout time.Duration `env:"BELEGAPP_SESSION_ABSOLUTE_TIMEOUT" envDefault:"2160h"`
 
-	AuthPasswordHash string `env:"BELEGAPP_AUTH_PASSWORD_HASH"`
-
+	// No password variable exists. The instance password is an argon2id hash in
+	// the database, set with `belegapp set-password` and changed in the
+	// settings screen; see docs/configuration.md.
 	OIDCIssuerURL       string `env:"BELEGAPP_OIDC_ISSUER_URL"`
 	OIDCClientID        string `env:"BELEGAPP_OIDC_CLIENT_ID"`
 	OIDCClientSecret    string `env:"BELEGAPP_OIDC_CLIENT_SECRET"`
@@ -63,6 +66,23 @@ type Config struct {
 	OIDCEmailsRaw       string `env:"BELEGAPP_OIDC_ALLOWED_EMAILS"`
 	OIDCButtonLabel     string `env:"BELEGAPP_OIDC_BUTTON_LABEL" envDefault:"Mit SSO anmelden"`
 	OIDCRPLogout        bool   `env:"BELEGAPP_OIDC_RP_LOGOUT" envDefault:"false"`
+
+	// AuthHeader is the third way in: a reverse proxy in front of this process
+	// authenticates the browser and asserts who it is in a header. It is off by
+	// default, and it refuses to start without the proxy networks and an
+	// allowlist — a header nobody vouches for is not an identity, and a mode
+	// that trusts one from anywhere is worse than no mode at all.
+	//
+	// AuthHeaderName is the header the proxy writes, and AuthHeaderAllowed is
+	// compared against its value. The default is an address because that is
+	// what the two proxy families in the documentation send, but the value is
+	// whatever the operator's proxy puts there: BELEGAPP_AUTH_HEADER_ALLOWED
+	// also accepts a bare login name, and the documentation says so.
+	AuthHeaderEnabled    bool   `env:"BELEGAPP_AUTH_HEADER_ENABLED" envDefault:"false"`
+	AuthHeaderName       string `env:"BELEGAPP_AUTH_HEADER_NAME" envDefault:"Remote-Email"`
+	AuthHeaderAllowedRaw string `env:"BELEGAPP_AUTH_HEADER_ALLOWED"`
+	AuthHeaderAllowed    []allowlist.Pattern
+	AuthHeaderLogoutURL  string `env:"BELEGAPP_AUTH_HEADER_LOGOUT_URL"`
 
 	StorageBackend string `env:"BELEGAPP_STORAGE_BACKEND" envDefault:"fs"`
 	StorageFSDir   string `env:"BELEGAPP_STORAGE_FS_DIR"`
@@ -358,12 +378,6 @@ func unknownJobTimeoutVars(known map[string]bool) []string {
 	return unknown
 }
 
-// AuthConfigured reports whether password login or OIDC is configured.
-// serve refuses to start when this is false.
-func (c Config) AuthConfigured() bool {
-	return c.AuthPasswordHash != "" || c.OIDCIssuerURL != ""
-}
-
 // MailConfigured reports whether the IMAP intake may run. It is the single
 // gate: app.go starts no ticker and enqueues no mail job when this is false,
 // so a leftover BELEGAPP_MAIL_HOST in the environment does not by itself turn
@@ -394,7 +408,6 @@ func applySecretFiles(cfg *Config) error {
 		dest *string
 	}{
 		{"BELEGAPP_SECRET_KEY", &cfg.SecretKeyRaw},
-		{"BELEGAPP_AUTH_PASSWORD_HASH", &cfg.AuthPasswordHash},
 		{"BELEGAPP_OIDC_CLIENT_SECRET", &cfg.OIDCClientSecret},
 		{"BELEGAPP_S3_ACCESS_KEY_ID", &cfg.S3AccessKeyID},
 		{"BELEGAPP_S3_SECRET_ACCESS_KEY", &cfg.S3SecretAccessKey},

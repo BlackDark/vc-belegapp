@@ -138,7 +138,6 @@ func configuredIntake() config.Config {
 		LLMAPIKey:          "sk-geheim-4711",
 		OIDCClientSecret:   "oidc-geheim-4711",
 		SecretKeyRaw:       "schluessel-4711",
-		AuthPasswordHash:   "$2a$10$geheim4711",
 		S3Endpoint:         "https://s3.example.de",
 		S3Bucket:           "belegapp-geheim-4711",
 		S3AccessKeyID:      "akia-geheim-4711",
@@ -180,6 +179,7 @@ func systemInfoFor(t *testing.T, info Info) httpResult {
 	database := dbtest.Open(t)
 	store := storage.NewFS(t.TempDir())
 	svc := newTestService(t, database, store, dbtest.Clock(dbtest.Loc(t)), nil)
+	seedPassword(t, database)
 	sessions := &auth.Sessions{DB: database, Idle: time.Hour, Absolute: 2 * time.Hour, Secure: false}
 	handler, err := server.New(server.Options{
 		Frontend: fstest.MapFS{"index.html": {Data: []byte("<title>Belegapp</title>")}},
@@ -191,12 +191,11 @@ func systemInfoFor(t *testing.T, info Info) httpResult {
 			Typst:      func(context.Context) (string, error) { return "typst test", nil },
 		},
 		API: (&API{
-			Svc:          svc,
-			Sessions:     sessions,
-			Limiter:      &auth.Limiter{},
-			PasswordHash: lightHash("geheim"),
-			OIDCLabel:    "Mit SSO anmelden",
-			Info:         info,
+			Svc:       svc,
+			Sessions:  sessions,
+			Limiter:   &auth.Limiter{},
+			OIDCLabel: "Mit SSO anmelden",
+			Info:      info,
 		}).Handler(),
 	})
 	if err != nil {
