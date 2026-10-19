@@ -134,16 +134,6 @@ export default function Review() {
           Betrag, Händler und Erstattung prüfen, dann speichern.
         </p>
       </div>
-      <Show when={!params.id && bildIds().length < 3}>
-        <CaptureInputs onFile={(file) => void addFile(file)} />
-      </Show>
-      <Show when={bildIds()[0]}>
-        <img
-          alt="Belegbild"
-          class="max-h-72 w-full rounded-xl border bg-muted object-contain"
-          src={`/api/v1/belegbilder/${bildIds()[0]}/datei`}
-        />
-      </Show>
       <Show when={params.id && existing.isPending}>
         <p class="text-sm text-muted-foreground">Lädt …</p>
       </Show>
@@ -160,36 +150,52 @@ export default function Review() {
           Die Einstellungen konnten nicht geladen werden.
         </p>
       </Show>
-      <Show when={Boolean(params.id ? existing.data : profil.data)}>
-        <ReviewForm
-          initial={initial()}
-          bildIds={bildIds()}
-          beleg={existing.data}
-          erkennung={erkennung()}
-          timedOut={
-            gaveUp() &&
-            (erkennung()?.status === "ausstehend" ||
-              erkennung()?.status === "laeuft")
-          }
-          onRetry={firstId() ? () => void retry() : undefined}
-          onDone={() => {
-            if (params.id) {
-              void queryClient.invalidateQueries({
-                queryKey: queryKeys.beleg(params.id),
-              });
+      {/* Image beside the form once there is room: a portrait receipt in a
+          full-width column is a receipt floating in empty grey. */}
+      <div class="grid items-start gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] lg:gap-6">
+        <div class="flex flex-col gap-4 lg:sticky lg:top-20">
+          <Show when={!params.id && bildIds().length < 3}>
+            <CaptureInputs onFile={(file) => void addFile(file)} />
+          </Show>
+          <Show when={bildIds()[0]}>
+            <img
+              alt="Belegbild"
+              class="max-h-72 w-full rounded-xl border bg-muted object-contain lg:max-h-[70vh]"
+              src={`/api/v1/belegbilder/${bildIds()[0]}/datei`}
+            />
+          </Show>
+        </div>
+        <Show when={Boolean(params.id ? existing.data : profil.data)}>
+          <ReviewForm
+            initial={initial()}
+            bildIds={bildIds()}
+            beleg={existing.data}
+            erkennung={erkennung()}
+            timedOut={
+              gaveUp() &&
+              (erkennung()?.status === "ausstehend" ||
+                erkennung()?.status === "laeuft")
             }
-            void queryClient.invalidateQueries({
-              queryKey: queryKeys.monatAll,
-            });
-            // Saving attaches the images to the Beleg and deleting one releases
-            // them back, so the unassigned list and its count both move.
-            void queryClient.invalidateQueries({
-              queryKey: queryKeys.offeneBilder,
-            });
-            navigate("/monat");
-          }}
-        />
-      </Show>
+            onRetry={firstId() ? () => void retry() : undefined}
+            onDone={() => {
+              if (params.id) {
+                void queryClient.invalidateQueries({
+                  queryKey: queryKeys.beleg(params.id),
+                });
+              }
+              void queryClient.invalidateQueries({
+                queryKey: queryKeys.monatAll,
+              });
+              // Saving attaches the images to the Beleg and deleting one releases
+              // them back, so the unassigned list and its count both move.
+              void queryClient.invalidateQueries({
+                queryKey: queryKeys.offeneBilder,
+              });
+              navigate("/monat");
+            }}
+          />
+        </Show>
+      </div>
     </section>
   );
 }

@@ -150,36 +150,43 @@ export default function Shell(props: ParentProps) {
             <Suspense fallback={<PageSkeleton />}>{props.children}</Suspense>
           </div>
         </SidebarInset>
-        <nav class="fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 px-4 py-2 backdrop-blur md:hidden">
-          <div class="mx-auto grid max-w-lg grid-cols-3 items-end">
+        <nav class="fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 px-2 py-2 backdrop-blur md:hidden">
+          {/* The capture button floats over the bar's centre so the four
+              destinations stay in four equal columns. Sharing a three-column
+              grid squeezed two of them into the last third. */}
+          <button
+            type="button"
+            class="absolute -top-7 left-1/2 flex size-14 -translate-x-1/2 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            aria-label="Beleg erfassen"
+            onClick={() => navigate("/erfassen")}
+          >
+            <Camera size={22} />
+          </button>
+          <div class="mx-auto grid max-w-lg grid-cols-4 items-end">
             <BottomLink
               href="/"
               label="Heute"
               icon={<Sun size={20} />}
               current={location.pathname === "/"}
             />
-            <button
-              type="button"
-              class="mx-auto -mt-7 flex size-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-              aria-label="Beleg erfassen"
-              onClick={() => navigate("/erfassen")}
-            >
-              <Camera size={22} />
-            </button>
-            <div class="flex justify-around">
-              <BottomLink
-                href="/monat"
-                label="Monat"
-                icon={<CalendarDays size={20} />}
-                current={location.pathname.startsWith("/monat")}
-              />
-              <BottomLink
-                href="/einstellungen"
-                label="Einstellungen"
-                icon={<Settings size={20} />}
-                current={location.pathname.startsWith("/einstellungen")}
-              />
-            </div>
+            <BottomLink
+              href="/monat"
+              label="Monat"
+              icon={<CalendarDays size={20} />}
+              current={location.pathname.startsWith("/monat")}
+            />
+            <BottomLink
+              href="/offene-bilder"
+              label="Offene Bilder"
+              icon={<Images size={20} />}
+              current={location.pathname.startsWith("/offene-bilder")}
+            />
+            <BottomLink
+              href="/einstellungen"
+              label="Einstellungen"
+              icon={<Settings size={20} />}
+              current={location.pathname.startsWith("/einstellungen")}
+            />
           </div>
         </nav>
       </SidebarProvider>
