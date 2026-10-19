@@ -81,7 +81,7 @@ async function seedDemo(page: Page) {
     });
     if (!saved.ok) await fail(saved, "profil");
 
-    for (const item of items) {
+    const upload = async (lines: string[]) => {
       const canvas = document.createElement("canvas");
       canvas.width = 440;
       canvas.height = 640;
@@ -95,8 +95,8 @@ async function seedDemo(page: Page) {
       ctx.fillStyle = "#1a1a1a";
       ctx.font = "22px DejaVu Sans, sans-serif";
       ctx.textAlign = "center";
-      for (let i = 0; i < item.lines.length; i++) {
-        ctx.fillText(item.lines[i], 220, 72 + i * 36);
+      for (let i = 0; i < lines.length; i++) {
+        ctx.fillText(lines[i], 220, 72 + i * 36);
       }
       const blob = await new Promise<Blob>((resolve, reject) => {
         canvas.toBlob((value) => (value ? resolve(value) : reject(new Error("toBlob"))), "image/png");
@@ -106,7 +106,11 @@ async function seedDemo(page: Page) {
       body.append("erkennung", "false");
       const uploaded = await fetch("/api/v1/belegbilder", { method: "POST", body, credentials: "include" });
       if (!uploaded.ok) await fail(uploaded, "bild");
-      const bild = (await uploaded.json()) as { id: string };
+      return ((await uploaded.json()) as { id: string }).id;
+    };
+
+    for (const item of items) {
+      const bild = await upload(item.lines);
       const payload: Record<string, unknown> = {
         datum: item.datum,
         mahlzeit: "mittag",
@@ -116,7 +120,7 @@ async function seedDemo(page: Page) {
         haendler_ort: item.ort,
         belegbetrag_cent: item.betrag,
         notiz: "",
-        bild_ids: [bild.id],
+        bild_ids: [bild],
       };
       if (item.korrigiert != null) {
         payload.korrigierter_betrag_cent = item.korrigiert;
@@ -130,6 +134,10 @@ async function seedDemo(page: Page) {
       });
       if (!created.ok) await fail(created, `beleg ${item.datum}`);
     }
+
+    // Two images stay unassigned, so the Offene Bilder screen has rows to show.
+    await upload(["Kantine", "Köln", "19.10.2026  12:05", "Mittagessen", "7,50 EUR"]);
+    await upload(["Bäckerei Kruse", "Köln", "19.10.2026  08:12", "Frühstücksbrötchen", "4,20 EUR"]);
 
     const monat = await fetch("/api/v1/monate/2026-10", { credentials: "include" });
     if (!monat.ok) await fail(monat, "monat");
@@ -176,6 +184,12 @@ test("all pages", async ({ page }, info) => {
   }
   await shot(page, info, "heute");
 
+  await page.goto("/offene-bilder");
+  await expect(
+    page.getByRole("link", { name: "Prüfen" }).first(),
+  ).toBeVisible();
+  await shot(page, info, "offene-bilder");
+
   await page.goto("/erfassen");
   await expect(page.getByLabel("Galerie")).toBeVisible();
   await shot(page, info, "erfassen");
@@ -190,7 +204,7 @@ test("all pages", async ({ page }, info) => {
   await expect(page.getByRole("heading", { name: "Beleg prüfen" })).toBeVisible();
   await page.getByText("Korrigierter Betrag").click();
   await expect(page.getByLabel("Händler")).toHaveValue("Edeka");
-  await expect(page.getByText(/Erstattung/)).toBeVisible();
+  await expect(page.getByText("Geldwerter Vorteil")).toBeVisible();
   const leadingText = await page.evaluate(() => {
     const node = document.getElementById("root")?.firstChild;
     return node?.nodeType === Node.TEXT_NODE ? node.textContent : "";
@@ -225,6 +239,9 @@ test("all pages", async ({ page }, info) => {
   await page.getByLabel("Monat").fill("2026-10");
   await page.getByRole("button", { name: "Exportieren" }).click();
   await expect(page.getByText("Höchstens ein Beleg je Tag")).toBeVisible();
+  // The panel fades and slides in; wait for it to arrive, or the shot catches it
+  // mid-flight with the month showing through it.
+  await expect(page.getByRole("dialog")).toHaveCSS("opacity", "1");
   await shot(page, info, "monatsexport");
 
   if (info.project.name !== "desktop") return;

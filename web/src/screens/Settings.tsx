@@ -120,7 +120,7 @@ export default function Settings() {
   };
 
   return (
-    <section class="flex flex-col gap-6">
+    <section class="mx-auto flex w-full max-w-2xl flex-col gap-6">
       <div>
         <h1 class="text-2xl font-semibold tracking-tight">Einstellungen</h1>
         <p class="text-sm text-muted-foreground">

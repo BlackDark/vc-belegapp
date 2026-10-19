@@ -484,12 +484,15 @@ export function ReviewForm(props: {
       <Show when={berechnung()}>
         {(calc) => (
           <Card class="rounded-xl">
-            <CardContent class="grid gap-1 p-4 text-sm">
-              <p>Erstattung {formatCent(calc().erstattung_cent)}</p>
-              <p>Eigenanteil {formatCent(calc().eigenanteil_cent)}</p>
-              <p>Geldwerter Vorteil {formatCent(calc().gv_cent)}</p>
-              <p>Steuerfrei {formatCent(calc().steuerfrei_cent)}</p>
-              <p>Regulär {formatCent(calc().regulaer_cent)}</p>
+            <CardContent class="flex flex-col gap-1 p-4 text-sm">
+              <Rechenzeile label="Erstattung" value={calc().erstattung_cent} />
+              <Rechenzeile
+                label="Eigenanteil"
+                value={calc().eigenanteil_cent}
+              />
+              <Rechenzeile label="Geldwerter Vorteil" value={calc().gv_cent} />
+              <Rechenzeile label="Steuerfrei" value={calc().steuerfrei_cent} />
+              <Rechenzeile label="Regulär" value={calc().regulaer_cent} />
             </CardContent>
           </Card>
         )}
@@ -510,7 +513,8 @@ export function ReviewForm(props: {
       </Button>
       <Show when={props.beleg}>
         <Button
-          variant="destructive"
+          variant="outline"
+          class="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
           disabled={saving()}
           onClick={() => {
             if (!props.beleg) {
@@ -542,5 +546,17 @@ export function ReviewForm(props: {
         }}
       />
     </form>
+  );
+}
+
+// One line of the calculation card: label left, amount right, so the five
+// amounts form a column the eye can compare instead of five sentences that
+// each start with a label of a different length.
+function Rechenzeile(props: { label: string; value: number }) {
+  return (
+    <div class="flex items-baseline justify-between gap-4">
+      <span class="text-muted-foreground">{props.label}</span>
+      <span class="font-medium tabular-nums">{formatCent(props.value)}</span>
+    </div>
   );
 }

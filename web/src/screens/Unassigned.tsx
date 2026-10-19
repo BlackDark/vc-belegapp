@@ -203,14 +203,14 @@ function Eintrag(props: { bild: OffenesBild }) {
 
   return (
     <Card class="rounded-xl">
-      <CardContent class="flex items-center gap-4 p-4">
+      <CardContent class="flex flex-wrap items-center gap-4 p-4">
         {/* Fixed portrait frame. object-contain keeps the whole receipt visible. */}
         <img
           alt="Beleg"
           class="h-24 w-16 shrink-0 rounded-lg border bg-muted object-contain"
           src={props.bild.thumbnail_url}
         />
-        <div class="flex min-w-0 flex-1 flex-col gap-1.5">
+        <div class="flex min-w-0 flex-1 flex-col items-start gap-1.5">
           <Badge
             variant={statusVariant[props.bild.erkennung_status] ?? "outline"}
           >
@@ -222,24 +222,29 @@ function Eintrag(props: { bild: OffenesBild }) {
             {(text) => <p class="text-sm">{text()}</p>}
           </Show>
         </div>
-        {/* Same deep link the capture flow uses: the review form reads the
-            bild query parameter and loads the image through GET /belegbilder/{id}. */}
-        <A
-          class="shrink-0 rounded-lg border px-3 py-2 text-sm font-medium hover:bg-accent"
-          href={`/belege/neu?bild=${props.bild.id}`}
-        >
-          Prüfen
-        </A>
-        {/* DELETE /belegbilder/{id} already exists and is session-guarded; it
-            refuses an assigned image with 422. */}
-        <Button
-          variant="destructive"
-          size="sm"
-          disabled={busy()}
-          onClick={() => void entfernen()}
-        >
-          Löschen
-        </Button>
+        {/* On a phone the two actions get their own row under the text; beside
+            it they squeeze the upload time into a column two words wide. */}
+        <div class="flex w-full shrink-0 gap-2 sm:w-auto">
+          {/* Same deep link the capture flow uses: the review form reads the
+              bild query parameter and loads the image through GET /belegbilder/{id}. */}
+          <A
+            class="flex-1 rounded-lg border px-3 py-2 text-center text-sm font-medium hover:bg-accent sm:flex-none"
+            href={`/belege/neu?bild=${props.bild.id}`}
+          >
+            Prüfen
+          </A>
+          {/* DELETE /belegbilder/{id} already exists and is session-guarded; it
+              refuses an assigned image with 422. */}
+          <Button
+            variant="outline"
+            size="sm"
+            class="flex-1 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive sm:flex-none"
+            disabled={busy()}
+            onClick={() => void entfernen()}
+          >
+            Löschen
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );

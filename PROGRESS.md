@@ -313,6 +313,36 @@ mit Header landet ohne Anmeldung auf *Heute*, einer ohne sieht den Proxy-Hinweis
 Berechtigungsmeldung). Dazu `web/src/screens/Login.test.tsx` (Proxy-Hinweis), `Settings.test.tsx` (Proxy-Logout-Link,
 kein `Abmelden` ohne URL, keine Passwortkarte ohne Passwort) und die Shell-Weiterleitung für `403`.
 
+## Oberfläche auf Handy und Desktop geprüft (19.10.2026)
+
+Die Screenshots aus `e2e/tests/screenshots.spec.ts` (Desktop 1280×800, iPhone 15) wurden je einmal hell und
+dunkel aufgenommen und Bild für Bild gelesen. Gefunden und behoben:
+
+- **Prüfen/Bearbeiten** war auf dem Desktop eine einzige 955 px breite Spalte: das Belegbild stand als schmaler
+  Streifen in einem leeren grauen Kasten, die Felder liefen über die ganze Breite. Ab `lg` stehen Bild (links,
+  klebend) und Formular (rechts) nebeneinander; das Bild darf jetzt 70 vh hoch werden statt 288 px.
+- **Einstellungen und Jahresregel** waren auf breiten Fenstern zu breit zum Lesen. Beide Seiten sind auf
+  `max-w-2xl` begrenzt und zentriert; „Heute" zeigt den leeren Zustand in einer Karte in Lesebreite statt über
+  die ganze Seite.
+- **Offene Bilder**: das Statusabzeichen wurde als Flex-Kind über die ganze Textspalte gezogen, und auf dem
+  Handy quetschten die beiden Aktionen die Upload-Zeit in eine zwei Wörter breite Spalte. Das Abzeichen ist
+  jetzt `w-fit` (in der Komponente, gilt überall), die Aktionen bekommen unter `sm` eine eigene Zeile, und
+  `Löschen` ist konturiert statt flächig rot — in einer Liste ist die destruktive Aktion nicht die wichtigste.
+- **Monat**: die vier Kennzahlen stehen auf dem Handy in zwei Spalten statt untereinander; Karte und Schrift
+  sind eine Stufe kleiner, damit die Werte in die halbe Breite passen.
+- **Untere Navigation**: vier Ziele (Heute, Monat, Offene Bilder, Einstellungen) in vier gleichen Spalten; der
+  Kamera-Knopf schwebt mittig darüber. Vorher teilten sich Monat und Einstellungen das letzte Drittel und
+  standen dadurch viel enger zusammen als Heute und der Knopf. „Offene Bilder" fehlte in der Leiste ganz.
+- **Rechenkarte** im Formular: Beträge rechtsbündig in einer Spalte statt fünf Sätzen mit unterschiedlich
+  langen Etiketten.
+- **Screenshot-Vorlage**: der Exportdialog wird erst aufgenommen, wenn seine Einblendung fertig ist
+  (`opacity: 1`); vorher zeigte das Bild den Monat durch das halb transparente Fenster. Außerdem seedet die
+  Vorlage zwei unzugeordnete Bilder und nimmt „Offene Bilder" mit auf.
+
+**Geprüft:** `tsc`, `biome ci`, 81 Vitest-Tests und `vite build` grün; `capture`, `recognition`, `settings`
+und `logout` (Playwright, System-Chrome) grün. Die Screenshots wurden in beiden Themes neu erzeugt und
+gelesen. Am Go-Code hat sich nichts geändert; die Binary bettet nur das neu gebaute `web/dist` ein.
+
 ## Arbeitsweise mit `main`
 
 `main` ist geschützt. Eine Änderung geht über einen Pull Request, wird per Squash zusammengefasst und

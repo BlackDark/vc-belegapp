@@ -139,7 +139,7 @@ export default function Month() {
                 </AlertDescription>
               </Alert>
             </Show>
-            <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
               <Sum label="Belege" value={String(data().summen.anzahl)} />
               <Sum
                 label="Monat"
@@ -315,9 +315,11 @@ export default function Month() {
 function Sum(props: { label: string; value: string }) {
   return (
     <Card class="rounded-xl">
-      <CardContent class="p-4">
+      <CardContent class="p-3 sm:p-4">
         <p class="text-sm text-muted-foreground">{props.label}</p>
-        <p class="text-xl font-semibold tabular-nums">{props.value}</p>
+        <p class="text-base font-semibold tabular-nums sm:text-xl">
+          {props.value}
+        </p>
       </CardContent>
     </Card>
   );

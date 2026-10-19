@@ -83,7 +83,7 @@ export default function AnnualRulePage() {
   };
 
   return (
-    <section class="flex flex-col gap-4">
+    <section class="mx-auto flex w-full max-w-2xl flex-col gap-4">
       <div>
         <h1 class="text-2xl font-semibold tracking-tight">
           Jahresregel {params.jahr}

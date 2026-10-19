@@ -82,7 +82,7 @@ export default function Today() {
         <Show
           when={beleg()}
           fallback={
-            <Card class="rounded-xl">
+            <Card class="mx-auto w-full max-w-md rounded-xl">
               <CardHeader>
                 <CardTitle>Noch kein Beleg</CardTitle>
                 <CardDescription>
