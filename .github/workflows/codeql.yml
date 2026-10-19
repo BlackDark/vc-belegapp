@@ -34,6 +34,10 @@ jobs:
         language: [go, javascript-typescript]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Go's autobuild compiles the whole module, and web/embed.go needs
+      # web/dist. The TypeScript analysis does not touch Go.
+      - uses: ./.github/actions/web-build
+        if: matrix.language == 'go'
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod

@@ -5,7 +5,8 @@ Prerequisites: Go 1.27.2 (`go` and `toolchain` in `go.mod`, `CGO_ENABLED=0`), No
 [.mise.toml](../.mise.toml) pins all of those plus golangci-lint, so `mise install` is enough on a clean machine. CI installs its own actions and pins the same versions inline. `go test ./internal/doccheck` fails when `go.mod` or `.nvmrc` drifts from the mise pins.
 
 ```bash
-make web              # biome, tsc, vitest, vite build
+make web-build        # pnpm install, vite build; needed before any go build/test
+make web              # biome, tsc, vitest, plus the bundle
 make test             # go test -race
 make lint             # gofmt, golangci-lint, biome
 make sqlc             # generate, vet, diff against a migrated database
@@ -16,7 +17,7 @@ make docker-prebuilt  # host binary copied into distroless
 make screenshots      # e2e/tests/screenshots.spec.ts, then docs/screenshots/*.webp
 ```
 
-Queries live in `internal/db/queries`, migrations in `internal/db/migrations`. Generated sqlc code is committed. `web/dist` is embedded with `//go:embed`; CI replaces it with a fresh Vite build before compiling.
+Queries live in `internal/db/queries`, migrations in `internal/db/migrations`. Generated sqlc code is committed. `web/dist` is a build artifact (gitignored) embedded with `//go:embed`; `make web-build` produces it, every Go target depends on that, and CI runs the same build in each job that compiles the web package.
 
 `go test` includes two documentation checks: [internal/config/readme_test.go](../internal/config/readme_test.go) compares the [configuration](configuration.md) table with the `BELEGAPP_` variables in code, and [internal/doccheck](../internal/doccheck/links_test.go) resolves relative links and image paths in Markdown.
 
@@ -30,7 +31,7 @@ pnpm -C e2e exec playwright install --with-deps chromium
 cd e2e && pnpm test
 ```
 
-CI passes `BELEGAPP_BIN` from the linux/amd64 job. Without it, Playwright runs `go run ./cmd/belegapp`.
+CI passes `BELEGAPP_BIN` from the linux/amd64 job. Without it, Playwright runs `go run ./cmd/belegapp`, so run `make web-build` first: the binary embeds `web/dist`.
 
 ## Screenshots
 
@@ -82,7 +83,7 @@ Decisions: [adr](adr). Specification: [SPEC.md](SPEC.md). Terms: [GLOSSARY.md](G
 
 | Workflow | When | What |
 | --- | --- | --- |
-| `ci.yml` | Push to any branch, dispatch, `workflow_call` | Web bundle, plus a check that the committed `web/dist` matches a fresh build; linux/amd64, linux/arm64; `go test` (including the Markdown link check); `govulncheck`; PDF golden + veraPDF; Playwright; multi-arch image, Trivy, read-only smoke. `release-dry-run` runs the same GoReleaser setup as a tag (`release --snapshot --clean --skip=archive,publish,sign,announce`) and fails if the checkout is dirty; a `changes` job first decides whether the push touched a file GoReleaser reads, and skips the snapshot when it did not. |
+| `ci.yml` | Push to any branch, dispatch, `workflow_call` | Web bundle (the shared `web-build` action, also run by every job that compiles the web package); linux/amd64, linux/arm64; `go test` (including the Markdown link check); `govulncheck`; PDF golden + veraPDF; Playwright; multi-arch image, Trivy, read-only smoke. `release-dry-run` runs the same GoReleaser setup as a tag (`release --snapshot --clean --skip=archive,publish,sign,announce`) and fails if the checkout is dirty; a `changes` job first decides whether the push touched a file GoReleaser reads, and skips the snapshot when it did not. |
 | `release-please.yml` | `workflow_dispatch` | Release PR, and on a second dispatch after that PR is merged, tag `vX.Y.Z`. Dispatches `ci.yml` on the release-PR branch and `release.yml` on the tag. Merging to `main` never releases; see [releases.md](releases.md#releasing). |
 | `release.yml` | Tag `v*` | Re-runs CI, smokes the image, GoReleaser. |
 | `codeql.yml` | Push to any branch, weekly | CodeQL for Go and TypeScript |

@@ -10,6 +10,13 @@ date=${BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
 out=${OUT:-dist}
 ldflags="-s -w -X main.version=${version} -X main.commit=${commit} -X main.date=${date}"
 
+# web/embed.go needs a bundle. `go build` would only say
+# "pattern all:dist: no matching files found", so name the fix.
+if [ ! -f web/dist/index.html ]; then
+  echo "web/dist is missing; run 'pnpm -C web build' (or 'make web-build') first" >&2
+  exit 1
+fi
+
 go mod download
 
 # One target per runner. Parallel compiles on a single runner split the

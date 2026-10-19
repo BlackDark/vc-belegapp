@@ -343,6 +343,36 @@ dunkel aufgenommen und Bild für Bild gelesen. Gefunden und behoben:
 und `logout` (Playwright, System-Chrome) grün. Die Screenshots wurden in beiden Themes neu erzeugt und
 gelesen. Am Go-Code hat sich nichts geändert; die Binary bettet nur das neu gebaute `web/dist` ein.
 
+## `web/dist` ist kein Quelltext mehr (19.10.2026)
+
+`web/dist` lag eingecheckt im Repository, weil `web/embed.go` es mit `//go:embed all:dist` einbettet
+und die CI bisher aus einem reinen Checkout ohne Node kompilierte. Der Preis war ein Build-Artefakt in der
+Versionsverwaltung: jede Frontend-Änderung zog einen zweiten, oft großen Commit nach sich, ein vergessener
+Build wäre still veraltet ausgeliefert worden — dagegen stand ein eigener Vergleichsjob —, und die Historie
+trägt jeden Bundle-Stand für immer mit. Das ist weg: `web/dist` ist gitignoriert und ein reines Artefakt.
+
+- **Eine Stelle baut es:** die Composite Action [`.github/actions/web-build`](.github/actions/web-build/action.yml)
+  (pnpm install (frozen), `vite build`). Der Job `web` ruft sie auf und läuft danach `biome ci`, `tsc --noEmit`
+  und `vitest run`; `linux-amd64`, `linux-arm64`, `go` und `vuln` rufen dieselbe Action vor ihren Schritten
+  auf, weil `golangci-lint`, `go test ./...` und `govulncheck ./...` das Paket `web` mitkompilieren. `pdf`
+  und `e2e` brauchen es nicht: `go build ./e2e/fakellm` und `go test ./internal/pdf ./internal/export`
+  laufen ohne `web/dist` (nachgemessen). GoReleaser baut es unverändert über seine `before.hooks`, und die
+  Docker-Builds tun es in ihrer Web-Stufe.
+- **Der `web`-Job vergleicht nichts mehr.** Den committeten Stand, gegen den er prüfen könnte, gibt es nicht
+  mehr.
+- **Lokal** hängen `make test`, `make lint`, `make vuln`, `make docker-prebuilt` und `make screenshots` an
+  dem neuen Ziel `web-build`; `make build` und `make web` tun es über `web`. `scripts/build-binaries.sh`
+  bricht mit einer klaren Meldung ab, wenn der Ordner fehlt, statt Go mit „pattern all:dist: no matching
+  files found" antworten zu lassen.
+- **CodeQL** ruft die Action ebenfalls auf, aber nur für die Matrix-Sprache `go`: der Go-Autobuild kompiliert
+  das ganze Modul.
+
+**Geprüft:** `git rm --cached` entfernt 33 Dateien aus dem Index, der Arbeitsbaum bleibt; `make web-build`
+baut ein zuvor gelöschtes `web/dist` neu, `go build ./...` ist danach grün, und `git status` zeigt nichts
+unter `web/dist`. Die drei geänderten YAML-Dateien parsen. Die Compile-Abhängigkeiten ohne `web/dist` wurden
+einzeln geprüft: `./web` scheitert erwartet, `./e2e/fakellm`, `./internal/pdf`, `./internal/export` und
+`./internal/server` laufen.
+
 ## Arbeitsweise mit `main`
 
 `main` ist geschützt. Eine Änderung geht über einen Pull Request, wird per Squash zusammengefasst und
