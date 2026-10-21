@@ -50,6 +50,12 @@ runs:
     # The version is the one the toolchain actually resolved to, not the one
     # go.mod names: a `toolchain` directive can select a newer release, and
     # that is the release that compiles the objects.
+    #
+    # The restore prefix stops at the version. A prefix that only named the
+    # scope would match the previous toolchain's cache, and the objects in it
+    # are exactly the ones the new compiler cannot use — a restore that
+    # returns a cache the job then rebuilds from scratch, while looking like
+    # it hit.
     - id: goversion
       shell: bash
       run: echo "version=$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
@@ -57,4 +63,4 @@ runs:
       with:
         path: ~/.cache/go-build
         key: go-build-${{ runner.os }}-${{ inputs.scope }}-${{ steps.goversion.outputs.version }}-${{ hashFiles('go.sum') }}
-        restore-keys: go-build-${{ runner.os }}-${{ inputs.scope }}-
+        restore-keys: go-build-${{ runner.os }}-${{ inputs.scope }}-${{ steps.goversion.outputs.version }}-
