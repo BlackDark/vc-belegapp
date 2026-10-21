@@ -31,15 +31,30 @@ runs:
     # there: the module set is a function of go.sum and the shared entry is
     # already complete.
     #
-    # The key changes only with go.sum. That is the point — dependencies
-    # (modernc.org/sqlite), the standard library and the Go tools stay cached
-    # while they are valid, and objects built from this repository change too
-    # often to be worth a second copy. A key that changed per run would retain
-    # more of them, at the price of writing hundreds of megabytes into the
-    # repository's 10 GB cache budget on every run, evicting the entries the
-    # other jobs restore.
+    # The key changes with go.sum and with the Go version. That is the point —
+    # dependencies (modernc.org/sqlite), the standard library and the Go tools
+    # stay cached while they are valid, and objects built from this repository
+    # change too often to be worth a second copy. A key that changed per run
+    # would retain more of them, at the price of writing hundreds of megabytes
+    # into the repository's 10 GB cache budget on every run, evicting the
+    # entries the other jobs restore.
+    #
+    # The Go version belongs in the key because a compiled object is only
+    # usable by the toolchain that produced it. setup-go's own cache key
+    # carries the version, and this one has to as well: a toolchain bump would
+    # otherwise restore objects the new compiler rejects, and because
+    # actions/cache writes a key only once, the stale entry would also block
+    # the fresh one from ever being written. The job would then compile
+    # everything from scratch on every run, forever.
+    #
+    # The version is the one the toolchain actually resolved to, not the one
+    # go.mod names: a `toolchain` directive can select a newer release, and
+    # that is the release that compiles the objects.
+    - id: goversion
+      shell: bash
+      run: echo "version=$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
     - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
       with:
         path: ~/.cache/go-build
-        key: go-build-${{ runner.os }}-${{ inputs.scope }}-${{ hashFiles('go.sum') }}
+        key: go-build-${{ runner.os }}-${{ inputs.scope }}-${{ steps.goversion.outputs.version }}-${{ hashFiles('go.sum') }}
         restore-keys: go-build-${{ runner.os }}-${{ inputs.scope }}-
