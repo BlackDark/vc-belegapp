@@ -191,6 +191,40 @@ Trotzdem war im kritischen Pfad echte Verschwendung, gemessen und behoben:
   21.10. um 00:27 veröffentlicht — **nach** dem letzten CI-Lauf. Der `vuln`-Job wäre bei jedem Push
   fehlgeschlagen, ohne dass etwas an diesem Repository geändert worden wäre. Der Job war um 19:52 noch grün
   („found 0 vulnerabilities"), die Lücke ist also der Zeitpunkt der Veröffentlichung, nicht ein Fehler.
+- **Der Build-Cache-Schlüssel kannte die Go-Version nicht.** Das war die Ursache hinter dem ersten
+  5-min-`go`-Lauf nach dem Versionswechsel: der Schlüssel hing nur an `go.sum`, und `go.sum` änderte sich
+  nicht. Ein übersetztes Objekt ist aber nur mit dem Compiler gültig, der es erzeugt hat, also stellte der
+  Job 372 MB Objekte von Go 1.27.2 wieder her, baute 1.27.3-Objekte hinein und konnte sie nicht
+  zurückschreiben — `actions/cache` schreibt einen Schlüssel nur einmal, der alte Eintrag blockierte den
+  neuen für immer. Jetzt steht die **aufgelöste** Go-Version im Schlüssel (`go env GOVERSION`, nicht die
+  Angabe in `go.mod`, weil eine `toolchain`-Direktive eine neuere wählen kann) und das Restore-Präfix
+  endet an der Version: ein Versionswechsel trifft den alten Eintrag nicht mehr, statt ihn zu treffen und
+  ihn unbrauchbar wiederherzustellen.
+
+Gemessen auf dem Branch, mit warmen Caches (Run 39592423490, alle 13 Checks grün). Vergleichsbasis ist
+Run 39487079441 (19.10., `main`); dort lief `release-dry-run` nicht, weil der Push keine Release-Datei
+berührte — für diesen Job steht deshalb der Lauf vom 19.10., in dem er lief (39283534610):
+
+| Job | vorher | nachher |
+| --- | --- | --- |
+| `go` | 165 s | 129 s |
+| `vuln` | 40 s | 30 s |
+| `linux-amd64` | 58 s | 56 s |
+| `linux-arm64` | 64 s | 52 s |
+| `pdf` | 30 s | 34 s |
+| `web` | 43 s | 48 s |
+| `docker` | 46 s | 53 s |
+| `e2e` | 90 s | 74 s |
+| `release-dry-run` | 246 s | 120 s |
+| **Wanduhr** | **168 s** | **136 s** |
+
+Die Wanduhr zählt Run 39487079441 gegen Run 39592423490. Der Lauf davor übersprang `release-dry-run`
+(der Push berührte keine Release-Datei), der Lauf danach führt ihn — dort ist er mit 120 s der
+kritische Pfad, weil er als letzter endet. Auf `main` selbst ist er nach dem Merge ebenfalls gelaufen
+(Run 39592825415, 259 s, noch ohne warmen Cache).
+
+Der erste Lauf nach dem Versionswechsel ist teurer, weil alle Cache-Einträge neu entstehen (Go 1.27.3
+kann die Objekte von 1.27.2 nicht benutzen); ab dem zweiten greifen sie.
 
 Nicht geändert, weil es nichts kostet: `go mod verify` (2 s bei warmem Modul-Cache), `unzip` und
 `openjdk-21-jre-headless` im `pdf`-Job (der Runner hat Java 17 als Vorgabe, veraPDF braucht 21), die
