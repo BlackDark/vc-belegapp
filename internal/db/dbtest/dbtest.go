@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,15 +22,85 @@ import (
 func Open(t *testing.T) *db.DB {
 	t.Helper()
 	dir := databaseDir(t)
-	database, err := db.Open(filepath.Join(dir, "belegapp.db"))
+	path := filepath.Join(dir, "belegapp.db")
+	if err := copyTemplate(t, path); err != nil {
+		t.Fatal(err)
+	}
+	database, err := db.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { closeAndRemove(t, database, dir) })
-	if err := db.Migrate(context.Background(), database.WriteDB()); err != nil {
-		t.Fatal(err)
-	}
 	return database
+}
+
+// template is the migrated database every test starts from.
+//
+// Migrating is the expensive part of the fixture, not opening the file. The
+// race detector instruments the pure-Go SQLite (modernc.org/sqlite emulates
+// libc), so one migration costs about 280 ms under -race against 13 ms
+// without, and the suites create a database per test: 172 of them in
+// internal/service alone. That is roughly 48 s of the package's 63 s, and it
+// is the same nine migrations over and over.
+//
+// So the schema is built once per test binary and each test copies the
+// result. A copy is 152 KB and takes about 30 ms, so the fixture drops from
+// 280 ms to 32 ms per database.
+//
+// The copy is a full copy of the main file, and the template is checkpointed
+// into that file before it is read: the template's own -wal is checkpointed
+// when its pools close, so the file on disk carries the schema, the goose
+// version table, and every row the template was seeded with. A test that
+// writes to its copy writes to its own file; the template is only ever read.
+var (
+	templateOnce sync.Once
+	templatePath string
+	templateErr  error
+)
+
+// template builds the migrated database once per test binary and returns its
+// path.
+func buildTemplate() (string, error) {
+	templateOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "belegapp-template-")
+		if err != nil {
+			templateErr = err
+			return
+		}
+		path := filepath.Join(dir, "template.db")
+		database, err := db.Open(path)
+		if err != nil {
+			templateErr = err
+			return
+		}
+		if err := db.Migrate(context.Background(), database.WriteDB()); err != nil {
+			templateErr = err
+			_ = database.Close()
+			return
+		}
+		// Closing checkpoints the -wal into the main file, so the copy below
+		// sees the schema and not an empty file.
+		if err := database.Close(); err != nil {
+			templateErr = err
+			return
+		}
+		templatePath = path
+	})
+	return templatePath, templateErr
+}
+
+// copyTemplate writes a copy of the migrated template to path.
+func copyTemplate(t *testing.T, path string) error {
+	t.Helper()
+	source, err := buildTemplate()
+	if err != nil {
+		return err
+	}
+	content, err := os.ReadFile(source)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, content, 0o640)
 }
 
 // databaseDir is a directory inside t.TempDir() of the test's own, rather than

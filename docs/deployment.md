@@ -190,7 +190,7 @@ Image tags are `X.Y.Z`, `X.Y`, `X`, and `latest`; the Compose and Kubernetes exa
 
 ## Binary
 
-Go 1.27.2, Node 24.21.0 (`.nvmrc`), pnpm 12.10.1 (`packageManager` in `web/package.json`). Typst 0.15.1 must be on `PATH` for PDFs and `/readyz` ([scripts/install-typst.sh](../scripts/install-typst.sh)).
+Go 1.27.3, Node 24.21.0 (`.nvmrc`), pnpm 12.10.1 (`packageManager` in `web/package.json`). Typst 0.15.1 must be on `PATH` for PDFs and `/readyz` ([scripts/install-typst.sh](../scripts/install-typst.sh)).
 
 ```bash
 pnpm -C web install --frozen-lockfile

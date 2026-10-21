@@ -6,7 +6,7 @@ Self-hosted, single-user PWA that photographs a meal receipt (Beleg), estimates 
 [![Release](https://img.shields.io/github/v/release/BlackDark/vc-belegapp)](https://github.com/BlackDark/vc-belegapp/releases)
 [![License: MIT](https://img.shields.io/github/license/BlackDark/vc-belegapp)](LICENSE)
 [![GHCR](https://img.shields.io/badge/ghcr.io-blackdark%2Fvc--belegapp-2496ED)](https://github.com/BlackDark/vc-belegapp/pkgs/container/vc-belegapp)
-[![Go 1.27.2](https://img.shields.io/badge/go-1.27.2-00ADD8?logo=go&logoColor=white)](go.mod)
+[![Go 1.27.3](https://img.shields.io/badge/go-1.27.3-00ADD8?logo=go&logoColor=white)](go.mod)
 
 ## Screenshots
 

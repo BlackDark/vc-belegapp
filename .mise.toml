@@ -5,7 +5,7 @@
 # internal/doccheck/tools_test.go fails when go.mod or .nvmrc drifts from here.
 
 [tools]
-go = "1.27.2" # keep in sync with the go directive in go.mod
+go = "1.27.3" # keep in sync with the go directive in go.mod
 node = "24.21.0" # keep in sync with .nvmrc
 pnpm = "12.10.1" # keep in sync with packageManager in web/package.json
 typst = "0.15.1" # keep in sync with scripts/install-typst.sh
