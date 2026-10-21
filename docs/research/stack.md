@@ -6,7 +6,7 @@ Versionen am 08.10.2026 geprüft über npm-Registry, proxy.golang.org und GitHub
 
 | Schicht | Wahl | Version (08.10.2026) | Begründung |
 |---|---|---|---|
-| Sprache Backend | **Go** | 1.27.2 (1.26.x noch unterstützt) | Statisches Binary ohne CGO, kleines Image, schneller Start, gutes Ops-Tooling (goreleaser) |
+| Sprache Backend | **Go** | 1.27.3 (1.26.x noch unterstützt) | Statisches Binary ohne CGO, kleines Image, schneller Start, gutes Ops-Tooling (goreleaser) |
 | HTTP | `net/http` + **chi v5** | v5.3.2 (08/2026) | Kompatibel mit der Standardbibliothek, Middleware ohne Framework-Lock-in. CSRF-Schutz über `http.CrossOriginProtection` (seit Go 1.25) |
 | DB | **SQLite** über **modernc.org/sqlite** (reines Go) | v1.60.1 (09/2026) | Keine CGO-Abhängigkeit, damit Cross-Compile und `distroless/static` möglich. WAL-Modus |
 | Queries | **sqlc** (Codegen aus SQL) | v1.31.1 (04/2026) | Typsicher, kein ORM; der erzeugte `database/sql`-Code funktioniert mit modernc |

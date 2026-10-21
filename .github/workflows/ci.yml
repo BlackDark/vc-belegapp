@@ -146,6 +146,11 @@ jobs:
       # The two coverage profiles stay separate because -race implies
       # -covermode=atomic and the non-race run writes set-mode counters;
       # coverprofile lines from the two modes cannot go into one file.
+      #
+      # The fixture behind these steps migrates once per test binary and
+      # copies the result, because migrating per test cost about 280 ms under
+      # -race against 32 ms for the copy, and the suites create a database per
+      # test. See internal/db/dbtest.
       - name: Tests (race detector)
         run: go test -race -count=1 -coverprofile=coverage.out $(go list ./... | grep -v -e /internal/db -e /internal/storage)
       - name: Tests (single-writer SQLite and storage, no race detector)
@@ -153,13 +158,18 @@ jobs:
 
   # govulncheck walks the whole module and is the slowest single step.
   # Its own job runs it beside the tests instead of after them.
+  #
+  # No web-build here: govulncheck analyses the call graph, and the bundle is
+  # an embedded asset, not a call site. Without web/dist the package list is
+  # the same 31 packages and the report is the same, so the bundle would only
+  # add a pnpm install and a vite build to this job. Verified with
+  # `go tool govulncheck -show verbose ./...` in both states.
   vuln:
     name: vuln
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/web-build
       - uses: ./.github/actions/go-setup
         with:
           scope: vuln
@@ -182,6 +192,8 @@ jobs:
             ~/.local/bin/typst
             ~/verapdf
           key: pdf-tools-${{ hashFiles('scripts/install-typst.sh', 'scripts/install-verapdf.sh', 'scripts/verapdf-auto-install.xml') }}
+      # Poppler is not on the runner image and veraPDF needs Java 21, which is
+      # not the runner's default (that one is 17), so both are installed here.
       - name: Install Poppler and Java
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils openjdk-21-jre-headless unzip
       - name: Install Typst
@@ -421,3 +433,4 @@ jobs:
         with:
           args: release --snapshot --clean --skip=archive,publish,sign,announce
           token: ${{ secrets.GITHUB_TOKEN }}
+          scope: release-dry-run

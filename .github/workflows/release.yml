@@ -96,6 +96,7 @@ jobs:
         with:
           args: release --clean --skip=archive
           token: ${{ secrets.GITHUB_TOKEN }}
+          scope: release
       # GoReleaser's footer usually already added this line (release.mode: append).
       # Notes are written under /tmp, not the checkout.
       - name: Image reference in release notes

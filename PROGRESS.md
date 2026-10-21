@@ -154,6 +154,49 @@ gefüllt hat, und zahlt den kalten Lauf nur, wenn er `main` zuvorkommt. `release
 sobald ein Push eine Release-Datei berührt — auch `.github/workflows/ci.yml` selbst —, und ist dann mit
 ~283 s wieder der längste Job.
 
+## CI: Laufzeit (21.10.2026)
+
+**Der langsame Lauf war kein CI-Problem.** Zwei Läufe vom 19.10. brauchten 38 min (Job `go` 13 min) und
+17 min (alle Jobs nach 4 min fertig, der Lauf lief trotzdem 12 min weiter). Die Nachricht: „CI hängt".
+Gemessen an allen 40 Läufen seit dem 12.10. hat **jeder** Lauf außer diesen beiden eine Wartezeit von
+**0 min** zwischen dem letzten Job und dem Laufende. Die GitHub-Status-API nennt für genau dieses Fenster
+(19.10., 15:49–16:28) eine Störung: *Degraded availability for GitHub Actions, GitHub Pages and Webhooks*.
+Die beiden langsamen Läufe sind die gestörten, nicht die repräsentativen; der normale Lauf auf `main` ist
+**2 min 48 s** (Run 39487079441, 19.10.).
+
+Trotzdem war im kritischen Pfad echte Verschwendung, gemessen und behoben:
+
+- **Die Testfixture migrierte die Datenbank pro Test.** `internal/db/dbtest` legte für jeden Test eine
+  neue Datenbank an und migrationte sie — neun Migrationen, immer dieselben. Der Race-Detektor instrumentiert
+  das reine-Go-SQLite (`modernc.org/sqlite` emuliert libc), deshalb kostet eine Migration unter `-race`
+  **280 ms** statt 13 ms. `internal/service` allein legt **172** Datenbanken an, `internal/api` und
+  `internal/jobs` weitere: rund 48 s von 63 s des Pakets waren Migration, nicht Prüfung.
+  Jetzt wird das Schema **einmal pro Testbinary** gebaut und jede Testdatenbank ist eine Kopie davon
+  (152 KB, **32 ms**). Die Kopie ist eine vollwertige Datei: das Schließen des Templates schreibt sein
+  `-wal` in die Hauptdatei zurück, die Kopie enthält also Schema, `goose_db_version` und jede Zeile, mit der
+  das Template geseedet wurde. **Die Race-Suite des `go`-Jobs: 2 min 23 s → 1 min 31 s.**
+  `internal/db/dbtest/dbtest_test.go` hält die drei Eigenschaften fest, auf die die Kopie sich verlässt:
+  migriert, leer, isoliert (mit Absicht kaputtgemacht, um zu prüfen, dass die Prüfungen dann fehlschlagen).
+- **`vuln` baute das Web-Bundle, das es nicht braucht.** govulncheck analysiert den Call-Graph; das
+  eingebettete Bundle ist kein Aufrufer. Ohne `web/dist` ist die Paketliste dieselbe (31 Pakete) und der
+  Bericht derselbe — mit `go tool govulncheck -show verbose ./...` in beiden Zuständen geprüft. Das
+  `web-build` aus dem Job entfernt: rund 20 s weniger.
+- **`release-dry-run` hatte einen kalten Go-Build-Cache.** Die Action benutzte `setup-go` mit
+  `cache: true`, dessen Schlüssel auf `go.sum` liegt — dieselbe Cache-Falle, die die anderen Jobs schon
+  umschifft haben: `actions/cache` schreibt einen Schlüssel nur einmal, also behielt der schnellste Job
+  seinen (kleinen) Stand. `go generate` (sqlc) und beide Binaries bauten jedes Mal neu: **53 s + 93 s**.
+  Die Action cached den Build-Cache jetzt je Aufrufer (`release-dry-run`, `release`), wie
+  [go-setup](.github/actions/go-setup/action.yml) es für die übrigen Jobs tut.
+- **Go 1.27.2 → 1.27.3.** GO-2026-6809 (`crypto/x509`, unvertrautes Zwischenzertifikat) wurde am
+  21.10. um 00:27 veröffentlicht — **nach** dem letzten CI-Lauf. Der `vuln`-Job wäre bei jedem Push
+  fehlgeschlagen, ohne dass etwas an diesem Repository geändert worden wäre. Der Job war um 19:52 noch grün
+  („found 0 vulnerabilities"), die Lücke ist also der Zeitpunkt der Veröffentlichung, nicht ein Fehler.
+
+Nicht geändert, weil es nichts kostet: `go mod verify` (2 s bei warmem Modul-Cache), `unzip` und
+`openjdk-21-jre-headless` im `pdf`-Job (der Runner hat Java 17 als Vorgabe, veraPDF braucht 21), die
+Coverage-Profile (3 % Overhead; sie werden zwar geschrieben, aber nirgends gelesen — das bleibt eine offene
+Frage, siehe [Bekannte Einschränkungen](#bekannte-einschränkungen)).
+
 ## Release-Profil (18.10.2026)
 
 **Veröffentlicht wird nur noch das Container-Image.** Das Release trug vorher vier `tar.gz` (linux und darwin,
