@@ -434,3 +434,12 @@ jobs:
           args: release --snapshot --clean --skip=archive,publish,sign,announce
           token: ${{ secrets.GITHUB_TOKEN }}
           scope: release-dry-run
+
+  check:
+    if: always()
+    needs: [web, linux-amd64, linux-arm64, go, vuln, pdf, docker, e2e, changes, release-dry-run]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
